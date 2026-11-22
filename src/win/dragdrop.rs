@@ -429,6 +429,11 @@ thread_local! {
     static DESCRIPTION_FORMAT: Cell<u32> = const { Cell::new(0) };
 }
 
+/// 正有東西拖到 Stillfeather 的視窗上（清單的放置標示以列號記，這段期間不要換掉清單內容）
+pub(super) fn drag_active() -> bool {
+    DRAG.with(|d| d.try_borrow().map_or(true, |s| s.is_some()))
+}
+
 fn helper() -> *mut c_void {
     HELPER.with(|h| {
         if h.get().is_null() {

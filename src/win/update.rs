@@ -141,6 +141,11 @@ pub fn ui_busy() -> bool {
     if unsafe { GetLastInputInfo(&mut last) } != 0 && (unsafe { GetTickCount64() } as u32).wrapping_sub(last.time) < IDLE_MS {
         return true;
     }
+    gui_busy()
+}
+
+/// 選單開著、滑鼠被抓住（拖曳、框選、拖分隔線）或正在移動、調整視窗大小（自動重新整理也等這些結束）
+pub fn gui_busy() -> bool {
     let mut info = GuiThreadInfo { cb_size: std::mem::size_of::<GuiThreadInfo>() as u32, flags: 0, active: 0, focus: 0, capture: 0, menu_owner: 0, move_size: 0, caret: 0, caret_rect: RECT::default() };
     if unsafe { GetGUIThreadInfo(0, &mut info) } == 0 {
         return false;

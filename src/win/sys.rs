@@ -1297,6 +1297,7 @@ pub const TVIS_SELECTED: u32 = 0x2;
 pub const TVIS_BOLD: u32 = 0x10;
 pub const TVIS_EXPANDED: u32 = 0x20;
 pub const TVI_ROOT: HTREEITEM = -0x10000;
+pub const TVI_FIRST: HTREEITEM = -0xFFFF;
 pub const TVI_LAST: HTREEITEM = -0xFFFE;
 pub const TVHT_ONITEMICON: u32 = 0x2;
 pub const TVHT_ONITEMLABEL: u32 = 0x4;
@@ -1646,7 +1647,7 @@ pub fn comctl() -> &'static ComCtl {
 }
 
 /// 依名稱取得函式，失敗時改用序數（SetWindowSubclass 等在舊版只以序數匯出）。
-unsafe fn proc_address(module: HMODULE, name: &str, ordinal: usize) -> *const c_void {
+pub unsafe fn proc_address(module: HMODULE, name: &str, ordinal: usize) -> *const c_void {
     let mut z: Vec<u8> = name.bytes().collect();
     z.push(0);
     let p = GetProcAddress(module, z.as_ptr());

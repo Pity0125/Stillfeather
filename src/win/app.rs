@@ -140,9 +140,16 @@ pub fn theme_opt() -> Option<&'static Theme> {
     app_opt().map(|a| &a.theme)
 }
 
+/// 資料夾清單的狀態文字（項目數、無法讀取的項目數）。
+pub(super) fn folder_status(count: usize, skipped: usize) -> String {
+    format!("{} 個項目", group_digits(count as u64)) + &if skipped > 0 { format!("  ·  {} 個無法讀取", skipped) } else { String::new() }
+}
+
 /// 背景工作把結果交回 UI 執行緒。
 pub enum WorkerMsg {
     Dir { tab: TabId, generation: u64, path: String, kind: NavKind, result: Result<Listing, FsError> },
+    /// 自動重新整理的重新讀取（見 watch.rs）；`gone_to`：資料夾已不在時，還在的上一層
+    AutoDir { tab: TabId, generation: u64, path: String, result: Result<Listing, FsError>, gone_to: Option<String> },
     SearchBatch { tab: TabId, generation: u64, entries: Vec<Entry>, scanned: usize, skipped: usize },
     SearchDone { tab: TabId, generation: u64, result: Result<SearchSummary, FsError> },
     Tree { item: HTREEITEM, token: u64, result: Result<FolderListing, FsError> },
@@ -300,7 +307,7 @@ impl Tab {
     }
 
     /// 取消目前工作並開始新的一輪；舊結果會因世代不符而被忽略。
-    fn begin_work(&mut self) -> (u64, Arc<AtomicBool>) {
+    pub(super) fn begin_work(&mut self) -> (u64, Arc<AtomicBool>) {
         self.cancel.store(true, Ordering::Relaxed);
         self.cancel = Arc::new(AtomicBool::new(false));
         self.generation += 1;
@@ -518,6 +525,8 @@ pub struct App {
     search_fx: Tween,
     /// 搜尋的展開程度：0 = 圓形按鈕、1 = 膠囊輸入框
     search_open: Tween,
+    /// 自動重新整理：顯示中資料夾的變更通知與重新讀取排程
+    pub(super) watch: super::watch::Watches,
 }
 
 pub fn settings_path() -> Result<String, String> {
@@ -773,6 +782,7 @@ pub fn run(paths_in: Vec<String>) -> i32 {
         op_sources: Vec::new(),
         search_fx: Tween::new(0.0),
         search_open: Tween::new(0.0),
+        watch: Default::default(),
     });
     APP.store(Box::into_raw(boxed), Ordering::Release);
     let a = app();
@@ -1568,6 +1578,8 @@ impl App {
         unsafe {
             InvalidateRect(self.hwnd, std::ptr::null(), 0);
         }
+        // 顯示的資料夾換了（導覽、切換分頁、雙欄、搜尋）：自動重新整理改監看新的資料夾
+        self.sync_watches();
     }
 
     /// 浮動狀態列左側：選取一個項目時顯示其圖示、名稱與細節；多選時顯示數量與合計大小。
@@ -1787,6 +1799,8 @@ impl App {
         if !loaded_ok {
             tab.work_started = None;
         }
+        // 重新讀取同一個資料夾（F5、Stillfeather 自己的檔案作業之後）：側欄裡展開的這個資料夾也跟著更新
+        let mut tree_sync: Option<Vec<(String, bool)>> = None;
         match result {
             Ok(listing) => {
                 let old = std::mem::take(&mut tab.path);
@@ -1823,8 +1837,10 @@ impl App {
                 tab.resummarize();
                 tab.search_mode = false;
                 tab.view = ViewState::default();
-                tab.status = format!("{} 個項目", group_digits(tab.entries.len() as u64))
-                    + &if listing.skipped > 0 { format!("  ·  {} 個無法讀取", listing.skipped) } else { String::new() };
+                tab.status = folder_status(tab.entries.len(), listing.skipped);
+                if !folder_changed {
+                    tree_sync = Some(tab.entries.iter().filter(|e| e.is_dir).map(|e| (e.name.clone(), e.is_link)).collect());
+                }
             }
             Err(FsError::Cancelled) => {
                 tab.status = "已取消讀取".into();
@@ -1845,6 +1861,10 @@ impl App {
         }
         if tab_id == self.active_tab_id() {
             set_window_text(self.address, &self.tabs[&tab_id].path.clone());
+        }
+        if let Some(folders) = tree_sync {
+            let path = self.tabs[&tab_id].path.clone();
+            self.sync_tree_folder(&path, &folders);
         }
         self.update_chrome();
         // 效能記錄：從開始讀取到清單換好（含背景列舉、排序與畫面更新）
@@ -2146,6 +2166,10 @@ impl App {
                 }
                 self.relayout();
                 self.bind(Side::Right);
+                // 右欄收起期間沒有監看：補讀一次
+                if let Some(id) = self.ws.current(Side::Right) {
+                    self.watch_catch_up(id);
+                }
             }
             DualChange::Hidden => {
                 self.relayout();
@@ -3758,13 +3782,20 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 a.on_update_timer();
             } else if wparam == super::update::TIMER_PROMPT {
                 a.try_update_prompt();
+            } else if wparam == super::watch::TIMER_WATCH {
+                a.on_watch_timer();
             }
+            return 0;
+        }
+        super::watch::WM_APP_WATCH => {
+            a.on_watch_message(wparam, lparam);
             return 0;
         }
         WM_APP_WORKER => {
             let msg = Box::from_raw(lparam as *mut WorkerMsg);
             match *msg {
                 WorkerMsg::Dir { tab, generation, path, kind, result } => a.on_dir(tab, generation, path, kind, result),
+                WorkerMsg::AutoDir { tab, generation, path, result, gone_to } => a.on_auto_dir(tab, generation, path, result, gone_to),
                 WorkerMsg::SearchBatch { tab, generation, entries, scanned, skipped } => a.on_search_batch(tab, generation, entries, scanned, skipped),
                 WorkerMsg::SearchDone { tab, generation, result } => a.on_search_done(tab, generation, result),
                 WorkerMsg::Tree { item, token, result } => a.on_tree_children(item, token, result),
@@ -3876,6 +3907,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
         }
         WM_DESTROY => {
             super::crashlog::crumb("主視窗：WM_DESTROY");
+            a.stop_watching();
             for h in [a.lists[0], a.lists[1], a.tree, a.crumbs, a.strips[0], a.strips[1]] {
                 dragdrop::revoke(h);
             }

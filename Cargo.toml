@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Stillfeather：Windows 11 輕量檔案管理（Rust／原生 Win32 版）"
 publish = false
-# 更新提醒：填上 GitHub 專案網址後，Stillfeather 會檢查這個專案 Releases 的最新正式版（見 README「自動更新」）。
+# 更新提醒：填上 GitHub 專案網址後，Stillfeather 會檢查這個專案 Releases 的最新正式版（見 DEVELOPMENT.md「自動更新」）。
 # 沒有填的話不會檢查更新。
 # repository = "https://github.com/<帳號>/<專案>"
 

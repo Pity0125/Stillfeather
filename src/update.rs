@@ -1,7 +1,7 @@
 //! 自動更新的純邏輯：版本比較、更新資訊（update.json）的解析與檢查、何時再檢查、SHA-256。
 //! 網路與執行安裝程式在 `src/win/update.rs`。
 //!
-//! 發佈方式（見 README「自動更新」）：每個版本在 GitHub Releases 建立 `v<版本>` 的發行版，
+//! 發佈方式（見 DEVELOPMENT.md「自動更新」）：每個版本在 GitHub Releases 建立 `v<版本>` 的發行版，
 //! 上傳 StillfeatherSetup.exe 與 `build.ps1 -Setup` 產生的 update.json。程式讀取
 //! `<repository>/releases/latest/download/update.json`（GitHub 會轉到最新正式版的那一份），
 //! 有新版就提醒；下載的安裝程式要大小與 SHA-256 都和 update.json 相符才會執行。

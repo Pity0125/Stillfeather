@@ -15,6 +15,7 @@ use super::theme::{self, glyph};
 use super::util::*;
 use feather_core::paths;
 use feather_core::typeahead;
+use feather_core::watch::{self, Step};
 use std::sync::atomic::AtomicBool;
 
 pub(super) const FAVORITES_KEY: &str = "::favorites";
@@ -62,10 +63,16 @@ impl App {
     }
 
     fn insert_node(&mut self, parent: HTREEITEM, text: &str, image: i32, children: bool, bold: bool, node: Node) -> HTREEITEM {
+        self.insert_node_after(parent, TVI_LAST, text, image, children, bold, node)
+    }
+
+    /// 插在 `after` 之後（TVI_FIRST 表示最前面）。
+    #[allow(clippy::too_many_arguments)]
+    fn insert_node_after(&mut self, parent: HTREEITEM, after: HTREEITEM, text: &str, image: i32, children: bool, bold: bool, node: Node) -> HTREEITEM {
         let mut t = wide(text);
         let ins = TVINSERTSTRUCTW {
             hParent: parent,
-            hInsertAfter: TVI_LAST,
+            hInsertAfter: after,
             item: TVITEMW {
                 mask: TVIF_TEXT | TVIF_IMAGE | TVIF_SELECTEDIMAGE | TVIF_CHILDREN | TVIF_STATE,
                 hItem: 0,
@@ -320,6 +327,57 @@ impl App {
             }
             Err(FsError::Cancelled) => {}
             Err(FsError::Message(e)) => self.info_node(item, &format!("無法讀取：{e}")),
+        }
+    }
+
+    /// 清單重新讀取了某個資料夾（自動重新整理或 Stillfeather 自己的檔案作業之後）：
+    /// 側欄裡已展開的同一個資料夾跟著加入新的子資料夾、移除不見的。
+    /// 其他子資料夾的節點原封不動，已經展開的不會被收合；還在讀取、讀取失敗或只顯示部分時不動。
+    /// `folders`：資料夾裡的子資料夾名稱與是否為連結（與側欄相同，已依顯示隱藏項目的設定過濾）。
+    pub(super) fn sync_tree_folder(&mut self, path: &str, folders: &[(String, bool)]) {
+        let targets: Vec<(HTREEITEM, String)> = self
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.loaded && !matches!(n.kind, NodeKind::Header | NodeKind::Info) && paths::same_path(&n.path, path))
+            .map(|(h, n)| (*h, n.path.clone()))
+            .collect();
+        if targets.is_empty() || folders.len() > fs::TREE_MAX_CHILDREN {
+            return;
+        }
+        let mut sorted: Vec<&(String, bool)> = folders.iter().collect();
+        sorted.sort_by(|a, b| feather_core::sorting::natural_cmp(&a.0, &b.0));
+        let new: Vec<&str> = sorted.iter().map(|f| f.0.as_str()).collect();
+        let image = self.icons.tree_blank;
+        for (item, node_path) in targets {
+            let children = self.children_of(item);
+            if children.iter().any(|c| self.nodes.get(c).is_none_or(|n| n.kind != NodeKind::Folder)) {
+                continue;
+            }
+            let names: Vec<String> = children.iter().map(|c| paths::file_name(&self.nodes[c].path).to_string()).collect();
+            let old: Vec<&str> = names.iter().map(String::as_str).collect();
+            let plan = watch::plan_children(&old, &new);
+            if plan.is_noop() {
+                continue;
+            }
+            for &i in &plan.remove {
+                send(self.tree, TVM_DELETEITEM, 0, children[i]);
+                self.forget_subtree(children[i]);
+            }
+            let mut after = TVI_FIRST;
+            for step in &plan.steps {
+                match *step {
+                    Step::Keep(i) => after = children[i],
+                    Step::Insert(j) => {
+                        let (name, is_link) = sorted[j];
+                        let node = Node { path: paths::join(&node_path, name), kind: NodeKind::Folder, loaded: false, token: 0 };
+                        let h = self.insert_node_after(item, after, name, image, !*is_link, false, node);
+                        if h != 0 {
+                            after = h;
+                        }
+                    }
+                }
+            }
+            self.set_has_children(item, !new.is_empty());
         }
     }
 

@@ -233,6 +233,8 @@ impl App {
             if self.tabs.get(&id).is_some_and(|t| t.stale && !t.working() && !t.search_mode) {
                 self.refresh_tab(id);
             }
+            // 隱藏期間沒有監看：補讀一次，有變才更新
+            self.watch_catch_up(id);
         }
     }
 
@@ -315,6 +317,73 @@ impl App {
                 }
                 send(list, LVM_EDITLABELW, f, 0);
             }
+        }
+    }
+
+    /// 自動重新整理前，記下清單的選取、焦點、捲動位置與滑鼠下的項目（以路徑記，項目增減後仍對得回去）。
+    pub(super) fn keep_view(&self, side: Side) -> KeptView {
+        let list = self.lists[side.index()];
+        let tab = self.bound[side.index()].and_then(|id| self.tabs.get(&id));
+        let key = |i: usize| tab.and_then(|t| t.row(i)).map(|e| e.full_path().to_lowercase());
+        let selected = self.list_selected_indices(list).into_iter().filter_map(&key).collect();
+        let focused_index = next_item(list, -1, LVNI_FOCUSED);
+        let focused = if focused_index >= 0 { key(focused_index as usize) } else { None };
+        let hovered = match self.hover.item {
+            Some((s, row)) if s == side && row >= 0 => key(row as usize),
+            _ => None,
+        };
+        KeptView { selected, focused, focused_index, top: send(list, LVM_GETTOPINDEX, 0, 0), hovered }
+    }
+
+    /// 分頁的項目已換成重新讀取的結果（同一個資料夾）：更新清單筆數，還原選取與焦點，捲動位置不動。
+    /// 和 refresh_list(reset) 不同，這裡不回到頂端，也不交叉淡化，畫面只換掉有變的列。
+    pub(super) fn restore_view(&mut self, side: Side, kept: KeptView) {
+        let list = self.lists[side.index()];
+        let Some(tab) = self.bound[side.index()].and_then(|id| self.tabs.get(&id)) else { return };
+        let n = tab.row_count();
+        self.updating_list = true;
+        // 列號可能都位移了：選取直接畫成新的狀態，不播放淡入淡出；
+        // 懸停跟著滑鼠的位置，保留（不然每次更新，滑鼠下那一列都會重新淡入）
+        self.list_fx[side.index()].reset_seen();
+        set_item_state(list, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+        send(list, LVM_SETITEMCOUNT, n, LVSICF_NOSCROLL as LPARAM);
+        let mut focus: Option<usize> = None;
+        if !kept.selected.is_empty() || kept.focused.is_some() {
+            for i in 0..n {
+                let Some(e) = tab.row(i) else { continue };
+                let p = e.full_path().to_lowercase();
+                if kept.selected.contains(&p) {
+                    set_item_state(list, i as isize, LVIS_SELECTED, LVIS_SELECTED);
+                }
+                if kept.focused.as_deref() == Some(p.as_str()) {
+                    focus = Some(i);
+                }
+            }
+        }
+        // 有焦點的項目被移走或刪除了：焦點留在原來的位置附近，鍵盤可以接著操作（不選取）
+        if focus.is_none() && kept.focused_index >= 0 && n > 0 {
+            focus = Some((kept.focused_index as usize).min(n - 1));
+        }
+        if let Some(f) = focus {
+            set_item_state(list, f as isize, LVIS_FOCUSED, LVIS_FOCUSED);
+            send(list, LVM_SETSELECTIONMARK, 0, f as LPARAM);
+        }
+        // 項目變少、原本捲到的位置已經超過結尾：捲回最後一列
+        if n > 0 && kept.top >= n as isize {
+            send(list, LVM_ENSUREVISIBLE, n - 1, 0);
+        }
+        // 滑鼠下的列換成別的項目了：懸停預覽重新計時，不要繼續顯示原本那個
+        let hover_moved = kept.hovered.is_some()
+            && match self.hover.item {
+                Some((s, row)) if s == side && row >= 0 => tab.row(row as usize).map(|e| e.full_path().to_lowercase()) != kept.hovered,
+                _ => true,
+            };
+        let status = tab.status.clone();
+        self.updating_list = false;
+        set_window_text(self.pane_status[side.index()], &status);
+        invalidate(list);
+        if hover_moved {
+            self.reset_hover();
         }
     }
 
@@ -1273,6 +1342,19 @@ const HOVER_SWITCH_MS: u32 = 150;
 /// 「按空白鍵預覽」按住期間，定期確認空白鍵還按著（放開的訊息被輸入法吃掉時也能關閉）
 pub const GATE_TIMER: usize = 9;
 const GATE_POLL_MS: u32 = 60;
+
+/// 自動重新整理前的清單狀態（見 keep_view／restore_view）
+pub(super) struct KeptView {
+    /// 選取項目的完整路徑（小寫）
+    selected: std::collections::HashSet<String>,
+    /// 有焦點的項目（小寫路徑）與它原本的列號
+    focused: Option<String>,
+    focused_index: isize,
+    /// 最上面一列的列號（詳細資料與清單檢視）
+    top: isize,
+    /// 滑鼠下的項目（小寫路徑）
+    hovered: Option<String>,
+}
 
 /// 懸停預覽的狀態
 #[derive(Default)]

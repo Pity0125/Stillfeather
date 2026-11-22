@@ -28,6 +28,7 @@ pub mod undo;
 pub mod update;
 pub mod util;
 pub mod viewmenu;
+pub mod watch;
 
 use sys::*;
 use util::*;

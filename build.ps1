@@ -185,7 +185,7 @@ try {
         $setupSize = [Math]::Round((Get-Item $setupExe).Length / 1KB)
         Write-Host "安裝程式：$setupExe（$setupSize KB）" -ForegroundColor Green
 
-        # 更新資訊：和安裝程式一起上傳到 GitHub Releases，已安裝的 Stillfeather 會據此提醒更新（見 README「自動更新」）
+        # 更新資訊：和安裝程式一起上傳到 GitHub Releases，已安裝的 Stillfeather 會據此提醒更新（見 DEVELOPMENT.md「自動更新」）
         $cargoToml = Get-Content -LiteralPath (Join-Path $root 'Cargo.toml') -Raw -Encoding UTF8
         $version = if ($cargoToml -match '(?m)^version\s*=\s*"([^"]+)"') { $Matches[1] } else { '' }
         $repo = if ($cargoToml -match '(?m)^repository\s*=\s*"([^"]+)"') { ($Matches[1].Trim().TrimEnd('/')) -replace '\.git$', '' } else { '' }
