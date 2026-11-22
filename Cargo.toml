@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Stillfeather：Windows 11 輕量檔案管理（Rust／原生 Win32 版）"
 publish = false
-# 更新提醒：填上 GitHub 專案網址後，Stillfeather 會檢查這個專案 Releases 的最新正式版（見 DEVELOPMENT.md「自動更新」）。
-# 沒有填的話不會檢查更新。
-# repository = "https://github.com/<帳號>/<專案>"
+# 更新提醒：Stillfeather 會檢查這個 GitHub 專案 Releases 的最新正式版（見 DEVELOPMENT.md「自動更新」）。
+# 拿掉這一行就不會檢查更新。
+repository = "https://github.com/Pity0125/Stillfeather"
 
 # 刻意不使用任何第三方 crate：Win32／Shell API 直接以 FFI 宣告呼叫，
 # 與 C# 版「不引入第三方套件」的原則一致，也讓建置不需要連線下載依賴。
