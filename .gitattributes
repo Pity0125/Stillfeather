@@ -1,0 +1,19 @@
+# 換行：原始碼與文件一律 LF（不論在哪個系統取出都和現在的檔案相同）
+* text=auto eol=lf
+
+# Windows 批次檔與 PowerShell 指令碼必須是 CRLF：LF 會讓 cmd 的 goto／標籤出錯
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# 二進位檔：圖示與單元測試的資料，不轉換換行
+*.ico binary
+*.png binary
+*.deflate binary
+*.zip binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.odt binary
+*.ods binary
+*.odp binary
