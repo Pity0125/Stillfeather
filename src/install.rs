@@ -19,7 +19,7 @@ pub const UNINSTALLER_NAME: &str = "Uninstall.exe";
 pub const GENERATED_FILES: &[&str] = &["crash.log", "trace.log", "stderr.log", "picker-crash.log", "picker-trace.log", "picker-stderr.log"];
 /// 「新增或移除程式」的項目
 pub const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Stillfeather";
-/// Stillfeather 自己的登錄機碼：安裝位置與預設檔案總管的備份
+/// Stillfeather 自己的登錄機碼：安裝位置、使用者的選擇與預設檔案總管的備份
 pub const APP_KEY: &str = r"Software\Stillfeather";
 pub const BACKUP_KEY: &str = r"Software\Stillfeather\DefaultFileManagerBackup";
 /// 設定、資料夾檢視記錄與記錄檔所在的資料夾名稱（%LOCALAPPDATA% 底下）
@@ -34,8 +34,48 @@ pub const OPEN_HOME_ARG: &str = "--open-home";
 /// 經單一實例轉送時代表「開首頁」的項目（不會是真的路徑）
 pub const HOME_MARKER: &str = "::home";
 
+/// 「設為預設檔案總管」的選擇（[`APP_KEY`] 底下的值）："1" 開、"0" 關；沒有這個值表示沒選過，預設開啟
+pub const DEFAULT_FM_CHOICE_VALUE: &str = "DefaultExplorer";
+
+/// 主程式啟動時對預設檔案總管要做的事（見 [`default_fm_on_start`]）
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DefaultFmStart {
+    /// 不動
+    Keep,
+    /// 只記下「開」（已經有一份 Stillfeather 是預設檔案總管）
+    Remember,
+    /// 把這一份設為預設檔案總管，並記下「開」
+    Take,
+}
+
+/// 主程式啟動時依使用者的選擇決定怎麼處理預設檔案總管。
+/// `registered`：目前登記為預設檔案總管的 Stillfeather（任何一份）的程式還在不在；沒有登記任何一份是 None。
+/// - 沒選過：預設開啟。已經有一份是預設檔案總管就只記下選擇（不搶另一份的，例如安裝版）；否則把這一份設為預設。
+/// - 開：登記的那一份程式不見了（被移走或刪掉）才改成這一份；沒有登記（之後改用別的檔案管理程式）時不搶回來。
+/// - 關：不動（關掉時已經改回）。
+pub fn default_fm_on_start(choice: Option<&str>, registered: Option<bool>) -> DefaultFmStart {
+    match choice.map(str::trim) {
+        None => match registered {
+            Some(true) => DefaultFmStart::Remember,
+            _ => DefaultFmStart::Take,
+        },
+        Some("0") => DefaultFmStart::Keep,
+        Some(_) => match registered {
+            Some(false) => DefaultFmStart::Take,
+            _ => DefaultFmStart::Keep,
+        },
+    }
+}
+
 /// 「其他程式開啟檔案時也用 Stillfeather」：取代元件啟動哪一個 Stillfeather（[`APP_KEY`] 底下的值）
 pub const PICKER_EXE_VALUE: &str = "PickerExe";
+/// 使用者的選擇（[`APP_KEY`] 底下的值）："1" 開、"0" 關；沒有這個值表示沒選過，預設開啟
+pub const PICKER_CHOICE_VALUE: &str = "FilePicker";
+
+/// 要不要讓其他程式開啟檔案時跳出 Stillfeather：預設開啟，使用者關掉（"0"）才不要
+pub fn picker_wanted(choice: Option<&str>) -> bool {
+    choice.is_none_or(|c| c.trim() != "0")
+}
 /// 取代元件實際登記的那一份放在 %LOCALAPPDATA%\FeatherFiles\Picker：
 /// 不登記程式資料夾裡的那一份，程式資料夾被移走或刪掉時，其他程式的開檔視窗仍然正常（找不到 Stillfeather 就用 Windows 的視窗）。
 pub const PICKER_DIR_NAME: &str = "Picker";
@@ -249,6 +289,8 @@ pub struct SetupArgs {
     pub silent: bool,
     pub dir: Option<String>,
     pub default_fm: Option<bool>,
+    /// 其他程式開啟檔案時也用 Stillfeather（None：沒有指定，維持使用者原本的選擇；沒選過就是開啟）
+    pub file_picker: Option<bool>,
     pub desktop: Option<bool>,
     pub start_menu: Option<bool>,
     pub launch: Option<bool>,
@@ -263,10 +305,10 @@ pub struct SetupArgs {
 /// 解析安裝程式的參數。支援常見安裝程式的寫法：
 /// `/S`、`/SILENT`、`/VERYSILENT`、`/quiet`、`--silent`（不顯示畫面）；
 /// `/D=路徑`（必須是最後一個參數，可以含空白）、`--dir=路徑`、`--dir 路徑`；
-/// `--default-explorer`／`--no-default-explorer`、`--desktop`／`--no-desktop`、`--no-start-menu`、`--launch`／`--no-launch`；
+/// `--default-explorer`／`--no-default-explorer`、`--file-picker`／`--no-file-picker`、`--desktop`／`--no-desktop`、`--no-start-menu`、`--launch`／`--no-launch`；
 /// `--uninstall`（解除安裝）；`--update`（更新：沒有選項畫面，維持原本的設定，完成後重新開啟）。
 pub fn parse_setup_args(args: &[String]) -> Result<SetupArgs, String> {
-    let mut a = SetupArgs { mode: SetupMode::Install, silent: false, dir: None, default_fm: None, desktop: None, start_menu: None, launch: None, elevated: false, result: None, update: false };
+    let mut a = SetupArgs { mode: SetupMode::Install, silent: false, dir: None, default_fm: None, file_picker: None, desktop: None, start_menu: None, launch: None, elevated: false, result: None, update: false };
     let mut i = 0;
     while i < args.len() {
         let raw = args[i].as_str();
@@ -299,6 +341,8 @@ pub fn parse_setup_args(args: &[String]) -> Result<SetupArgs, String> {
             }
             "--default-explorer" => a.default_fm = Some(true),
             "--no-default-explorer" => a.default_fm = Some(false),
+            "--file-picker" => a.file_picker = Some(true),
+            "--no-file-picker" => a.file_picker = Some(false),
             "--desktop" => a.desktop = Some(true),
             "--no-desktop" => a.desktop = Some(false),
             "--start-menu" => a.start_menu = Some(true),
@@ -526,5 +570,36 @@ mod tests {
         assert!(is_picker_dll(r"C:\Users\me\AppData\Local\FeatherFiles\Picker\stillfeatherpicker.dll"));
         assert!(!is_picker_dll(r"%SystemRoot%\System32\comdlg32.dll"));
         assert!(GENERATED_FILES.contains(&"picker-trace.log"));
+    }
+
+    #[test]
+    fn file_picker_choice() {
+        // 沒選過：預設開啟；只有明確關掉才不要
+        assert!(picker_wanted(None));
+        assert!(picker_wanted(Some("1")));
+        assert!(!picker_wanted(Some("0")));
+        assert!(!picker_wanted(Some(" 0 ")));
+        let args = |v: &[&str]| parse_setup_args(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
+        assert_eq!(args(&[]).file_picker, None);
+        assert_eq!(args(&["--file-picker"]).file_picker, Some(true));
+        assert_eq!(args(&["/S", "--no-file-picker"]).file_picker, Some(false));
+    }
+
+    #[test]
+    fn default_fm_choice_on_start() {
+        use DefaultFmStart::*;
+        // 沒選過：預設開啟，但不搶另一份 Stillfeather 的
+        assert_eq!(default_fm_on_start(None, None), Take);
+        assert_eq!(default_fm_on_start(None, Some(true)), Remember);
+        assert_eq!(default_fm_on_start(None, Some(false)), Take);
+        // 開：只有登記的那一份不見了才接手；改用別的檔案管理程式時不搶回來
+        assert_eq!(default_fm_on_start(Some("1"), None), Keep);
+        assert_eq!(default_fm_on_start(Some("1"), Some(true)), Keep);
+        assert_eq!(default_fm_on_start(Some("1"), Some(false)), Take);
+        // 關：不動
+        for r in [None, Some(true), Some(false)] {
+            assert_eq!(default_fm_on_start(Some("0"), r), Keep);
+            assert_eq!(default_fm_on_start(Some(" 0 "), r), Keep);
+        }
     }
 }

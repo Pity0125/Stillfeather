@@ -209,6 +209,26 @@ pub fn is_default_file_manager(exe: &str) -> bool {
     folders && wine
 }
 
+/// 目前登記為預設檔案總管的 Stillfeather（任何一份）的程式路徑；預設檔案總管不是 Stillfeather 時是 None。
+pub fn default_fm_program() -> Option<String> {
+    let folders = (read_string(r"Software\Classes\Directory\shell", "").as_deref() == Some(install::VERB))
+        .then(|| read_string(&format!(r"Software\Classes\Directory\shell\{}\command", install::VERB), ""))
+        .flatten();
+    let cmd = folders.or_else(|| read_string(&install::win_e_key(), "").filter(|c| is_any_stillfeather(c)))?;
+    let program = install::command_program(&cmd);
+    (!program.is_empty()).then(|| program.to_string())
+}
+
+/// 使用者對「設為預設檔案總管」的選擇（"1"／"0"）；沒選過是 None（預設開啟，見 install::default_fm_on_start）
+pub fn default_fm_choice() -> Option<String> {
+    read_string(install::APP_KEY, install::DEFAULT_FM_CHOICE_VALUE)
+}
+
+/// 記下使用者的選擇（設定或安裝程式的勾選）
+pub fn set_default_fm_choice(on: bool) -> Result<(), String> {
+    set_string(install::APP_KEY, install::DEFAULT_FM_CHOICE_VALUE, if on { "1" } else { "0" })
+}
+
 /// 設為預設檔案總管。覆寫其他程式設定的共用值之前先備份，取消時還原。
 pub fn set_default_file_manager(exe: &str) -> Result<(), String> {
     for (key, name) in install::shared_values() {
@@ -293,6 +313,55 @@ pub fn enable_picker(dll: &str, exe: &str) -> Result<(), String> {
     let server = install::picker_server_key();
     set_string(&server, "", dll)?;
     set_string(&server, "ThreadingModel", "Apartment")
+}
+
+/// 使用者要不要這個功能（沒選過時預設開啟，見 install::picker_wanted）
+pub fn picker_choice() -> bool {
+    install::picker_wanted(read_string(install::APP_KEY, install::PICKER_CHOICE_VALUE).as_deref())
+}
+
+/// 記下使用者的選擇（設定或安裝程式的勾選）
+pub fn set_picker_choice(on: bool) -> Result<(), String> {
+    set_string(install::APP_KEY, install::PICKER_CHOICE_VALUE, if on { "1" } else { "0" })
+}
+
+/// 實際登記的那一份的位置：%LOCALAPPDATA%\FeatherFiles\Picker\StillfeatherPicker.dll（見 install::PICKER_DIR_NAME）
+pub fn deployed_picker_path() -> Option<String> {
+    let base = std::env::var("LOCALAPPDATA").ok()?;
+    let dir = paths::join(&paths::join(&base, install::DATA_DIR_NAME), install::PICKER_DIR_NAME);
+    Some(paths::join(&dir, feather_core::picker::DLL_NAME))
+}
+
+/// 把程式資料夾裡的取代元件（`src`）複製到登記的位置（內容相同就不動），回傳它的路徑。
+/// 舊的那一份可能正載入在其他程式裡（無法覆寫或刪除）：先改名讓出位置，那些程式結束後下次再清掉。
+pub fn deploy_picker(src: &str) -> Result<String, String> {
+    let dst = deployed_picker_path().ok_or("找不到 %LOCALAPPDATA%。")?;
+    let dir = paths::parent(&dst).ok_or("位置無效。")?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("無法建立 {dir}：{e}"))?;
+    let data = std::fs::read(src).map_err(|e| format!("無法讀取 {src}：{e}"))?;
+    if std::fs::read(&dst).is_ok_and(|old| old == data) {
+        remove_old_picker_copies(&dir);
+        return Ok(dst);
+    }
+    if std::path::Path::new(&dst).exists() && std::fs::remove_file(&dst).is_err() {
+        let old = format!("{dst}.old-{}", unsafe { GetTickCount64() });
+        std::fs::rename(&dst, &old).map_err(|e| format!("無法更新 {dst}（正被其他程式使用）：{e}"))?;
+    }
+    std::fs::write(&dst, &data).map_err(|e| format!("無法寫入 {dst}：{e}"))?;
+    remove_old_picker_copies(&dir);
+    Ok(dst)
+}
+
+/// 刪掉之前改名讓位的舊版（還在使用中的刪不掉，下次再試）
+fn remove_old_picker_copies(dir: &str) {
+    let prefix = format!("{}.old-", feather_core::picker::DLL_NAME).to_lowercase();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().to_lowercase().starts_with(&prefix) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
 }
 
 /// 取消登記，其他程式恢復使用 Windows 原本的視窗。只拿掉 Stillfeather 寫的部分。

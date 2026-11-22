@@ -24,6 +24,7 @@ use feather_core::category::{self, filter_rows, Category, Summary};
 use feather_core::entry::Entry;
 use feather_core::folderviews::{self, FolderViews};
 use feather_core::format::{format_size, group_digits};
+use feather_core::install;
 use feather_core::paths;
 use feather_core::plan::OpKind;
 use feather_core::typeahead::TypeAhead;
@@ -846,7 +847,9 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
             a.set_footer(e);
         }
         a.schedule_update_check();
-        // 「其他程式開啟檔案時也用 Stillfeather」開著時，更新登記的取代元件
+        // 「設為預設檔案總管」（預設開啟）：沒選過時設為預設
+        maintain_default_file_manager();
+        // 「其他程式開啟檔案時也用 Stillfeather」（預設開啟）：依使用者的選擇登記或取消，並更新登記的取代元件
         super::picker::maintain();
     }
 
@@ -861,6 +864,23 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         }
     }
     msg.wParam as i32
+}
+
+/// 主程式啟動時依使用者對「設為預設檔案總管」的選擇處理（沒選過時預設開啟，見 install::default_fm_on_start）。
+/// 失敗時不記下選擇，下次啟動再試。
+fn maintain_default_file_manager() {
+    let registered = shellreg::default_fm_program().map(|p| std::path::Path::new(&p).is_file());
+    match install::default_fm_on_start(shellreg::default_fm_choice().as_deref(), registered) {
+        install::DefaultFmStart::Keep => {}
+        install::DefaultFmStart::Remember => {
+            let _ = shellreg::set_default_fm_choice(true);
+        }
+        install::DefaultFmStart::Take => {
+            if current_exe_path().is_some_and(|exe| shellreg::set_default_file_manager(&exe).is_ok()) {
+                let _ = shellreg::set_default_fm_choice(true);
+            }
+        }
+    }
 }
 
 impl App {
@@ -3009,7 +3029,8 @@ impl App {
         let current = self.settings.clone();
         let exe = current_exe_path();
         let was_default = exe.as_deref().is_some_and(shellreg::is_default_file_manager);
-        let picker_was = shellreg::picker_enabled();
+        // 勾選框顯示使用者的選擇（沒選過時預設開啟）
+        let picker_was = shellreg::picker_choice();
         if let Some((new, want_default, want_picker)) = settings_dialog::show(self.hwnd, &current, was_default, picker_was) {
             match write_settings(&new) {
                 Ok(()) => self.apply_settings(new),
@@ -3039,6 +3060,8 @@ impl App {
 
     /// 設為／取消預設檔案總管（Win+E 與開啟資料夾）。只改目前使用者的登錄，不需要系統管理員權限。
     fn set_default_file_manager(&mut self, on: bool) {
+        // 先記下選擇：之後啟動時照這個選擇處理（沒選過時預設開啟）
+        let _ = shellreg::set_default_fm_choice(on);
         let result = if on {
             match current_exe_path() {
                 Some(exe) => shellreg::set_default_file_manager(&exe),

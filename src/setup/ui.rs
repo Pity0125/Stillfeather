@@ -23,6 +23,7 @@ const CHK_DEFAULT: u16 = 10;
 const CHK_DESKTOP: u16 = 11;
 const CHK_START: u16 = 12;
 const CHK_LAUNCH: u16 = 13;
+const CHK_PICKER: u16 = 14;
 const EDIT_ID: usize = 100;
 
 static ICO: &[u8] = include_bytes!("../../assets/FeatherFiles.ico");
@@ -30,7 +31,7 @@ const UI_FACE: &str = "Microsoft JhengHei UI";
 const BASE_W: i32 = 560;
 /// 更新完成後自動重新開啟 Stillfeather 的計時器
 const DONE_TIMER: usize = 1;
-const BASE_H: i32 = 430;
+const BASE_H: i32 = 466;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -147,6 +148,8 @@ struct Wizard {
     args: SetupArgs,
     dir: String,
     default_fm: bool,
+    /// 其他程式開啟檔案時也用 Stillfeather（預設勾選）
+    picker: bool,
     desktop: bool,
     start_menu: bool,
     launch: bool,
@@ -235,6 +238,7 @@ fn run(flow: Flow, args: SetupArgs, dir: String, default_fm: bool, desktop: bool
         let edit = CreateWindowExW(0, edit_class.as_ptr(), text.as_ptr(), WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 10, 10, hwnd, EDIT_ID as HMENU, hinst, std::ptr::null());
         SendMessageW(edit, WM_SETFONT, fonts.body as WPARAM, 1);
         let was_running = flow == Flow::Uninstall && ops::app_running();
+        let picker = args.file_picker.unwrap_or(true);
         let wiz = Box::new(Wizard {
             hwnd,
             edit,
@@ -247,6 +251,7 @@ fn run(flow: Flow, args: SetupArgs, dir: String, default_fm: bool, desktop: bool
             args,
             dir,
             default_fm,
+            picker,
             desktop,
             start_menu,
             launch: true,
@@ -446,8 +451,9 @@ impl Wizard {
                 w.push(Widget { id: PATH, kind: Kind::Path, rect: box_rect, text: String::new() });
                 w.push(button(BROWSE, RECT::new(box_rect.right + self.s(10), box_rect.top, self.s(104), box_rect.height()), "瀏覽…", false));
                 w.push(check(CHK_DEFAULT, self.s(232), "設為預設檔案總管（Win+E 與開啟資料夾都改用 Stillfeather）", self.default_fm));
-                w.push(check(CHK_DESKTOP, self.s(268), "建立桌面捷徑", self.desktop));
-                w.push(check(CHK_START, self.s(304), "加入開始功能表", self.start_menu));
+                w.push(check(CHK_PICKER, self.s(268), "其他程式開啟檔案時也用 Stillfeather（上傳、選擇資料夾）", self.picker));
+                w.push(check(CHK_DESKTOP, self.s(304), "建立桌面捷徑", self.desktop));
+                w.push(check(CHK_START, self.s(340), "加入開始功能表", self.start_menu));
                 w.push(button(CANCEL, cancel_rect, "取消", false));
                 w.push(button(PRIMARY, primary_rect, "安裝", true));
                 // 輸入框放在圓角框裡、垂直置中
@@ -466,7 +472,7 @@ impl Wizard {
             (flow, Page::Done) => {
                 let ok = matches!(self.outcome, Some(Ok(_)));
                 if flow == Flow::Install && ok {
-                    w.push(check(CHK_LAUNCH, self.s(318), "立即開啟 Stillfeather", self.launch));
+                    w.push(check(CHK_LAUNCH, self.s(354), "立即開啟 Stillfeather", self.launch));
                 }
                 w.push(button(PRIMARY, primary_rect, if ok { "完成" } else { "關閉" }, true));
             }
@@ -521,6 +527,9 @@ impl Wizard {
                 if self.default_fm {
                     b.push_str("\n\nWin+E 與開啟資料夾都會使用 Stillfeather。要改回 Windows 檔案總管，可以在 Stillfeather 的設定取消「設為預設檔案總管」，或解除安裝。");
                 }
+                if self.picker {
+                    b.push_str("\n\n其他程式開啟檔案、網頁上傳時也會跳出 Stillfeather（已經開著的程式要重新開啟）；可以在設定取消。");
+                }
                 ("安裝完成".into(), b)
             }
             (Flow::Install, Page::Done) => ("安裝沒有完成".into(), self.failure_text()),
@@ -529,7 +538,7 @@ impl Wizard {
             (Flow::Update, Page::Done) => ("更新沒有完成".into(), format!("{}\n\n按「關閉」會重新開啟 Stillfeather；可以稍後在設定按「檢查更新」再試一次。", self.failure_text())),
             (Flow::Uninstall, Page::Start) => {
                 let mut b = format!(
-                    "解除安裝會：\n•  把預設的檔案總管改回 Windows 檔案總管\n•  刪除程式檔案與捷徑（{}）\n•  刪除設定、資料夾檢視記錄與記錄檔（%LOCALAPPDATA%\\{}）",
+                    "解除安裝會：\n•  把預設的檔案總管改回 Windows 檔案總管，開啟檔案視窗改回 Windows 原本的\n•  刪除程式檔案與捷徑（{}）\n•  刪除設定、資料夾檢視記錄與記錄檔（%LOCALAPPDATA%\\{}）",
                     self.dir,
                     install::DATA_DIR_NAME
                 );
@@ -545,7 +554,7 @@ impl Wizard {
         text(dc, &title, &title_rect, self.fonts.title, p.ink, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
         if !body.is_empty() {
             // 下方有「立即開啟」勾選時留出位置
-            let bottom = if self.widgets.iter().any(|w| w.id == CHK_LAUNCH) { self.s(310) } else { footer_top - self.s(12) };
+            let bottom = if self.widgets.iter().any(|w| w.id == CHK_LAUNCH) { self.s(346) } else { footer_top - self.s(12) };
             text(dc, &body, &body_rect(self.s(140), bottom), self.fonts.body, p.ink, DT_LEFT | DT_WORDBREAK);
         }
         match self.page {
@@ -683,6 +692,7 @@ impl Wizard {
     fn activate(&mut self, id: u16) {
         match id {
             CHK_DEFAULT => self.default_fm = !self.default_fm,
+            CHK_PICKER => self.picker = !self.picker,
             CHK_DESKTOP => self.desktop = !self.desktop,
             CHK_START => self.start_menu = !self.start_menu,
             CHK_LAUNCH => self.launch = !self.launch,
@@ -713,6 +723,7 @@ impl Wizard {
         for w in &mut self.widgets {
             w.kind = match (&w.kind, w.id) {
                 (Kind::Check(_), CHK_DEFAULT) => Kind::Check(self.default_fm),
+                (Kind::Check(_), CHK_PICKER) => Kind::Check(self.picker),
                 (Kind::Check(_), CHK_DESKTOP) => Kind::Check(self.desktop),
                 (Kind::Check(_), CHK_START) => Kind::Check(self.start_menu),
                 (Kind::Check(_), CHK_LAUNCH) => Kind::Check(self.launch),
@@ -803,7 +814,7 @@ impl Wizard {
                     }
                 };
                 self.dir = dir.clone();
-                let opts = InstallOptions { dir, default_fm: Some(self.default_fm), desktop: Some(self.desktop), start_menu: Some(self.start_menu) };
+                let opts = InstallOptions { dir, default_fm: Some(self.default_fm), picker: Some(self.picker), desktop: Some(self.desktop), start_menu: Some(self.start_menu) };
                 std::thread::spawn(move || {
                     unsafe {
                         CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED);
@@ -815,7 +826,7 @@ impl Wizard {
             }
             Flow::Update => {
                 // 維持原本的預設檔案總管設定與捷徑
-                let opts = InstallOptions { dir: self.dir.clone(), default_fm: None, desktop: None, start_menu: None };
+                let opts = InstallOptions { dir: self.dir.clone(), default_fm: None, picker: None, desktop: None, start_menu: None };
                 std::thread::spawn(move || {
                     unsafe {
                         CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED);

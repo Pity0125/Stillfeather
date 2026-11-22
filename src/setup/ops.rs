@@ -32,8 +32,10 @@ pub type Progress<'a> = &'a mut dyn FnMut(u32, &str);
 
 pub struct InstallOptions {
     pub dir: String,
-    /// None：維持原狀（更新時）
+    /// 設為預設檔案總管（並記下選擇）；None：維持原狀（更新時）
     pub default_fm: Option<bool>,
+    /// 其他程式開啟檔案時也用 Stillfeather；None：維持使用者原本的選擇（沒選過就是開啟，Stillfeather 啟動時處理）
+    pub picker: Option<bool>,
     /// 捷徑：Some(true) 建立、Some(false) 拿掉、None 維持原狀（更新時）
     pub desktop: Option<bool>,
     pub start_menu: Option<bool>,
@@ -331,9 +333,42 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
 
     progress(85, "設定預設檔案總管…");
     match opts.default_fm {
-        Some(true) => shellreg::set_default_file_manager(&exe)?,
-        Some(false) if shellreg::is_default_file_manager(&exe) => shellreg::restore_default_file_manager()?,
-        _ => {}
+        Some(true) => {
+            shellreg::set_default_file_manager(&exe)?;
+            let _ = shellreg::set_default_fm_choice(true);
+        }
+        Some(false) => {
+            if shellreg::is_default_file_manager(&exe) {
+                shellreg::restore_default_file_manager()?;
+            }
+            let _ = shellreg::set_default_fm_choice(false);
+        }
+        // 更新：維持原狀。舊版裝的沒有記下選擇（沒選過時 Stillfeather 啟動會設為預設）：
+        // 照目前的狀態記下，使用者當初沒勾就不會被改掉
+        None => {
+            if shellreg::default_fm_choice().is_none() {
+                let _ = shellreg::set_default_fm_choice(shellreg::default_fm_program().is_some());
+            }
+        }
+    }
+
+    // 選用的功能：失敗不影響安裝（Stillfeather 每次啟動會依使用者的選擇再處理一次）
+    progress(92, "設定開啟檔案視窗…");
+    match opts.picker {
+        Some(true) => {
+            let _ = shellreg::set_picker_choice(true);
+            if !PICKER_PAYLOAD.is_empty() {
+                if let Ok(dll) = shellreg::deploy_picker(&paths::join(dir, feather_core::picker::DLL_NAME)) {
+                    // 另一個程式已經取代了這個視窗時不覆寫
+                    let _ = shellreg::enable_picker(&dll, &exe);
+                }
+            }
+        }
+        Some(false) => {
+            let _ = shellreg::set_picker_choice(false);
+            let _ = shellreg::disable_picker();
+        }
+        None => {}
     }
     shellreg::notify_assoc_changed();
     progress(100, "完成");
@@ -352,6 +387,9 @@ pub fn install_with_elevation(opts: &InstallOptions, elevated: bool, progress: P
             let mut args = vec!["--elevated".to_string(), "/S".to_string(), "--dir".to_string(), opts.dir.clone()];
             if let Some(d) = opts.default_fm {
                 args.push(flag(d, "--default-explorer", "--no-default-explorer"));
+            }
+            if let Some(p) = opts.picker {
+                args.push(flag(p, "--file-picker", "--no-file-picker"));
             }
             // 沒有指定的捷徑維持原狀（--update 讓靜默模式不套用預設值）
             if opts.desktop.is_none() || opts.start_menu.is_none() {
@@ -622,7 +660,7 @@ pub fn launch_app(dir: &str) {
 
 // ---------------------------------------------------------------- 靜默模式
 
-/// 不顯示畫面的安裝（/S）：預設不改預設檔案總管、不建桌面捷徑（要的話加參數），結束代碼 0 表示成功。
+/// 不顯示畫面的安裝（/S）：預設設為預設檔案總管（不要的話加 `--no-default-explorer`）、不建桌面捷徑（要的話加參數），結束代碼 0 表示成功。
 /// 加上 `--update` 時沒有指定的選項一律維持原狀，並在完成後開啟 Stillfeather（除非 `--no-launch`）。
 pub fn silent_install(a: &SetupArgs) -> i32 {
     let result = (|| {
@@ -631,9 +669,9 @@ pub fn silent_install(a: &SetupArgs) -> i32 {
         let prot: Vec<&str> = prot.iter().map(String::as_str).collect();
         let dir = install::normalize_install_dir(&raw, &prot)?;
         let opts = if a.update {
-            InstallOptions { dir: dir.clone(), default_fm: a.default_fm, desktop: a.desktop, start_menu: a.start_menu }
+            InstallOptions { dir: dir.clone(), default_fm: a.default_fm, picker: a.file_picker, desktop: a.desktop, start_menu: a.start_menu }
         } else {
-            InstallOptions { dir: dir.clone(), default_fm: a.default_fm, desktop: Some(a.desktop.unwrap_or(false)), start_menu: Some(a.start_menu.unwrap_or(true)) }
+            InstallOptions { dir: dir.clone(), default_fm: Some(a.default_fm.unwrap_or(true)), picker: a.file_picker, desktop: Some(a.desktop.unwrap_or(false)), start_menu: Some(a.start_menu.unwrap_or(true)) }
         };
         install_with_elevation(&opts, a.elevated, &mut |_, _| {})?;
         if a.launch.unwrap_or(a.update) {

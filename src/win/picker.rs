@@ -525,64 +525,42 @@ fn bundled_dll() -> Option<String> {
     std::path::Path::new(&dll).is_file().then_some(dll)
 }
 
-/// 實際登記的那一份：%LOCALAPPDATA%\FeatherFiles\Picker\StillfeatherPicker.dll（見 install::PICKER_DIR_NAME）
-fn deployed_dll_path() -> Option<String> {
-    let base = std::env::var("LOCALAPPDATA").ok()?;
-    let dir = paths::join(&paths::join(&base, install::DATA_DIR_NAME), install::PICKER_DIR_NAME);
-    Some(paths::join(&dir, picker::DLL_NAME))
-}
-
-/// 把程式資料夾裡的取代元件複製到登記的位置（內容相同就不動），回傳它的路徑。
-/// 舊的那一份可能正載入在其他程式裡（無法覆寫或刪除）：先改名讓出位置，那些程式結束後下次再清掉。
+/// 把程式資料夾裡的取代元件複製到登記的位置，回傳它的路徑
 fn deploy_dll() -> Result<String, String> {
     let src = bundled_dll().ok_or_else(|| format!("找不到 {}。開發版請重新執行 build.ps1；安裝版請重新安裝 Stillfeather。", picker::DLL_NAME))?;
-    let dst = deployed_dll_path().ok_or("找不到 %LOCALAPPDATA%。")?;
-    let dir = paths::parent(&dst).ok_or("位置無效。")?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("無法建立 {dir}：{e}"))?;
-    let data = std::fs::read(&src).map_err(|e| format!("無法讀取 {src}：{e}"))?;
-    if std::fs::read(&dst).is_ok_and(|old| old == data) {
-        remove_old_copies(&dir);
-        return Ok(dst);
-    }
-    if std::path::Path::new(&dst).exists() && std::fs::remove_file(&dst).is_err() {
-        let old = format!("{dst}.old-{}", unsafe { GetTickCount64() });
-        std::fs::rename(&dst, &old).map_err(|e| format!("無法更新 {dst}（正被其他程式使用）：{e}"))?;
-    }
-    std::fs::write(&dst, &data).map_err(|e| format!("無法寫入 {dst}：{e}"))?;
-    remove_old_copies(&dir);
-    Ok(dst)
+    shellreg::deploy_picker(&src)
 }
 
-/// 刪掉之前改名讓位的舊版（還在使用中的刪不掉，下次再試）
-fn remove_old_copies(dir: &str) {
-    let prefix = format!("{}.old-", picker::DLL_NAME).to_lowercase();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for e in entries.flatten() {
-            if e.file_name().to_string_lossy().to_lowercase().starts_with(&prefix) {
-                let _ = std::fs::remove_file(e.path());
-            }
-        }
-    }
-}
-
-/// 主程式啟動時：功能開著的話，把登記的取代元件更新成這一版（重新建置、更新之後），
-/// 記下的 Stillfeather 不見了就改用這一份；程式資料夾和登記的那一份都不在時取消登記，免得其他程式開不了檔案。
+/// 主程式啟動時依使用者的選擇處理（沒選過時預設開啟）：
+/// - 開啟：還沒登記就登記（程式旁邊沒有取代元件時略過）；已經登記的更新成這一版（重新建置、更新之後），
+///   記下的 Stillfeather 不見了就改用這一份。另一份 Stillfeather（例如安裝版）負責時不動。
+/// - 關閉：還登記著就取消。
+///
+/// 程式資料夾和登記的那一份都不在時取消登記，免得其他程式開不了檔案。
 pub(super) fn maintain() {
-    if !shellreg::picker_enabled() {
+    if !shellreg::picker_choice() {
+        if shellreg::picker_enabled() {
+            let _ = shellreg::disable_picker();
+        }
         return;
     }
     let Some(exe) = current_exe_path() else { return };
-    let recorded = shellreg::read_string(install::APP_KEY, install::PICKER_EXE_VALUE);
-    let mine = recorded.as_deref().is_none_or(|p| install::same_path(p, &exe) || !std::path::Path::new(p).is_file());
-    if !mine {
-        return; // 另一份 Stillfeather（例如安裝版）負責
+    if shellreg::picker_enabled() {
+        let recorded = shellreg::read_string(install::APP_KEY, install::PICKER_EXE_VALUE);
+        let mine = recorded.as_deref().is_none_or(|p| install::same_path(p, &exe) || !std::path::Path::new(p).is_file());
+        if !mine {
+            return;
+        }
+    } else if bundled_dll().is_none() {
+        return;
     }
     match deploy_dll() {
         Ok(dll) => {
+            // 另一個程式已經取代了這個視窗時會失敗：不覆寫它，下次啟動再看
             let _ = shellreg::enable_picker(&dll, &exe);
         }
         Err(_) => {
-            if shellreg::picker_registered_dll().is_some_and(|p| !std::path::Path::new(&p).is_file()) {
+            if shellreg::picker_registered_dll().is_some_and(|p| install::is_picker_dll(&p) && !std::path::Path::new(&p).is_file()) {
                 let _ = shellreg::disable_picker();
             }
         }
@@ -592,6 +570,8 @@ pub(super) fn maintain() {
 impl App {
     /// 設定裡的「其他程式開啟檔案時也用 Stillfeather」
     pub(super) fn set_picker_enabled(&mut self, on: bool) {
+        // 先記下選擇：之後每次啟動都照這個選擇處理（沒選過時預設開啟）
+        let _ = shellreg::set_picker_choice(on);
         let result = if on {
             current_exe_path().ok_or_else(|| "找不到 Stillfeather 程式的位置。".to_string()).and_then(|exe| {
                 let dll = deploy_dll()?;
