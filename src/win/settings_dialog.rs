@@ -1,5 +1,5 @@
 //! 設定對話方塊：主題、重點色與背景色、側欄寬度、雙欄比例、緊湊清單、副檔名與快速預覽開關（含「按空白鍵預覽」），
-//! 以及「設為預設檔案總管」（寫在登錄，不在設定檔；「還原預設」不會改它）。
+//! 以及「設為預設檔案總管」與「其他程式開啟檔案時也用 Stillfeather」（寫在登錄，不在設定檔；「還原預設」不會改它們）。
 //! 「還原預設」只填入預設值，需再按「儲存」才會套用，並保留常用位置。
 
 use super::app;
@@ -29,6 +29,7 @@ const T_PDF: u16 = 33;
 const T_SPACE: u16 = 34;
 const T_DEFAULT_FM: u16 = 35;
 const T_NO_UPDATES: u16 = 36;
+const T_PICKER: u16 = 37;
 const CHECK_UPDATES: u16 = 41;
 const RESET: u16 = 40;
 const NOTE_ID: u16 = 90;
@@ -42,13 +43,15 @@ struct State {
     result: Option<Settings>,
     /// 「設為預設檔案總管」按下儲存時的狀態
     default_fm: bool,
+    /// 「其他程式開啟檔案時也用 Stillfeather」按下儲存時的狀態
+    picker: bool,
     done: bool,
     segments: [HWND; 3],
     accent: HWND,
     background: HWND,
     sidebar: HWND,
     split: HWND,
-    toggles: [HWND; 7],
+    toggles: [HWND; 8],
     frames: Vec<(RECT, HWND)>,
     custom_colors: [COLORREF; 16],
 }
@@ -257,12 +260,12 @@ fn pick_color(dlg: HWND, st: &mut State, target: HWND, fallback: COLORREF) {
     }
 }
 
-/// 顯示對話方塊（強制回應）；按「儲存」且驗證通過時回傳新設定，以及「設為預設檔案總管」要不要開著。
-/// `default_fm` 是目前是否為預設檔案總管。
-pub fn show(owner: HWND, current: &Settings, default_fm: bool) -> Option<(Settings, bool)> {
+/// 顯示對話方塊（強制回應）；按「儲存」且驗證通過時回傳新設定，以及「設為預設檔案總管」
+/// 與「其他程式開啟檔案時也用 Stillfeather」要不要開著。`default_fm`、`picker` 是目前的狀態。
+pub fn show(owner: HWND, current: &Settings, default_fm: bool, picker: bool) -> Option<(Settings, bool, bool)> {
     let t = app::theme();
     let s = |v: i32| t.s(v);
-    let (cw, ch) = (s(500), s(586));
+    let (cw, ch) = (s(500), s(628));
     let class = wide(CLASS);
     let title = wide("設定");
     let dlg = unsafe {
@@ -300,13 +303,14 @@ pub fn show(owner: HWND, current: &Settings, default_fm: bool) -> Option<(Settin
         base: current.clone(),
         result: None,
         default_fm,
+        picker,
         done: false,
         segments: [0; 3],
         accent: 0,
         background: 0,
         sidebar: 0,
         split: 0,
-        toggles: [0; 7],
+        toggles: [0; 8],
         frames: Vec::new(),
         custom_colors: [rgb(255, 255, 255); 16],
     });
@@ -349,6 +353,9 @@ pub fn show(owner: HWND, current: &Settings, default_fm: bool) -> Option<(Settin
     let yy = yy + s(70);
     st.toggles[5] = button(dlg, T_DEFAULT_FM, Kind::Toggle, "設為預設檔案總管（Win+E 與開啟資料夾）", RECT::new(lx, yy, cw - lx * 2, row_h));
     controls::set_checked(st.toggles[5], default_fm);
+    let yy = yy + s(42);
+    st.toggles[7] = button(dlg, T_PICKER, Kind::Toggle, "其他程式開啟檔案時也用 Stillfeather（上傳、選擇資料夾）", RECT::new(lx, yy, cw - lx * 2, row_h));
+    controls::set_checked(st.toggles[7], picker);
     // 更新：關掉自動提醒的開關、目前版本與檢查結果、手動檢查
     let yy = yy + s(42);
     st.toggles[6] = button(dlg, T_NO_UPDATES, Kind::Toggle, "不要啟用更新提醒", RECT::new(lx, yy, s(200), row_h));
@@ -406,7 +413,7 @@ pub fn show(owner: HWND, current: &Settings, default_fm: bool) -> Option<(Settin
         if let Some(code) = quit {
             PostQuitMessage(code);
         }
-        st.result.map(|r| (r, st.default_fm))
+        st.result.map(|r| (r, st.default_fm, st.picker))
     }
 }
 
@@ -474,6 +481,7 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     Ok(s) => {
                         st.result = Some(s);
                         st.default_fm = controls::is_checked(st.toggles[5]);
+                        st.picker = controls::is_checked(st.toggles[7]);
                         st.done = true;
                     }
                     Err(e) => {

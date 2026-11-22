@@ -4,7 +4,7 @@
 use super::ffi::*;
 use super::shellreg;
 use super::sys::*;
-use super::{PAYLOAD, VERSION};
+use super::{PAYLOAD, PICKER_PAYLOAD, VERSION};
 use feather_core::install::{self, SetupArgs};
 use feather_core::paths;
 use std::ffi::c_void;
@@ -283,6 +283,13 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
         }
     }
 
+    // 「其他程式開啟檔案時也用 Stillfeather」的取代元件：放在 exe 旁邊。登記的是 Stillfeather 複製到
+    // %LOCALAPPDATA% 的那一份（其他程式載入的是它），所以這裡的一份不會被占用，可以直接取代。
+    if !PICKER_PAYLOAD.is_empty() {
+        progress(32, "寫入開啟檔案視窗元件…");
+        write_file_atomic(&paths::join(dir, feather_core::picker::DLL_NAME), PICKER_PAYLOAD)?;
+    }
+
     progress(40, "寫入解除安裝程式…");
     let me = own_exe().ok_or("找不到安裝程式本身的位置。")?;
     let uninstaller = paths::join(dir, install::UNINSTALLER_NAME);
@@ -296,7 +303,7 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
     }
 
     progress(55, "登記到「已安裝的應用程式」…");
-    let size_kb = ((PAYLOAD.len() + std::fs::metadata(&me).map(|m| m.len() as usize).unwrap_or(0)) / 1024) as u32;
+    let size_kb = ((PAYLOAD.len() + PICKER_PAYLOAD.len() + std::fs::metadata(&me).map(|m| m.len() as usize).unwrap_or(0)) / 1024) as u32;
     let entry = install::uninstall_entry(dir, VERSION, size_kb, &today());
     for (name, data) in &entry.strings {
         shellreg::set_string(install::UNINSTALL_KEY, name, data)?;
@@ -374,6 +381,10 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
     if let Err(e) = shellreg::restore_default_file_manager() {
         errors.push(e);
     }
+    // 其他程式改回 Windows 原本的開啟檔案視窗
+    if let Err(e) = shellreg::disable_picker() {
+        errors.push(e);
+    }
 
     progress(35, "刪除捷徑…");
     let (start, desktop) = shortcut_paths();
@@ -385,6 +396,7 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
     progress(50, "刪除設定與記錄…");
     if let Some(base) = local_app_data() {
         let data = paths::join(&base, install::DATA_DIR_NAME);
+        move_loaded_picker(&data);
         if std::path::Path::new(&data).exists() {
             if let Err(e) = std::fs::remove_dir_all(&data) {
                 errors.push(format!("無法刪除 {data}：{e}"));
@@ -411,6 +423,7 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
         delete_file(&paths::join(dir, name));
     }
     let _ = std::fs::remove_file(paths::join(dir, &format!("{}.new", install::EXE_NAME)));
+    delete_file(&paths::join(dir, feather_core::picker::DLL_NAME));
     let uninstaller = paths::join(dir, install::UNINSTALLER_NAME);
     if !delete_file(&uninstaller) {
         later.push(uninstaller);
@@ -433,6 +446,21 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
         Ok(later)
     } else {
         Err(errors.join("\n"))
+    }
+}
+
+/// 取代元件可能還載入在其他程式裡（刪不掉，資料夾也就刪不乾淨）：移到暫存資料夾
+/// （Windows 允許改名使用中的 DLL），那些程式結束後由系統的磁碟清理處理。
+fn move_loaded_picker(data_dir: &str) {
+    let dir = paths::join(data_dir, install::PICKER_DIR_NAME);
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    for (i, e) in entries.flatten().enumerate() {
+        if std::fs::remove_file(e.path()).is_ok() {
+            continue;
+        }
+        let target = std::env::temp_dir().join(format!("Stillfeather-old-{stamp}-{i}-{}", e.file_name().to_string_lossy()));
+        let _ = std::fs::rename(e.path(), target);
     }
 }
 

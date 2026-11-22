@@ -1,0 +1,26 @@
+[package]
+name = "stillfeather-picker"
+version = "0.1.0"
+edition = "2021"
+description = "Stillfeather：讓其他程式的「開啟檔案」視窗改用 Stillfeather（取代元件）"
+publish = false
+
+# 這個 DLL 會被載入其他程式（瀏覽器、編輯器…）裡，所以和 Stillfeather 本體分開建置：
+# 本體在 panic 時直接結束，這裡要用 unwind，每個 COM 方法都接住 panic、回傳錯誤，不讓別人的程式當掉。
+# 同樣不使用任何第三方 crate。
+[lib]
+name = "stillfeather_picker"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "unwind"
+strip = true
+
+# 獨立的工作區（不是上層 Stillfeather 專案的一部分，建置輸出在 picker-dll\target）
+[workspace]

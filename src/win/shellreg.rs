@@ -268,3 +268,41 @@ pub fn restore_default_file_manager() -> Result<(), String> {
         None => Ok(()),
     }
 }
+
+// ---------------------------------------------------------------- 其他程式的「開啟檔案」視窗
+
+/// 目前登記在目前使用者底下的「開啟檔案」視窗元件（沒有登記時是 None：用的是 Windows 原本的）
+pub fn picker_registered_dll() -> Option<String> {
+    read_string(&install::picker_server_key(), "")
+}
+
+/// 其他程式開啟檔案時會不會跳出 Stillfeather
+pub fn picker_enabled() -> bool {
+    picker_registered_dll().is_some_and(|p| install::is_picker_dll(&p))
+}
+
+/// 登記 Stillfeather 的取代元件（`dll`），並記下它要啟動的 Stillfeather（`exe`）。
+/// 已經有別的程式取代了這個視窗時不覆寫，回報錯誤。
+pub fn enable_picker(dll: &str, exe: &str) -> Result<(), String> {
+    if let Some(current) = picker_registered_dll() {
+        if !install::is_picker_dll(&current) {
+            return Err(format!("另一個程式已經取代了 Windows 的開啟檔案視窗（{current}），為了不影響它，沒有變更。"));
+        }
+    }
+    set_string(install::APP_KEY, install::PICKER_EXE_VALUE, exe)?;
+    let server = install::picker_server_key();
+    set_string(&server, "", dll)?;
+    set_string(&server, "ThreadingModel", "Apartment")
+}
+
+/// 取消登記，其他程式恢復使用 Windows 原本的視窗。只拿掉 Stillfeather 寫的部分。
+pub fn disable_picker() -> Result<(), String> {
+    let mut result = Ok(());
+    if picker_enabled() {
+        result = delete_tree(&install::picker_server_key());
+        delete_key_if_empty(&install::picker_clsid_key());
+    }
+    let _ = delete_value(install::APP_KEY, install::PICKER_EXE_VALUE);
+    delete_key_if_empty(install::APP_KEY);
+    result
+}

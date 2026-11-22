@@ -109,6 +109,14 @@ pub mod id {
     pub const SHOW_EXTENSIONS: u16 = 261;
     /// 把目前的檢視設為所有資料夾的檢視（清掉個別資料夾的記錄）
     pub const VIEW_APPLY_ALL: u16 = 262;
+    /// 選擇器（見 picker.rs）：確定、取消、改用 Windows 視窗、檔案類型選單、檔名欄
+    pub const PICK_OK: u16 = 270;
+    pub const PICK_CANCEL: u16 = 271;
+    pub const PICK_SYSTEM: u16 = 272;
+    pub const PICK_TYPE: u16 = 273;
+    pub const PICK_NAME: u16 = 274;
+    /// 檔案類型選單的項目：PICK_TYPE_FIRST + 第幾個類型
+    pub const PICK_TYPE_FIRST: u16 = 300;
 }
 
 // ---------------------------------------------------------------- 全域存取
@@ -241,6 +249,8 @@ pub(super) struct Tab {
     pub stale: bool,
     /// 這次讀取資料夾或搜尋開始的時間（寫進 trace.log 供效能量測）
     pub work_started: Option<std::time::Instant>,
+    /// 選擇器的檔案類型篩選（一般視窗是 None）
+    pub pick: Option<feather_core::picker::Filter>,
 }
 
 impl Tab {
@@ -270,6 +280,7 @@ impl Tab {
             pending_rename: false,
             stale: false,
             work_started: None,
+            pick: None,
         }
     }
 
@@ -299,7 +310,17 @@ impl Tab {
     }
 
     pub fn refilter(&mut self) {
-        self.rows = filter_rows(&self.entries, self.filter);
+        self.rows = match &self.pick {
+            Some(pick) if !pick.is_all() => {
+                Some(self.entries.iter().enumerate().filter(|(_, e)| self.filter.matches(e) && pick.matches(&e.name, e.is_dir)).map(|(i, _)| i as u32).collect())
+            }
+            _ => filter_rows(&self.entries, self.filter),
+        };
+    }
+
+    /// 這個項目在清單上顯示嗎（類型篩選籤，以及選擇器的檔案類型）
+    pub fn shows(&self, e: &Entry) -> bool {
+        self.filter.matches(e) && self.pick.as_ref().is_none_or(|p| p.matches(&e.name, e.is_dir))
     }
 
     pub fn resummarize(&mut self) {
@@ -527,6 +548,8 @@ pub struct App {
     search_open: Tween,
     /// 自動重新整理：顯示中資料夾的變更通知與重新讀取排程
     pub(super) watch: super::watch::Watches,
+    /// 選擇器模式（其他程式要開啟檔案時）；一般視窗是 None
+    pub(super) picker: Option<super::picker::Picker>,
 }
 
 pub fn settings_path() -> Result<String, String> {
@@ -584,6 +607,10 @@ pub(super) fn write_atomic(path: &str, text: &str) -> Result<(), String> {
 }
 
 pub fn write_settings(settings: &Settings) -> Result<(), String> {
+    // 選擇器是另一個程序：改了檢視、隱藏項目等只在這次有效，不寫回設定檔（主程式可能同時開著）
+    if super::picker::active() {
+        return Ok(());
+    }
     let mut copy = settings.clone();
     copy.validate()?;
     write_atomic(&settings_path()?, &copy.to_json())
@@ -610,12 +637,18 @@ fn load_folder_views() -> (FolderViews, Option<String>) {
 }
 
 pub fn write_folder_views(views: &FolderViews) -> Result<(), String> {
+    if super::picker::active() {
+        return Ok(());
+    }
     write_atomic(&folder_views_path()?, &views.to_json())
 }
 
-pub fn run(paths_in: Vec<String>) -> i32 {
+/// 建立主視窗並執行訊息迴圈。`pick` 有值時是選擇器模式（見 picker.rs）：精簡的介面、蓋在要求的程式上，
+/// 回傳值是交給取代元件的結束代碼。
+pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) -> i32 {
     let hinst = unsafe { GetModuleHandleW(std::ptr::null()) };
-    let class_name = instance::main_class();
+    // 選擇器用不同的視窗類別：單一實例與安裝程式找主視窗時不會找到它
+    let class_name = if pick.is_some() { format!("{}.Picker", instance::main_class()) } else { instance::main_class() };
     let class = wide(&class_name);
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -649,34 +682,28 @@ pub fn run(paths_in: Vec<String>) -> i32 {
     let theme = Theme::new(&settings, dpi);
     theme::apply_app_mode(theme.pal.dark);
 
-    // 視窗大小：預設 1280×800（依 DPI 縮放），不超過游標所在螢幕的工作區。
+    // 選擇器：蓋在要求的程式的視窗上（它的視窗是擁有者），置中在那個視窗上
+    let owner = pick.as_ref().map(|p| p.req.owner).filter(|o| *o != 0 && unsafe { IsWindow(*o) } != 0).unwrap_or(0);
+    // 視窗大小：預設 1280×800（選擇器 1100×720，依 DPI 縮放），不超過游標（或擁有者）所在螢幕的工作區。
     let (x, y, w, h) = unsafe {
-        let mon = MonitorFromPoint(cursor_pos(), MONITOR_DEFAULTTONEAREST);
+        let mut or = RECT::default();
+        let anchor = if owner != 0 && GetWindowRect(owner, &mut or) != 0 { POINT { x: or.left + or.width() / 2, y: or.top + or.height() / 2 } } else { cursor_pos() };
+        let mon = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
         let mut mi: MONITORINFO = std::mem::zeroed();
         mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
         GetMonitorInfoW(mon, &mut mi);
         let work = mi.rcWork;
-        let w = scale(1280, dpi).min(work.width() - 40).max(400);
-        let h = scale(800, dpi).min(work.height() - 40).max(300);
-        (work.left + (work.width() - w) / 2, work.top + (work.height() - h) / 2, w, h)
+        let (base_w, base_h) = if pick.is_some() { (1100, 720) } else { (1280, 800) };
+        let w = scale(base_w, dpi).min(work.width() - 40).max(400);
+        let h = scale(base_h, dpi).min(work.height() - 40).max(300);
+        let x = (anchor.x - w / 2).clamp(work.left, (work.right - w).max(work.left));
+        let y = (anchor.y - h / 2).clamp(work.top, (work.bottom - h).max(work.top));
+        (x, y, w, h)
     };
-    let title = wide("Stillfeather");
-    let hwnd = unsafe {
-        CreateWindowExW(
-            WS_EX_CONTROLPARENT,
-            class.as_ptr(),
-            title.as_ptr(),
-            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-            x,
-            y,
-            w,
-            h,
-            0,
-            0,
-            hinst,
-            std::ptr::null(),
-        )
-    };
+    let title = wide(&pick.as_ref().map(|p| p.req.window_title()).unwrap_or_else(|| "Stillfeather".into()));
+    // 選擇器像對話方塊：沒有最小化（擁有者在它關閉前不能操作）
+    let style = if pick.is_some() { (WS_OVERLAPPEDWINDOW & !WS_MINIMIZEBOX) | WS_CLIPCHILDREN } else { WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN };
+    let hwnd = unsafe { CreateWindowExW(WS_EX_CONTROLPARENT, class.as_ptr(), title.as_ptr(), style, x, y, w, h, owner, 0, hinst, std::ptr::null()) };
     if hwnd == 0 {
         message_box(0, &format!("無法建立主視窗：{}", last_error_text()), MB_OK | MB_ICONERROR);
         return 1;
@@ -698,7 +725,8 @@ pub fn run(paths_in: Vec<String>) -> i32 {
     let mut tabs_map = HashMap::new();
     tabs_map.insert(first, Tab::new());
     let icons = Icons::new(theme.dpi, settings.compact_rows);
-    let show_hidden = settings.show_hidden;
+    // 程式要求一律顯示隱藏的項目（FOS_FORCESHOWHIDDEN）
+    let show_hidden = settings.show_hidden || pick.as_ref().is_some_and(|p| p.req.show_hidden);
     let default_view = settings.view_mode;
     let (views, views_error) = load_folder_views();
     let boxed = Box::new(App {
@@ -783,10 +811,12 @@ pub fn run(paths_in: Vec<String>) -> i32 {
         search_fx: Tween::new(0.0),
         search_open: Tween::new(0.0),
         watch: Default::default(),
+        picker: pick,
     });
     APP.store(Box::into_raw(boxed), Ordering::Release);
     let a = app();
     a.create_children();
+    a.create_picker_controls();
     dragdrop::register(a.lists[0], dragdrop::DropWindow::List(Side::Left));
     dragdrop::register(a.lists[1], dragdrop::DropWindow::List(Side::Right));
     dragdrop::register(a.tree, dragdrop::DropWindow::Tree);
@@ -806,11 +836,19 @@ pub fn run(paths_in: Vec<String>) -> i32 {
     }
     super::crashlog::crumb_value("效能：主視窗顯示（啟動後毫秒）", super::since_start_ms());
     a.focus_list(Side::Left);
-    a.open_paths(paths_in, true);
-    if let Some(e) = settings_error.or(views_error) {
-        a.set_footer(e);
+    if a.picker_mode() {
+        // 選擇器：不開指定的路徑、不檢查更新；從程式指定（或上次用）的資料夾開始
+        let _ = (settings_error, views_error);
+        a.picker_start();
+    } else {
+        a.open_paths(paths_in, true);
+        if let Some(e) = settings_error.or(views_error) {
+            a.set_footer(e);
+        }
+        a.schedule_update_check();
+        // 「其他程式開啟檔案時也用 Stillfeather」開著時，更新登記的取代元件
+        super::picker::maintain();
     }
-    a.schedule_update_check();
 
     let mut msg: MSG = unsafe { std::mem::zeroed() };
     unsafe {
@@ -973,6 +1011,9 @@ impl App {
                 send(h, WM_SETFONT, self.theme.fonts.small as WPARAM, 1);
             }
         }
+        if let Some(p) = self.picker.as_ref() {
+            send(p.name_edit, WM_SETFONT, ui, 1);
+        }
     }
 
     pub(super) fn apply_theme_to_controls(&mut self) {
@@ -1015,6 +1056,9 @@ impl App {
         all.extend(self.top_buttons.iter().copied());
         all.extend(self.action_buttons.iter().copied());
         all.extend([self.sort_btn, self.view_btn]);
+        if let Some(p) = self.picker.as_ref() {
+            all.extend([p.name_edit, p.type_btn, p.ok_btn, p.cancel_btn, p.system_btn]);
+        }
         for h in all {
             invalidate(h);
         }
@@ -1167,7 +1211,8 @@ impl App {
         l.brand = RECT { left: l.sidebar.left + s(16), top: l.sidebar.top + s(16), right: l.sidebar.right - s(52), bottom: l.sidebar.top + s(60) };
         // 說明按鈕與標頭垂直置中，靠右但不貼邊
         let help = s(30);
-        pos.push((self.help_btn, RECT::new(l.sidebar.right - s(14) - help, (l.brand.top + l.brand.bottom - help) / 2, help, help), true));
+        let pick = self.picker_mode();
+        pos.push((self.help_btn, RECT::new(l.sidebar.right - s(14) - help, (l.brand.top + l.brand.bottom - help) / 2, help, help), !pick));
         let g = self.promo_geometry(l.sidebar);
         l.promo = g.promo;
         l.promo_toggle = g.toggle;
@@ -1191,10 +1236,18 @@ impl App {
         let round = s(40);
         let mut x = cr - round;
         for b in self.top_buttons.iter().rev() {
-            pos.push((*b, RECT::new(x, row_top + (row_h - round) / 2, round, round), true));
-            x -= round + s(8);
+            pos.push((*b, RECT::new(x, row_top + (row_h - round) / 2, round, round), !pick));
+            if !pick {
+                x -= round + s(8);
+            }
         }
-        let top_left = x + round + s(8);
+        let mut top_left = x + round + s(8);
+        if let Some(p) = self.picker.as_ref() {
+            // 選擇器：右上角只有「使用 Windows 視窗」（圓形按鈕都不需要）
+            let sw = s(150);
+            pos.push((p.system_btn, RECT::new(cr - sw, row_top + (row_h - s(34)) / 2, sw, s(34)), true));
+            top_left = cr - sw;
+        }
         l.top_row = RECT { left: cl + 4 * (nav + s(2)) + s(10), top: row_top, right: top_left - s(14), bottom: row_top + row_h };
         let row = self.top_row(l.top_row);
         l.crumbs = row.crumbs;
@@ -1205,12 +1258,17 @@ impl App {
         let title_top = row_top + row_h + s(20);
         let act = s(36);
         let pill_w = s(126);
-        let base_w = pill_w + s(10) + (self.action_buttons.len() as i32 - 1) * (act + s(6));
+        let round_actions = if pick { 0 } else { self.action_buttons.len() as i32 - 1 };
+        let base_w = pill_w + s(10) + round_actions * (act + s(6));
         // 視窗窄到標題剩不到 240 時，排序、檢視只顯示圖示與箭頭
         let menu_w = if cr - cl - base_w - (s(14) + 2 * s(92)) - s(20) >= s(240) { s(92) } else { s(54) };
         let actions_w = base_w + s(8) + 2 * menu_w + s(6);
         let mut ax = cr - actions_w;
         for (i, b) in self.action_buttons.iter().enumerate() {
+            if pick && i > 0 {
+                pos.push((*b, RECT::default(), false));
+                continue;
+            }
             let bw = if i == 0 { pill_w } else { act };
             pos.push((*b, RECT::new(ax, title_top + s(6), bw, act), true));
             ax += bw + if i == 0 { s(10) } else { s(6) };
@@ -1223,15 +1281,18 @@ impl App {
         l.title = RECT { left: cl, top: title_top, right: cr - actions_w - s(20), bottom: title_top + s(44) };
         l.subtitle = RECT { left: cl + s(2), top: l.title.bottom, right: l.title.right, bottom: l.title.bottom + s(22) };
 
-        // ---- 分頁、篩選籤
+        // ---- 分頁、篩選籤（選擇器沒有：清單卡片直接接在標題下）
         let strip_top = l.subtitle.bottom + s(14);
         let strip_h = s(40);
         l.chips = RECT { left: cl, top: strip_top + strip_h + s(10), right: cr, bottom: strip_top + strip_h + s(10) + s(36) };
-        pos.push((self.chips, l.chips, true));
+        pos.push((self.chips, l.chips, !pick));
 
-        // ---- 底部浮動狀態列與清單卡片
-        l.footer = RECT { left: cl, top: h - m - s(54), right: cr, bottom: h - m };
-        let cards_top = l.chips.bottom + s(14);
+        // ---- 底部浮動狀態列（選擇器是檔名欄、類型與確定／取消）與清單卡片
+        l.footer = RECT { left: cl, top: h - m - s(if pick { 62 } else { 54 }), right: cr, bottom: h - m };
+        if pick {
+            pos.extend(self.picker_bar_layout(l.footer));
+        }
+        let cards_top = if pick { strip_top } else { l.chips.bottom + s(14) };
         let cards_bottom = l.footer.top - s(14);
         if self.ws.dual {
             let gap = s(16);
@@ -1245,8 +1306,8 @@ impl App {
         }
         l.strips[0] = RECT { left: cl, top: strip_top, right: l.panes[0].right, bottom: strip_top + strip_h };
         l.strips[1] = RECT { left: l.panes[1].left, top: strip_top, right: cr, bottom: strip_top + strip_h };
-        pos.push((self.strips[0], l.strips[0], true));
-        pos.push((self.strips[1], l.strips[1], self.ws.dual));
+        pos.push((self.strips[0], l.strips[0], !pick));
+        pos.push((self.strips[1], l.strips[1], self.ws.dual && !pick));
         for i in 0..2 {
             let visible = i == 0 || self.ws.dual;
             let pane = l.panes[i];
@@ -1328,6 +1389,9 @@ impl App {
         }
         if t.filter != Category::All {
             parts.push(format!("顯示{} {} 項", t.filter.label(), group_digits(t.row_count() as u64)));
+        } else if t.pick.as_ref().is_some_and(|p| !p.is_all()) {
+            // 選擇器的檔案類型藏起了一些檔案
+            parts.push(format!("顯示 {} 項", group_digits(t.row_count() as u64)));
         }
         (title, parts.join(" · "))
     }
@@ -1490,6 +1554,10 @@ impl App {
                     theme::round_rect(dc, &bar, s(4), Some(p.accent), None);
                 }
 
+                // ---- 選擇器：檔名欄與按鈕（取代浮動狀態列）
+                if self.picker_mode() {
+                    self.paint_picker_bar(dc, l.footer);
+                } else {
                 // ---- 浮動狀態列（參考圖下方的播放列）
                 let ft = l.footer;
                 theme::card(dc, &ft, s(22), p.surface, Some(theme::blend(p.ink, p.surface, 0.05)), &p, dpi);
@@ -1517,6 +1585,7 @@ impl App {
                 let rr = RECT { left: ft.right - s(16) - right_w, right: ft.right - s(18), ..ft };
                 let color = if self.op_busy { p.accent } else { p.muted };
                 theme::draw_text(dc, &self.footer, &rr, f.ui, color, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                }
             }
             EndPaint(self.hwnd, &ps);
         }
@@ -1634,7 +1703,8 @@ impl App {
     fn promo_geometry(&self, sidebar: RECT) -> PromoGeometry {
         let s = |v: i32| self.s(v);
         let none = PromoGeometry { promo: None, toggle: None, button: RECT::default(), button_visible: false, tree_bottom: sidebar.bottom - s(12) };
-        if sidebar.height() <= s(420) {
+        // 選擇器沒有個人化卡片：資料夾樹一路到底
+        if sidebar.height() <= s(420) || self.picker_mode() {
             return none;
         }
         let v = if sidebar.height() > s(600) { anim::value(&self.promo_fx).clamp(0.0, 1.0) } else { 0.0 };
@@ -1977,9 +2047,11 @@ impl App {
         for e in &entries {
             tab.summary.add(e);
         }
-        if let Some(rows) = tab.rows.as_mut() {
-            let filter = tab.filter;
-            rows.extend(entries.iter().enumerate().filter(|(_, e)| filter.matches(e)).map(|(i, _)| (start + i) as u32));
+        if tab.rows.is_some() {
+            let shown: Vec<u32> = entries.iter().enumerate().filter(|(_, e)| tab.shows(e)).map(|(i, _)| (start + i) as u32).collect();
+            if let Some(rows) = tab.rows.as_mut() {
+                rows.extend(shown);
+            }
         }
         tab.entries.append(&mut entries);
         tab.status = format!(
@@ -2051,6 +2123,12 @@ impl App {
     // ------------------------------------------------------------ 分頁與雙欄
 
     pub(super) fn new_tab(&mut self, side: Side, path: &str) -> TabId {
+        // 選擇器沒有分頁：「在新分頁開啟」就是在原地開啟
+        if self.picker_mode() {
+            let id = self.active_tab_id();
+            self.navigate(id, path, NavKind::Normal, vec![]);
+            return id;
+        }
         let side = if self.ws.dual { side } else { Side::Left };
         let _fade = self.crossfade(self.content_fade_areas(side), anim::CROSSFADE_MS);
         let id = self.ws.add_tab(side);
@@ -2153,6 +2231,9 @@ impl App {
     }
 
     pub(super) fn set_dual(&mut self, enabled: bool) {
+        if self.picker_mode() {
+            return;
+        }
         self.hide_preview();
         let _fade = if enabled != self.ws.dual { self.crossfade(vec![self.whole_content_area()], anim::CROSSFADE_MS + 40.0) } else { anim::Crossfade::none() };
         match self.ws.set_dual(enabled) {
@@ -2330,6 +2411,9 @@ impl App {
             return;
         }
         if ctl == self.address || ctl == self.query {
+            return;
+        }
+        if self.picker_command(cmd, code, ctl) {
             return;
         }
         match cmd {
@@ -2747,6 +2831,11 @@ impl App {
     }
 
     pub(super) fn open_selection(&mut self, side: Side) {
+        // 選擇器：資料夾就進去，檔案就選定（不用預設程式開啟）
+        if self.picker_mode() {
+            self.picker_activate(side);
+            return;
+        }
         let Some(tab) = self.ws.current(side).and_then(|id| self.tabs.get(&id)) else { return };
         if tab.loading {
             return;
@@ -2920,13 +3009,17 @@ impl App {
         let current = self.settings.clone();
         let exe = current_exe_path();
         let was_default = exe.as_deref().is_some_and(shellreg::is_default_file_manager);
-        if let Some((new, want_default)) = settings_dialog::show(self.hwnd, &current, was_default) {
+        let picker_was = shellreg::picker_enabled();
+        if let Some((new, want_default, want_picker)) = settings_dialog::show(self.hwnd, &current, was_default, picker_was) {
             match write_settings(&new) {
                 Ok(()) => self.apply_settings(new),
                 Err(e) => self.show_error(&format!("設定未儲存，保留先前設定：{e}")),
             }
             if want_default != was_default {
                 self.set_default_file_manager(want_default);
+            }
+            if want_picker != picker_was {
+                self.set_picker_enabled(want_picker);
             }
         }
         // 在設定裡按「檢查更新」找到新版本：現在提醒
@@ -3175,6 +3268,10 @@ impl App {
         let alt = msg.message == WM_SYSKEYDOWN || key_down(VK_MENU);
         let focus = unsafe { GetFocus() };
         let in_edit = focus == self.address || focus == self.query;
+        // 選擇器：檔名欄的 Enter／Esc，以及分頁、雙欄、設定這些不存在的快捷鍵
+        if let Some(handled) = self.picker_key(vk, ctrl, shift, alt, focus) {
+            return handled;
+        }
         if !in_edit && focus != 0 && class_name(focus).eq_ignore_ascii_case("Edit") {
             return false; // 清單的就地重新命名
         }
@@ -3209,6 +3306,11 @@ impl App {
         // 快速預覽開著時 Esc 先關閉預覽
         if vk == VK_ESCAPE && preview::is_open(&self.preview) {
             self.hide_preview();
+            return true;
+        }
+        // 選擇器：Esc 取消（在路徑或搜尋輸入框裡時，照常先離開輸入框、取消搜尋）
+        if vk == VK_ESCAPE && !in_edit && self.picker_mode() {
+            self.picker_finish(feather_core::picker::EXIT_CANCEL);
             return true;
         }
         // Ctrl+Z 復原檔案操作；在路徑或搜尋輸入框裡則交給輸入框自己復原文字
@@ -3563,7 +3665,7 @@ fn post_select_all(edit: HWND) {
     }
 }
 
-fn create_edit(parent: HWND, cid: u16, name: &str) -> HWND {
+pub(super) fn create_edit(parent: HWND, cid: u16, name: &str) -> HWND {
     let class = wide("Edit");
     let n = wide(name);
     unsafe {
@@ -3689,6 +3791,9 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 a.toggle_personalize();
                 return 0;
             }
+            if a.picker_click(x, y) {
+                return 0;
+            }
             for i in 0..2 {
                 if a.layout.panes[i].contains(x, y) {
                     a.activate(Side::from_index(i));
@@ -3784,6 +3889,8 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 a.try_update_prompt();
             } else if wparam == super::watch::TIMER_WATCH {
                 a.on_watch_timer();
+            } else if wparam == super::picker::TIMER_HOST {
+                a.picker_host_timer();
             }
             return 0;
         }
@@ -3901,6 +4008,10 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 dialog::info(hwnd, "檔案作業還在進行", "請等它完成，或在 Windows 的進度視窗按取消後再關閉 Stillfeather。");
                 return 0;
             }
+            if a.picker_mode() {
+                a.picker_finish(feather_core::picker::EXIT_CANCEL);
+                return 0;
+            }
             a.hide_preview();
             DestroyWindow(hwnd);
             return 0;
@@ -3922,7 +4033,8 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 DestroyIcon(a.wordmark.0);
                 a.wordmark.0 = 0;
             }
-            PostQuitMessage(0);
+            // 選擇器：結束代碼告訴取代元件是確定、取消還是改用 Windows 的視窗
+            PostQuitMessage(a.picker.as_ref().map_or(0, |p| p.exit_code));
             return 0;
         }
         _ => {}

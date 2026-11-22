@@ -9,7 +9,7 @@ if not exist "%~dp0app\FeatherFiles.exe" (
   echo.
   goto build
 )
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$e = (Get-Item -LiteralPath (Join-Path $env:FF_ROOT 'app\FeatherFiles.exe')).LastWriteTimeUtc; $src = @('src', 'assets', 'Cargo.toml', 'build.rs') | ForEach-Object { Join-Path $env:FF_ROOT $_ } | Where-Object { Test-Path -LiteralPath $_ }; if (Get-ChildItem -LiteralPath $src -Recurse -File | Where-Object { $_.LastWriteTimeUtc -gt $e } | Select-Object -First 1) { exit 1 }; exit 0"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$e = (Get-Item -LiteralPath (Join-Path $env:FF_ROOT 'app\FeatherFiles.exe')).LastWriteTimeUtc; $src = @('src', 'assets', 'Cargo.toml', 'build.rs', 'picker-dll\src', 'picker-dll\Cargo.toml') | ForEach-Object { Join-Path $env:FF_ROOT $_ } | Where-Object { Test-Path -LiteralPath $_ }; if (Get-ChildItem -LiteralPath $src -Recurse -File | Where-Object { $_.LastWriteTimeUtc -gt $e } | Select-Object -First 1) { exit 1 }; exit 0"
 if errorlevel 1 (
   echo Source files changed - rebuilding...
   echo.

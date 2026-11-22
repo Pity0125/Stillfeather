@@ -18,6 +18,7 @@ pub mod lru;
 pub mod namematch;
 pub mod office;
 pub mod paths;
+pub mod picker;
 pub mod plan;
 pub mod quicklook;
 pub mod settings;

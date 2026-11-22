@@ -782,6 +782,7 @@ pub const WS_BORDER: u32 = 0x0080_0000;
 pub const WS_VSCROLL: u32 = 0x0020_0000;
 pub const WS_HSCROLL: u32 = 0x0010_0000;
 pub const WS_SYSMENU: u32 = 0x0008_0000;
+pub const WS_MINIMIZEBOX: u32 = 0x0002_0000;
 pub const WS_GROUP: u32 = 0x0002_0000;
 pub const WS_TABSTOP: u32 = 0x0001_0000;
 
@@ -1126,6 +1127,7 @@ pub const DLGC_BUTTON: LRESULT = 0x2000;
 // List-view
 pub const LVS_REPORT: u32 = 0x0001;
 pub const LVS_SHOWSELALWAYS: u32 = 0x0008;
+pub const LVS_SINGLESEL: u32 = 0x0004;
 pub const LVS_SHAREIMAGELISTS: u32 = 0x0040;
 pub const LVS_EDITLABELS: u32 = 0x0200;
 pub const LVS_OWNERDATA: u32 = 0x1000;
@@ -1317,6 +1319,9 @@ pub const TTM_ADDTOOLW: u32 = WM_USER + 50;
 pub const TTM_UPDATETIPTEXTW: u32 = WM_USER + 57;
 
 pub const DBT_DEVICEARRIVAL: usize = 0x8000;
+/// OpenProcess：只用來等它結束
+pub const SYNCHRONIZE: u32 = 0x0010_0000;
+pub const WAIT_OBJECT_0: u32 = 0;
 pub const DBT_DEVICEREMOVECOMPLETE: usize = 0x8004;
 
 // ---------------------------------------------------------------- 函式
@@ -1336,6 +1341,8 @@ extern "system" {
     pub fn FindNextFileW(h: HANDLE, data: *mut WIN32_FIND_DATAW) -> BOOL;
     pub fn FindClose(h: HANDLE) -> BOOL;
     pub fn GetFileAttributesW(name: *const u16) -> u32;
+    pub fn OpenProcess(access: u32, inherit: BOOL, pid: u32) -> HANDLE;
+    pub fn WaitForSingleObject(h: HANDLE, ms: u32) -> u32;
     pub fn GetFileAttributesExW(name: *const u16, level: i32, info: *mut WIN32_FILE_ATTRIBUTE_DATA) -> BOOL;
     pub fn GetFullPathNameW(name: *const u16, len: u32, buf: *mut u16, part: *mut *mut u16) -> u32;
     pub fn ExpandEnvironmentStringsW(src: *const u16, dst: *mut u16, size: u32) -> u32;

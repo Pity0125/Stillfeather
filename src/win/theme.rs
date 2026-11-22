@@ -520,6 +520,8 @@ pub mod glyph {
     pub const CHECKBOX_CHECKED: char = '\u{E73A}';
     pub const SEARCH: char = '\u{E721}';
     pub const FOLDER: char = '\u{E8B7}';
+    /// 篩選（選擇器的檔案類型）
+    pub const FILTER: char = '\u{E71C}';
     pub const MOON: char = '\u{E708}';
     pub const SUN: char = '\u{E706}';
     pub const PALETTE: char = '\u{E790}';

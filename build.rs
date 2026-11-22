@@ -25,6 +25,21 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=FEATHER_NO_ICON_RES");
     println!("cargo:rerun-if-env-changed=STILLFEATHER_PAYLOAD");
+    // 安裝程式內嵌的「開啟檔案」視窗取代元件（StillfeatherPicker.dll，見 picker-dll/）：
+    // STILLFEATHER_PICKER_PAYLOAD 指定；沒有時嵌入空檔案，安裝程式就不安裝這個元件
+    println!("cargo:rerun-if-env-changed=STILLFEATHER_PICKER_PAYLOAD");
+    let picker = match env::var("STILLFEATHER_PICKER_PAYLOAD") {
+        Ok(p) if Path::new(&p).is_file() => {
+            println!("cargo:rerun-if-changed={p}");
+            p
+        }
+        _ => {
+            let empty = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("no-picker.dll");
+            let _ = fs::write(&empty, b"");
+            empty.to_string_lossy().into_owned()
+        }
+    };
+    println!("cargo:rustc-env=STILLFEATHER_PICKER_FILE={picker}");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") || env::var_os("FEATHER_NO_ICON_RES").is_some() {
         return;
     }

@@ -5,12 +5,10 @@ use super::sys::*;
 use std::ffi::c_void;
 
 pub const WS_OVERLAPPED: u32 = 0;
-pub const WS_MINIMIZEBOX: u32 = 0x0002_0000;
 pub const SEE_MASK_NOCLOSEPROCESS: u32 = 0x0000_0040;
 pub const SEE_MASK_NOASYNC: u32 = 0x0000_0100;
 pub const INFINITE: u32 = 0xFFFF_FFFF;
-pub const WAIT_OBJECT_0: u32 = 0;
-pub const SYNCHRONIZE: u32 = 0x0010_0000;
+// WAIT_OBJECT_0、SYNCHRONIZE、OpenProcess、WaitForSingleObject 由 win/sys.rs 提供（主程式的選擇器也用到）
 pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 pub const TOKEN_QUERY: u32 = 0x0008;
 pub const TOKEN_ELEVATION_CLASS: u32 = 20;
@@ -66,7 +64,6 @@ pub struct PROCESS_INFORMATION {
 
 #[cfg_attr(windows, link(name = "kernel32", kind = "raw-dylib"))]
 extern "system" {
-    pub fn WaitForSingleObject(h: HANDLE, ms: u32) -> u32;
     pub fn GetExitCodeProcess(h: HANDLE, code: *mut u32) -> BOOL;
     pub fn CopyFileW(from: *const u16, to: *const u16, fail_if_exists: BOOL) -> BOOL;
     pub fn DeleteFileW(path: *const u16) -> BOOL;
@@ -83,7 +80,6 @@ extern "system" {
         si: *const STARTUPINFOW,
         pi: *mut PROCESS_INFORMATION,
     ) -> BOOL;
-    pub fn OpenProcess(access: u32, inherit: BOOL, pid: u32) -> HANDLE;
     pub fn GetCurrentProcess() -> HANDLE;
 }
 

@@ -3,6 +3,7 @@
 #   .\build.ps1 -Yes     不詢問，直接安裝並建置
 #   .\build.ps1 -Setup   另外產生安裝程式 dist\StillfeatherSetup.exe（內含剛建置好的 Stillfeather），
 #                        以及發佈到 GitHub Releases 用的 dist\update.json（更新說明取自 -Notes 或 release-notes.txt）
+# 另外建置 app\StillfeatherPicker.dll（picker-dll\：讓其他程式的「開啟檔案」視窗改用 Stillfeather，在「設定」開啟）。
 # 完整的編譯輸出會寫到 build.log，方便回報問題。
 param([switch]$Yes, [switch]$Setup, [string]$Notes = '')
 $ErrorActionPreference = 'Stop'
@@ -156,9 +157,33 @@ try {
     Write-Host ''
     Write-Host "完成：$exe（$size KB）" -ForegroundColor Green
 
+    # 「其他程式開啟檔案時也用 Stillfeather」的取代元件（picker-dll\，獨立建置）。
+    # 失敗時 Stillfeather 照常可用，只是不能開這個功能。
+    $pickerDll = Join-Path $root 'app\StillfeatherPicker.dll'
+    $pickerBuilt = Join-Path $root 'picker-dll\target\release\stillfeather_picker.dll'
+    $pickerArgs = @('build', '--release', '--manifest-path', (Join-Path $root 'picker-dll\Cargo.toml'))
+    if ($usedToolchain) { $pickerArgs = @("+$usedToolchain") + $pickerArgs }
+    Write-Host ''
+    Write-Host '建置開啟檔案視窗元件（StillfeatherPicker.dll）…'
+    "== cargo $($pickerArgs -join ' ') ==" | Out-File -FilePath $log -Encoding utf8 -Append
+    $code = Invoke-Logged $pickerArgs
+    if ($code -eq 0 -and (Test-Path -LiteralPath $pickerBuilt)) {
+        Copy-Item -Force $pickerBuilt $pickerDll
+        Write-Host "完成：$pickerDll" -ForegroundColor Green
+    } else {
+        Write-Host "開啟檔案視窗元件建置失敗（Stillfeather 本身不受影響）。完整訊息在：$log" -ForegroundColor Yellow
+        $pickerBuilt = ''
+    }
+
     if ($Setup) {
         # 安裝程式把剛建置好的 Stillfeather 嵌進去（編譯時讀取 STILLFEATHER_PAYLOAD 指定的檔案）
         $env:STILLFEATHER_PAYLOAD = Join-Path $root 'target\release\FeatherFiles.exe'
+        # 開啟檔案視窗元件也一起嵌入（沒有建置成功時安裝程式就不含它）
+        if ($pickerBuilt) {
+            $env:STILLFEATHER_PICKER_PAYLOAD = $pickerBuilt
+        } else {
+            Remove-Item Env:STILLFEATHER_PICKER_PAYLOAD -ErrorAction SilentlyContinue
+        }
         $setupArgs = @('build', '--release', '--features', 'setup', '--bin', 'StillfeatherSetup')
         if ($usedToolchain) { $setupArgs = @("+$usedToolchain") + $setupArgs }
         Write-Host ''

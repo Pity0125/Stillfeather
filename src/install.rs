@@ -16,7 +16,7 @@ pub const APP_NAME: &str = "Stillfeather";
 pub const EXE_NAME: &str = "Stillfeather.exe";
 pub const UNINSTALLER_NAME: &str = "Uninstall.exe";
 /// 程式執行時可能產生在安裝資料夾裡的記錄檔（開發版才會寫在 exe 旁；解除安裝時一併刪除）
-pub const GENERATED_FILES: &[&str] = &["crash.log", "trace.log", "stderr.log"];
+pub const GENERATED_FILES: &[&str] = &["crash.log", "trace.log", "stderr.log", "picker-crash.log", "picker-trace.log", "picker-stderr.log"];
 /// 「新增或移除程式」的項目
 pub const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Stillfeather";
 /// Stillfeather 自己的登錄機碼：安裝位置與預設檔案總管的備份
@@ -33,6 +33,26 @@ pub const WIN_E_CLSID: &str = "{52205fd8-5dfb-447d-801a-d0b52f2e83e1}";
 pub const OPEN_HOME_ARG: &str = "--open-home";
 /// 經單一實例轉送時代表「開首頁」的項目（不會是真的路徑）
 pub const HOME_MARKER: &str = "::home";
+
+/// 「其他程式開啟檔案時也用 Stillfeather」：取代元件啟動哪一個 Stillfeather（[`APP_KEY`] 底下的值）
+pub const PICKER_EXE_VALUE: &str = "PickerExe";
+/// 取代元件實際登記的那一份放在 %LOCALAPPDATA%\FeatherFiles\Picker：
+/// 不登記程式資料夾裡的那一份，程式資料夾被移走或刪掉時，其他程式的開檔視窗仍然正常（找不到 Stillfeather 就用 Windows 的視窗）。
+pub const PICKER_DIR_NAME: &str = "Picker";
+
+/// 目前使用者的「開啟檔案」視窗元件登記（蓋過 HKLM 的 comdlg32.dll）
+pub fn picker_clsid_key() -> String {
+    format!(r"Software\Classes\CLSID\{}", crate::picker::CLSID_FILE_OPEN_DIALOG)
+}
+
+pub fn picker_server_key() -> String {
+    format!(r"{}\InprocServer32", picker_clsid_key())
+}
+
+/// 登記的元件是不是 Stillfeather 的（不論放在哪裡）
+pub fn is_picker_dll(path: &str) -> bool {
+    paths::file_name(path).eq_ignore_ascii_case(crate::picker::DLL_NAME)
+}
 
 /// 要寫入的字串登錄值（`name` 為空字串表示機碼的預設值）
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -498,5 +518,13 @@ mod tests {
         assert!(c.contains("& rmdir \"C:\\T\\s\" & rmdir \"D:\\Apps\\Stillfeather\""));
         assert!(c.ends_with("\"\""));
         assert!(!c.contains("/s "));
+    }
+
+    #[test]
+    fn picker_keys() {
+        assert_eq!(picker_server_key(), r"Software\Classes\CLSID\{DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7}\InprocServer32");
+        assert!(is_picker_dll(r"C:\Users\me\AppData\Local\FeatherFiles\Picker\stillfeatherpicker.dll"));
+        assert!(!is_picker_dll(r"%SystemRoot%\System32\comdlg32.dll"));
+        assert!(GENERATED_FILES.contains(&"picker-trace.log"));
     }
 }

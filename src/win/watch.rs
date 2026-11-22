@@ -217,7 +217,8 @@ impl App {
 
     /// 依畫面上顯示的資料夾增減註冊。畫面狀態變動後呼叫（update_chrome）；沒有變化時只比對字串。
     pub(super) fn sync_watches(&mut self) {
-        if self.hwnd == 0 {
+        // 視窗已經關閉（選擇器按下確定後，按鍵處理還會再更新一次畫面）：不再註冊
+        if self.hwnd == 0 || unsafe { IsWindow(self.hwnd) } == 0 {
             return;
         }
         let mut wanted: Vec<String> = Vec::new();
@@ -344,7 +345,7 @@ impl App {
     }
 
     fn arm_watch_timer(&mut self) {
-        if self.hwnd == 0 {
+        if self.hwnd == 0 || unsafe { IsWindow(self.hwnd) } == 0 {
             return;
         }
         let now = self.watch.now();

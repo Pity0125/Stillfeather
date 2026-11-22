@@ -792,6 +792,9 @@ impl App {
         if self.updating_list {
             return;
         }
+        if self.picker_mode() {
+            self.picker_selection_changed(side);
+        }
         if self.active_side() == side {
             self.clear_footer_message();
             self.update_chrome();

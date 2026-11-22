@@ -16,6 +16,7 @@ pub mod instance;
 pub mod menu;
 pub mod pane;
 pub mod perf;
+pub mod picker;
 pub mod preview;
 pub mod settings_dialog;
 pub mod shellmenu;
@@ -149,6 +150,13 @@ pub fn entry() -> i32 {
     unsafe {
         (comctl().init_common_controls_ex)(&icc);
     }
+    // 選擇器：其他程式要開啟檔案或選擇資料夾時（見 picker.rs）。另一個程序，不佔用單一實例
+    if args.first().map(String::as_str) == Some(feather_core::picker::PICK_ARG) {
+        return match args.get(1) {
+            Some(request) => picker::run(request),
+            None => 2,
+        };
+    }
     // 效能量測：不開視窗、不佔用單一實例，Stillfeather 開著時也可以跑
     if args.first().map(String::as_str) == Some("--perf") {
         return perf::run(&args[1..]);
@@ -173,7 +181,7 @@ pub fn entry() -> i32 {
         // 拖放（RegisterDragDrop、SHDoDragDrop）需要 OLE
         OleInitialize(std::ptr::null_mut());
     }
-    let code = app::run(paths);
+    let code = app::run(paths, None);
     crashlog::crumb("訊息迴圈結束，正常關閉");
     drop(instance);
     code

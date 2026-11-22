@@ -97,15 +97,20 @@ fn wide_path(dir: &str, name: &str) -> Vec<u16> {
 
 /// 啟動時呼叫（只在主程式，不在預覽工作程序）：開始記錄步驟、註冊例外記錄、把標準錯誤導到檔案。
 pub fn install() {
+    install_named("");
+}
+
+/// 同上，記錄檔名前面加上 `prefix`（選擇器是另一個程序，寫 picker-trace.log 等，不會清掉主程式正在寫的記錄）。
+pub fn install_named(prefix: &str) {
     let Some(dir) = log_dir() else { return };
-    LOG_PATH.store(Box::leak(wide_path(&dir, "crash.log").into_boxed_slice()).as_mut_ptr(), Ordering::Release);
+    LOG_PATH.store(Box::leak(wide_path(&dir, &format!("{prefix}crash.log")).into_boxed_slice()).as_mut_ptr(), Ordering::Release);
     unsafe {
-        let err = wide_path(&dir, "stderr.log");
+        let err = wide_path(&dir, &format!("{prefix}stderr.log"));
         let h = CreateFileW(err.as_ptr(), GENERIC_WRITE, FILE_SHARE_READ_WRITE, std::ptr::null(), CREATE_ALWAYS, 0, 0);
         if h != INVALID_HANDLE_VALUE {
             SetStdHandle(STD_ERROR_HANDLE, h);
         }
-        let trace = wide_path(&dir, "trace.log");
+        let trace = wide_path(&dir, &format!("{prefix}trace.log"));
         // 先清空，再以附加模式開啟
         let h = CreateFileW(trace.as_ptr(), GENERIC_WRITE, FILE_SHARE_READ_WRITE, std::ptr::null(), CREATE_ALWAYS, 0, 0);
         if h != INVALID_HANDLE_VALUE {
