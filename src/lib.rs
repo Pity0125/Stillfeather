@@ -28,6 +28,7 @@ pub mod undo;
 pub mod update;
 pub mod view;
 pub mod watch;
+pub mod wine;
 pub mod winres;
 pub mod wordmark;
 pub mod workspace;

@@ -184,6 +184,38 @@ pub struct MSG {
     pub lPrivate: u32,
 }
 
+/// 低階鍵盤攔截收到的按鍵（WH_KEYBOARD_LL）
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct KBDLLHOOKSTRUCT {
+    pub vkCode: u32,
+    pub scanCode: u32,
+    pub flags: u32,
+    pub time: u32,
+    pub dwExtraInfo: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct KEYBDINPUT {
+    pub wVk: u16,
+    pub wScan: u16,
+    pub dwFlags: u32,
+    pub time: u32,
+    pub dwExtraInfo: usize,
+}
+
+/// SendInput 的 INPUT（只用到鍵盤；補到與 MOUSEINPUT 聯集相同的大小）
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct KEYBOARD_INPUT {
+    pub kind: u32,
+    pub ki: KEYBDINPUT,
+    pub _pad: [u8; 8],
+}
+
+pub type HOOKPROC = unsafe extern "system" fn(i32, WPARAM, LPARAM) -> LRESULT;
+
 #[repr(C)]
 pub struct PAINTSTRUCT {
     pub hdc: HDC,
@@ -857,6 +889,17 @@ pub const VK_MBUTTON: i32 = 0x04;
 pub const VK_SHIFT: i32 = 0x10;
 pub const VK_CONTROL: i32 = 0x11;
 pub const VK_MENU: i32 = 0x12;
+pub const VK_LWIN: i32 = 0x5B;
+pub const VK_RWIN: i32 = 0x5C;
+pub const WH_KEYBOARD_LL: i32 = 13;
+pub const HC_ACTION: i32 = 0;
+pub const LLKHF_INJECTED: u32 = 0x10;
+pub const INPUT_KEYBOARD: u32 = 1;
+pub const KEYEVENTF_KEYUP: u32 = 0x0002;
+/// 訊息視窗（不顯示、不收廣播）的父視窗
+pub const HWND_MESSAGE: HWND = -3;
+pub const ASFW_ANY: u32 = u32::MAX;
+pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 pub const VK_ESCAPE: u32 = 0x1B;
 pub const VK_SPACE: u32 = 0x20;
 /// 輸入法（例如注音）先處理了這個按鍵；原本的按鍵用 ImmGetVirtualKey 取回
@@ -1343,6 +1386,7 @@ extern "system" {
     pub fn GetFileAttributesW(name: *const u16) -> u32;
     pub fn OpenProcess(access: u32, inherit: BOOL, pid: u32) -> HANDLE;
     pub fn WaitForSingleObject(h: HANDLE, ms: u32) -> u32;
+    pub fn QueryFullProcessImageNameW(process: HANDLE, flags: u32, name: *mut u16, size: *mut u32) -> BOOL;
     pub fn GetFileAttributesExW(name: *const u16, level: i32, info: *mut WIN32_FILE_ATTRIBUTE_DATA) -> BOOL;
     pub fn GetFullPathNameW(name: *const u16, len: u32, buf: *mut u16, part: *mut *mut u16) -> u32;
     pub fn ExpandEnvironmentStringsW(src: *const u16, dst: *mut u16, size: u32) -> u32;
@@ -1461,6 +1505,11 @@ extern "system" {
     pub fn SetWindowLongPtrW(hwnd: HWND, index: i32, value: isize) -> isize;
     pub fn GetWindowLongPtrW(hwnd: HWND, index: i32) -> isize;
     pub fn FindWindowW(class: *const u16, name: *const u16) -> HWND;
+    pub fn FindWindowExW(parent: HWND, after: HWND, class: *const u16, name: *const u16) -> HWND;
+    pub fn SetWindowsHookExW(id: i32, proc: HOOKPROC, module: HMODULE, thread: u32) -> isize;
+    pub fn UnhookWindowsHookEx(hook: isize) -> BOOL;
+    pub fn CallNextHookEx(hook: isize, code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT;
+    pub fn SendInput(count: u32, inputs: *const KEYBOARD_INPUT, size: i32) -> u32;
     pub fn GetWindowThreadProcessId(hwnd: HWND, pid: *mut u32) -> u32;
     pub fn AllowSetForegroundWindow(pid: u32) -> BOOL;
     pub fn SetForegroundWindow(hwnd: HWND) -> BOOL;
@@ -1744,6 +1793,9 @@ mod layout_tests {
         }
         assert_eq!(size_of::<WNDCLASSEXW>(), 80);
         assert_eq!(size_of::<MSG>(), 48);
+        assert_eq!(size_of::<KBDLLHOOKSTRUCT>(), 24);
+        assert_eq!(size_of::<KEYBOARD_INPUT>(), 40);
+        assert_eq!(std::mem::offset_of!(KEYBOARD_INPUT, ki), 8);
         assert_eq!(size_of::<PAINTSTRUCT>(), 72);
         assert_eq!(size_of::<NMHDR>(), 24);
         assert_eq!(size_of::<LVITEMW>(), 88);

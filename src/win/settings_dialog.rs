@@ -30,6 +30,7 @@ const T_SPACE: u16 = 34;
 const T_DEFAULT_FM: u16 = 35;
 const T_NO_UPDATES: u16 = 36;
 const T_PICKER: u16 = 37;
+const T_WIN_E: u16 = 38;
 const CHECK_UPDATES: u16 = 41;
 const RESET: u16 = 40;
 const NOTE_ID: u16 = 90;
@@ -38,20 +39,29 @@ const NOTE_ID: u16 = 90;
 static DIALOG: AtomicIsize = AtomicIsize::new(0);
 static UPDATE_NOTE: AtomicIsize = AtomicIsize::new(0);
 
+/// 和 Windows 整合的選項（不存在 settings.json，由主視窗套用到登錄）
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Integration {
+    /// 設為預設檔案總管（Win+E 與開啟資料夾）
+    pub default_fm: bool,
+    /// 攔截 Win+E（新版 Windows 需要；只在設為預設檔案總管時有作用）
+    pub win_e: bool,
+    /// 其他程式開啟檔案時也用 Stillfeather
+    pub picker: bool,
+}
+
 struct State {
     base: Settings,
     result: Option<Settings>,
-    /// 「設為預設檔案總管」按下儲存時的狀態
-    default_fm: bool,
-    /// 「其他程式開啟檔案時也用 Stillfeather」按下儲存時的狀態
-    picker: bool,
+    /// 按下儲存時的狀態
+    integration: Integration,
     done: bool,
     segments: [HWND; 3],
     accent: HWND,
     background: HWND,
     sidebar: HWND,
     split: HWND,
-    toggles: [HWND; 8],
+    toggles: [HWND; 9],
     frames: Vec<(RECT, HWND)>,
     custom_colors: [COLORREF; 16],
 }
@@ -260,12 +270,12 @@ fn pick_color(dlg: HWND, st: &mut State, target: HWND, fallback: COLORREF) {
     }
 }
 
-/// 顯示對話方塊（強制回應）；按「儲存」且驗證通過時回傳新設定，以及「設為預設檔案總管」
-/// 與「其他程式開啟檔案時也用 Stillfeather」要不要開著。`default_fm`、`picker` 是目前的狀態。
-pub fn show(owner: HWND, current: &Settings, default_fm: bool, picker: bool) -> Option<(Settings, bool, bool)> {
+/// 顯示對話方塊（強制回應）；按「儲存」且驗證通過時回傳新設定，以及和 Windows 整合的選項要不要開著。
+/// `integration` 是目前的狀態。
+pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option<(Settings, Integration)> {
     let t = app::theme();
     let s = |v: i32| t.s(v);
-    let (cw, ch) = (s(500), s(628));
+    let (cw, ch) = (s(500), s(698));
     let class = wide(CLASS);
     let title = wide("設定");
     let dlg = unsafe {
@@ -302,15 +312,14 @@ pub fn show(owner: HWND, current: &Settings, default_fm: bool, picker: bool) -> 
     let mut st = Box::new(State {
         base: current.clone(),
         result: None,
-        default_fm,
-        picker,
+        integration,
         done: false,
         segments: [0; 3],
         accent: 0,
         background: 0,
         sidebar: 0,
         split: 0,
-        toggles: [0; 8],
+        toggles: [0; 9],
         frames: Vec::new(),
         custom_colors: [rgb(255, 255, 255); 16],
     });
@@ -352,10 +361,17 @@ pub fn show(owner: HWND, current: &Settings, default_fm: bool, picker: bool) -> 
     note(dlg, "不自動懸停預覽；按住空白鍵時才預覽滑鼠下的項目，放開就關閉。", RECT::new(lx + s(4), yy + s(36), cw - lx * 2, s(22)));
     let yy = yy + s(70);
     st.toggles[5] = button(dlg, T_DEFAULT_FM, Kind::Toggle, "設為預設檔案總管（Win+E 與開啟資料夾）", RECT::new(lx, yy, cw - lx * 2, row_h));
-    controls::set_checked(st.toggles[5], default_fm);
-    let yy = yy + s(42);
+    controls::set_checked(st.toggles[5], integration.default_fm);
+    // 攔截 Win+E：屬於「設為預設檔案總管」，沒有勾選時停用
+    let yy = yy + s(38);
+    let ix = lx + s(28);
+    st.toggles[8] = button(dlg, T_WIN_E, Kind::Toggle, "攔截 Win+E 按鍵，改開 Stillfeather", RECT::new(ix, yy, cw - ix - lx, row_h));
+    controls::set_checked(st.toggles[8], integration.win_e);
+    controls::set_enabled(st.toggles[8], integration.default_fm);
+    note(dlg, "新版 Windows 11 需要；開著時會在背景執行一個小程式。", RECT::new(ix + s(4), yy + s(36), cw - ix - lx - s(4), s(22)));
+    let yy = yy + s(74);
     st.toggles[7] = button(dlg, T_PICKER, Kind::Toggle, "其他程式開啟檔案時也用 Stillfeather（上傳、選擇資料夾）", RECT::new(lx, yy, cw - lx * 2, row_h));
-    controls::set_checked(st.toggles[7], picker);
+    controls::set_checked(st.toggles[7], integration.picker);
     // 更新：關掉自動提醒的開關、目前版本與檢查結果、手動檢查
     let yy = yy + s(42);
     st.toggles[6] = button(dlg, T_NO_UPDATES, Kind::Toggle, "不要啟用更新提醒", RECT::new(lx, yy, s(200), row_h));
@@ -413,7 +429,7 @@ pub fn show(owner: HWND, current: &Settings, default_fm: bool, picker: bool) -> 
         if let Some(code) = quit {
             PostQuitMessage(code);
         }
-        st.result.map(|r| (r, st.default_fm, st.picker))
+        st.result.map(|r| (r, st.integration))
     }
 }
 
@@ -477,11 +493,16 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     d.favorites = st.base.favorites.clone();
                     fill(st, &d);
                 }
+                // 攔截 Win+E 只在設為預設檔案總管時有作用
+                T_DEFAULT_FM => controls::set_enabled(st.toggles[8], controls::is_checked(st.toggles[5])),
                 c if c == IDOK as u16 => match collect(st) {
                     Ok(s) => {
                         st.result = Some(s);
-                        st.default_fm = controls::is_checked(st.toggles[5]);
-                        st.picker = controls::is_checked(st.toggles[7]);
+                        st.integration = Integration {
+                            default_fm: controls::is_checked(st.toggles[5]),
+                            win_e: controls::is_checked(st.toggles[8]),
+                            picker: controls::is_checked(st.toggles[7]),
+                        };
                         st.done = true;
                     }
                     Err(e) => {

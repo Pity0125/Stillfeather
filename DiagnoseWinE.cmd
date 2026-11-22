@@ -39,6 +39,11 @@ echo 正在收集 Win+E 相關設定…
   echo ---- Stillfeather 的安裝記錄與備份
   reg query "HKCU\Software\Stillfeather" /s
   echo.
+  echo ---- 背景攔截 Win+E（新版 Windows 11 的 Win+E 不看登錄，要靠它）：登入時啟動的命令
+  reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v Stillfeather
+  echo ---- 執行中的 Stillfeather 與命令列：有 --win-e 的就是背景攔截
+  powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -in 'Stillfeather.exe','FeatherFiles.exe' } | ForEach-Object { $_.CommandLine }"
+  echo.
   echo ---- 檔案總管設定
   reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v LaunchTo
   reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v SeparateProcess

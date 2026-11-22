@@ -30,6 +30,7 @@ pub mod update;
 pub mod util;
 pub mod viewmenu;
 pub mod watch;
+pub mod wine;
 
 use sys::*;
 use util::*;
@@ -137,6 +138,10 @@ pub fn entry() -> i32 {
     unsafe {
         SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+    // 背景攔截 Win+E（新版 Windows 11 的 Win+E 不看登錄，見 wine.rs）：沒有視窗，不載入介面
+    if args.first().map(String::as_str) == Some(feather_core::wine::WIN_E_ARG) {
+        return wine::run();
     }
     activate_visual_styles();
     if let Err(e) = unsafe { load_comctl() } {

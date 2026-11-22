@@ -1,4 +1,5 @@
-//! 登錄（目前使用者 HKCU）：設為／取消預設檔案總管（Win+E 與開啟資料夾），以及安裝程式用到的基本讀寫。
+//! 登錄（目前使用者 HKCU）：設為／取消預設檔案總管（Win+E 與開啟資料夾）、背景攔截 Win+E 的登入啟動與停止，
+//! 以及安裝程式用到的基本讀寫。
 //!
 //! Stillfeather 本體（設定對話方塊）與安裝程式共用這個檔案：兩邊都以模組引入，只依賴同層的 `sys`。
 //! 要寫的機碼與值、哪些值要備份還原，都由 `feather_core::install` 決定（有單元測試）。
@@ -8,6 +9,7 @@
 use super::sys::*;
 use feather_core::install::{self, RegValue};
 use feather_core::paths;
+use feather_core::wine;
 
 fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -286,6 +288,89 @@ pub fn restore_default_file_manager() -> Result<(), String> {
     match first_error {
         Some(e) => Err(e),
         None => Ok(()),
+    }
+}
+
+// ---------------------------------------------------------------- 背景攔截 Win+E
+
+/// 目前的使用者名稱，去掉不能放進物件名稱的字元（與主程式 instance.rs 相同）
+pub fn user_tag() -> String {
+    let mut buf = [0u16; 257];
+    let mut len = buf.len() as u32;
+    let name = if unsafe { GetUserNameW(buf.as_mut_ptr(), &mut len) } != 0 {
+        let n = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+        String::from_utf16_lossy(&buf[..n])
+    } else {
+        "user".into()
+    };
+    name.chars().map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect()
+}
+
+/// 使用者要不要攔截 Win+E（沒選過時預設開啟，見 feather_core::wine）
+pub fn win_e_choice() -> bool {
+    wine::wanted(read_string(install::APP_KEY, wine::CHOICE_VALUE).as_deref())
+}
+
+pub fn set_win_e_choice(on: bool) -> Result<(), String> {
+    set_string(install::APP_KEY, wine::CHOICE_VALUE, if on { "1" } else { "0" })
+}
+
+/// 背景攔截 Win+E 要不要執行、由哪一份 Stillfeather 執行：使用者沒關掉（預設開啟），
+/// 而且預設檔案總管是某一份 Stillfeather（程式還在）。回傳那一份的路徑。
+pub fn win_e_hook_exe() -> Option<String> {
+    if !win_e_choice() {
+        return None;
+    }
+    let exe = default_fm_program()?;
+    std::path::Path::new(&exe).is_file().then_some(exe)
+}
+
+/// 登入時啟動背景攔截：`Some` 寫入指向那一份的命令；`None` 拿掉（只拿掉 Stillfeather 自己的）
+pub fn set_win_e_autorun(exe: Option<&str>) -> Result<(), String> {
+    match exe {
+        Some(exe) => {
+            let cmd = wine::run_command(exe);
+            if read_string(wine::RUN_KEY, wine::RUN_VALUE).as_deref() == Some(cmd.as_str()) {
+                return Ok(());
+            }
+            set_string(wine::RUN_KEY, wine::RUN_VALUE, &cmd)
+        }
+        None => match read_string(wine::RUN_KEY, wine::RUN_VALUE) {
+            Some(cmd) if wine::is_run_command(&cmd) => delete_value(wine::RUN_KEY, wine::RUN_VALUE),
+            _ => Ok(()),
+        },
+    }
+}
+
+/// 依目前的選擇與預設檔案總管整理登入時的啟動命令
+pub fn sync_win_e_autorun() {
+    let _ = set_win_e_autorun(win_e_hook_exe().as_deref());
+}
+
+/// 執行中的背景攔截（它的訊息視窗）；沒有執行時是 0
+pub fn win_e_window() -> HWND {
+    let class = w(&wine::window_class(&user_tag()));
+    unsafe { FindWindowExW(HWND_MESSAGE, 0, class.as_ptr(), std::ptr::null()) }
+}
+
+/// 請背景攔截結束，最多等 `wait_ms` 毫秒。沒有在執行或已經結束時回傳 true。
+pub fn stop_win_e(wait_ms: u32) -> bool {
+    let hwnd = win_e_window();
+    if hwnd == 0 {
+        return true;
+    }
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        let process = OpenProcess(SYNCHRONIZE, 0, pid);
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        if process == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            return win_e_window() == 0;
+        }
+        let done = WaitForSingleObject(process, wait_ms) == WAIT_OBJECT_0;
+        CloseHandle(process);
+        done
     }
 }
 

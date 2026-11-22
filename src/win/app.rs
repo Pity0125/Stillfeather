@@ -849,6 +849,8 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         a.schedule_update_check();
         // 「設為預設檔案總管」（預設開啟）：沒選過時設為預設
         maintain_default_file_manager();
+        // 「攔截 Win+E」（預設開啟）：新版 Windows 11 的 Win+E 不看登錄，在背景攔截按鍵改開 Stillfeather
+        super::wine::maintain();
         // 「其他程式開啟檔案時也用 Stillfeather」（預設開啟）：依使用者的選擇登記或取消，並更新登記的取代元件
         super::picker::maintain();
     }
@@ -3028,19 +3030,31 @@ impl App {
         self.hide_preview();
         let current = self.settings.clone();
         let exe = current_exe_path();
-        let was_default = exe.as_deref().is_some_and(shellreg::is_default_file_manager);
-        // 勾選框顯示使用者的選擇（沒選過時預設開啟）
-        let picker_was = shellreg::picker_choice();
-        if let Some((new, want_default, want_picker)) = settings_dialog::show(self.hwnd, &current, was_default, picker_was) {
+        // 「攔截 Win+E」與「其他程式開啟檔案時也用 Stillfeather」顯示使用者的選擇（沒選過時預設開啟）
+        let was = settings_dialog::Integration {
+            default_fm: exe.as_deref().is_some_and(shellreg::is_default_file_manager),
+            win_e: shellreg::win_e_choice(),
+            picker: shellreg::picker_choice(),
+        };
+        if let Some((new, want)) = settings_dialog::show(self.hwnd, &current, was) {
             match write_settings(&new) {
                 Ok(()) => self.apply_settings(new),
                 Err(e) => self.show_error(&format!("設定未儲存，保留先前設定：{e}")),
             }
-            if want_default != was_default {
-                self.set_default_file_manager(want_default);
+            if want.win_e != was.win_e {
+                let _ = shellreg::set_win_e_choice(want.win_e);
             }
-            if want_picker != picker_was {
-                self.set_picker_enabled(want_picker);
+            if want.default_fm != was.default_fm {
+                self.set_default_file_manager(want.default_fm);
+            } else if want.win_e != was.win_e && want.default_fm {
+                self.set_footer(if want.win_e { "Win+E 會開 Stillfeather（在背景攔截按鍵）".into() } else { "已停止攔截 Win+E".into() });
+            }
+            if want.default_fm != was.default_fm || want.win_e != was.win_e {
+                // 依「設為預設檔案總管」與「攔截 Win+E」啟動或停止背景攔截
+                super::wine::maintain();
+            }
+            if want.picker != was.picker {
+                self.set_picker_enabled(want.picker);
             }
         }
         // 在設定裡按「檢查更新」找到新版本：現在提醒

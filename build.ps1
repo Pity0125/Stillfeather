@@ -76,6 +76,11 @@ Push-Location $root
 try {
     Add-CargoPath
     $exe = Join-Path $root 'app\FeatherFiles.exe'
+    # 背景攔截 Win+E（FeatherFiles.exe --win-e，沒有視窗）會鎖住 exe：先結束它，建置後開啟 Stillfeather 時會再啟動
+    Get-CimInstance Win32_Process -Filter "Name = 'FeatherFiles.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -eq $exe -and $_.CommandLine -match '--win-e' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 300
     $running = Get-Process FeatherFiles -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
     if ($running) { throw '請先關閉 Stillfeather（Rust 版）再重新建置。' }
 

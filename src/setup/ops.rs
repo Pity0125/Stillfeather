@@ -262,6 +262,8 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
     std::fs::create_dir_all(dir).map_err(|e| format!("無法建立安裝資料夾：{e}"))?;
 
     progress(15, "寫入 Stillfeather…");
+    // 背景攔截 Win+E 執行中會鎖住 exe：先請它結束（裝好後再啟動，見 start_win_e）
+    shellreg::stop_win_e(5000);
     if let Err(first) = write_file_atomic(&exe, PAYLOAD) {
         // 正在執行的舊版鎖住了 exe：請它關閉後再寫一次
         if app_running() {
@@ -370,13 +372,36 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
         }
         None => {}
     }
+    // 背景攔截 Win+E（新版 Windows 11 需要；選項預設開啟，只在預設檔案總管是 Stillfeather 時執行）：登入時啟動
+    shellreg::sync_win_e_autorun();
     shellreg::notify_assoc_changed();
     progress(100, "完成");
     Ok(())
 }
 
+/// 背景攔截 Win+E：要的話（選項開著、預設檔案總管是 Stillfeather）而且還沒執行就啟動，不必等到下次登入。
+/// 以系統管理員身分執行時不啟動：它要以一般權限執行（登入或開啟 Stillfeather 時會啟動）。
+pub fn start_win_e() {
+    if is_elevated() || shellreg::win_e_window() != 0 {
+        return;
+    }
+    let Some(exe) = shellreg::win_e_hook_exe() else { return };
+    let dir = paths::parent(&exe).unwrap_or_default();
+    if let Some(p) = spawn(&exe, &[feather_core::wine::WIN_E_ARG.to_string()], &dir) {
+        close(p);
+    }
+}
+
 /// 依權限決定在這個行程安裝，或以系統管理員身分重新執行自己來安裝。
 pub fn install_with_elevation(opts: &InstallOptions, elevated: bool, progress: Progress) -> Result<(), String> {
+    let result = install_in_place_or_elevated(opts, elevated, progress);
+    if result.is_ok() {
+        start_win_e();
+    }
+    result
+}
+
+fn install_in_place_or_elevated(opts: &InstallOptions, elevated: bool, progress: Progress) -> Result<(), String> {
     match check_writable(&opts.dir) {
         Access::Ok => install(opts, progress),
         Access::Failed(e) => Err(e),
@@ -413,6 +438,9 @@ pub fn install_with_elevation(opts: &InstallOptions, elevated: bool, progress: P
 pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
     progress(5, "正在關閉 Stillfeather…");
     close_app()?;
+    // 背景攔截 Win+E：結束它（它鎖住 exe）並拿掉登入時的啟動
+    shellreg::stop_win_e(5000);
+    let _ = shellreg::set_win_e_autorun(None);
 
     progress(20, "改回 Windows 檔案總管…");
     let mut errors = Vec::new();

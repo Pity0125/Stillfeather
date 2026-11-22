@@ -41,29 +41,37 @@ impl Instance {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             let hwnd = unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) };
-            if hwnd != 0 {
-                let mut pid = 0u32;
-                unsafe {
-                    GetWindowThreadProcessId(hwnd, &mut pid);
-                    AllowSetForegroundWindow(pid);
-                }
-                let cds = COPYDATASTRUCT {
-                    dwData: ipc::COPYDATA_TAG,
-                    cbData: (payload.len() * 2) as u32,
-                    lpData: payload.as_ptr() as *const std::ffi::c_void,
-                };
-                let mut result: usize = 0;
-                let ok = unsafe {
-                    SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, &cds as *const COPYDATASTRUCT as LPARAM, SMTO_ABORTIFHUNG, 3000, &mut result)
-                };
-                if ok != 0 && result == 1 {
-                    return true;
-                }
+            if hwnd != 0 && send_to(hwnd, &payload) {
+                return true;
             }
             std::thread::sleep(Duration::from_millis(75));
         }
         false
     }
+}
+
+/// 主視窗已經開著時把開啟要求交給它（不等主視窗出現）。沒有開著或沒有回應時回傳 false。
+pub fn send_if_running(paths: &[String]) -> bool {
+    let Ok(payload) = ipc::encode(paths) else { return false };
+    let class = wide(&main_class());
+    let hwnd = unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) };
+    hwnd != 0 && send_to(hwnd, &payload)
+}
+
+fn send_to(hwnd: HWND, payload: &[u16]) -> bool {
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        AllowSetForegroundWindow(pid);
+    }
+    let cds = COPYDATASTRUCT {
+        dwData: ipc::COPYDATA_TAG,
+        cbData: (payload.len() * 2) as u32,
+        lpData: payload.as_ptr() as *const std::ffi::c_void,
+    };
+    let mut result: usize = 0;
+    let ok = unsafe { SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, &cds as *const COPYDATASTRUCT as LPARAM, SMTO_ABORTIFHUNG, 3000, &mut result) };
+    ok != 0 && result == 1
 }
 
 impl Drop for Instance {
