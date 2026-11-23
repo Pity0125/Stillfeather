@@ -1,4 +1,7 @@
-//! 清單排序：資料夾永遠在前，名稱採與檔案總管相近的自然排序（file2 < file10）。
+//! 清單排序：資料夾和檔案分開排，名稱採與檔案總管相近的自然排序（file2 < file10）。
+//!
+//! 和檔案總管相同：遞增時資料夾在前面，遞減時資料夾在後面（例如依修改日期遞減，最新的檔案排在最上面）。
+//! 「資料夾一律排在最前面」（`folders_on_top`，在排序選單）開著時，不論方向資料夾都在前面。
 
 use crate::entry::Entry;
 use std::cmp::Ordering;
@@ -90,9 +93,10 @@ fn raw_extension(e: &Entry) -> &str {
     }
 }
 
-pub fn compare(a: &Entry, b: &Entry, column: usize, descending: bool) -> Ordering {
+pub fn compare(a: &Entry, b: &Entry, column: usize, descending: bool, folders_on_top: bool) -> Ordering {
     if a.is_dir != b.is_dir {
-        return if a.is_dir { Ordering::Less } else { Ordering::Greater };
+        let folders_first = if a.is_dir { Ordering::Less } else { Ordering::Greater };
+        return if descending && !folders_on_top { folders_first.reverse() } else { folders_first };
     }
     let primary = match column {
         COL_SIZE => a.size().cmp(&b.size()),
@@ -110,8 +114,8 @@ pub fn compare(a: &Entry, b: &Entry, column: usize, descending: bool) -> Orderin
     }
 }
 
-pub fn sort_entries(entries: &mut [Entry], column: usize, descending: bool) {
-    entries.sort_by(|a, b| compare(a, b, column, descending));
+pub fn sort_entries(entries: &mut [Entry], column: usize, descending: bool, folders_on_top: bool) {
+    entries.sort_by(|a, b| compare(a, b, column, descending, folders_on_top));
 }
 
 #[cfg(test)]
@@ -192,27 +196,52 @@ mod tests {
     #[test]
     fn type_column_ignores_case_without_allocating() {
         let mut v = vec![sample("b.TXT", false, 1, 1), sample("a.png", false, 1, 1), sample("c.txt", false, 1, 1), sample("noext", false, 1, 1)];
-        sort_entries(&mut v, COL_TYPE, false);
+        sort_entries(&mut v, COL_TYPE, false, false);
         let names: Vec<_> = v.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["noext", "a.png", "b.TXT", "c.txt"]);
     }
 
+    fn names(v: &[Entry]) -> Vec<&str> {
+        v.iter().map(|e| e.name.as_str()).collect()
+    }
+
     #[test]
-    fn folders_first_even_descending() {
+    fn folders_follow_the_sort_direction() {
         let mut v = vec![
             sample("b.txt", false, 5, 1),
             sample("zdir", true, 0, 9),
             sample("a.txt", false, 50, 2),
             sample("adir", true, 0, 3),
         ];
-        sort_entries(&mut v, COL_NAME, false);
-        let names: Vec<_> = v.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, ["adir", "zdir", "a.txt", "b.txt"]);
-        sort_entries(&mut v, COL_SIZE, true);
-        let names: Vec<_> = v.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, ["zdir", "adir", "a.txt", "b.txt"]);
-        sort_entries(&mut v, COL_MODIFIED, false);
-        let names: Vec<_> = v.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, ["adir", "zdir", "b.txt", "a.txt"]);
+        // 遞增：資料夾在前面（和檔案總管相同）
+        sort_entries(&mut v, COL_NAME, false, false);
+        assert_eq!(names(&v), ["adir", "zdir", "a.txt", "b.txt"]);
+        sort_entries(&mut v, COL_MODIFIED, false, false);
+        assert_eq!(names(&v), ["adir", "zdir", "b.txt", "a.txt"]);
+        // 遞減：整個反過來，資料夾在後面（最新、最大的檔案在最上面）
+        sort_entries(&mut v, COL_NAME, true, false);
+        assert_eq!(names(&v), ["b.txt", "a.txt", "zdir", "adir"]);
+        sort_entries(&mut v, COL_MODIFIED, true, false);
+        assert_eq!(names(&v), ["a.txt", "b.txt", "zdir", "adir"]);
+        sort_entries(&mut v, COL_SIZE, true, false);
+        assert_eq!(names(&v), ["a.txt", "b.txt", "zdir", "adir"]);
+    }
+
+    #[test]
+    fn folders_on_top_in_both_directions() {
+        let mut v = vec![
+            sample("b.txt", false, 5, 1),
+            sample("zdir", true, 0, 9),
+            sample("a.txt", false, 50, 2),
+            sample("adir", true, 0, 3),
+        ];
+        sort_entries(&mut v, COL_NAME, false, true);
+        assert_eq!(names(&v), ["adir", "zdir", "a.txt", "b.txt"]);
+        sort_entries(&mut v, COL_NAME, true, true);
+        assert_eq!(names(&v), ["zdir", "adir", "b.txt", "a.txt"]);
+        sort_entries(&mut v, COL_SIZE, true, true);
+        assert_eq!(names(&v), ["zdir", "adir", "a.txt", "b.txt"]);
+        sort_entries(&mut v, COL_MODIFIED, true, true);
+        assert_eq!(names(&v), ["zdir", "adir", "a.txt", "b.txt"]);
     }
 }

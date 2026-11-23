@@ -34,7 +34,7 @@ pub struct InstallOptions {
     pub dir: String,
     /// 設為預設檔案總管（並記下選擇）；None：維持原狀（更新時）
     pub default_fm: Option<bool>,
-    /// 其他程式開啟檔案時也用 Stillfeather；None：維持使用者原本的選擇（沒選過就是開啟，Stillfeather 啟動時處理）
+    /// 其他程式開啟或儲存檔案時也用 Stillfeather；None：維持使用者原本的選擇（沒選過就是開啟，Stillfeather 啟動時處理）
     pub picker: Option<bool>,
     /// 捷徑：Some(true) 建立、Some(false) 拿掉、None 維持原狀（更新時）
     pub desktop: Option<bool>,
@@ -102,7 +102,7 @@ pub fn check_writable(dir: &str) -> Access {
     if let Err(e) = std::fs::create_dir_all(dir) {
         return match e.kind() {
             std::io::ErrorKind::PermissionDenied => Access::NeedsAdmin,
-            _ => Access::Failed(format!("無法建立安裝資料夾：{e}")),
+            _ => Access::Failed(trf!("無法建立安裝資料夾：{e}", "Couldn't create the install folder: {e}")),
         };
     }
     let probe = paths::join(dir, &format!(".stillfeather-write-test-{}", std::process::id()));
@@ -113,7 +113,7 @@ pub fn check_writable(dir: &str) -> Access {
             Access::Ok
         }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Access::NeedsAdmin,
-        Err(e) => Access::Failed(format!("無法寫入安裝資料夾：{e}")),
+        Err(e) => Access::Failed(trf!("無法寫入安裝資料夾：{e}", "Couldn't write to the install folder: {e}")),
     }
 }
 
@@ -141,7 +141,7 @@ pub fn app_running() -> bool {
     main_window() != 0
 }
 
-/// 使用者之前對「其他程式開啟檔案時也用 Stillfeather」的選擇（沒選過是關閉）：安裝畫面的勾選框照它顯示
+/// 使用者之前對「其他程式開啟或儲存檔案時也用 Stillfeather」的選擇（沒選過是關閉）：安裝畫面的勾選框照它顯示
 pub fn picker_choice() -> bool {
     shellreg::picker_choice()
 }
@@ -179,7 +179,7 @@ pub fn close_app() -> Result<(), String> {
             CloseHandle(process);
         }
     }
-    Err("Stillfeather 沒有關閉（可能正在詢問要不要中斷檔案作業）。請先關閉 Stillfeather 再試一次。".into())
+    Err(tr!("Stillfeather 沒有關閉（可能正在詢問要不要中斷檔案作業）。請先關閉 Stillfeather 再試一次。", "Stillfeather didn't close (it may be asking whether to stop a file operation). Close Stillfeather and try again.").into())
 }
 
 // ---------------------------------------------------------------- 檔案
@@ -187,7 +187,7 @@ pub fn close_app() -> Result<(), String> {
 /// 先寫成 .new 再改名取代，寫到一半失敗也不會留下壞掉的 exe。
 fn write_file_atomic(path: &str, data: &[u8]) -> Result<(), String> {
     let tmp = format!("{path}.new");
-    std::fs::write(&tmp, data).map_err(|e| format!("無法寫入 {path}：{e}"))?;
+    std::fs::write(&tmp, data).map_err(|e| trf!("無法寫入 {path}：{e}", "Couldn't write {path}: {e}"))?;
     replace_file(&tmp, path)
 }
 
@@ -199,9 +199,9 @@ fn replace_file(from: &str, to: &str) -> Result<(), String> {
     let code = unsafe { GetLastError() };
     let _ = std::fs::remove_file(from);
     Err(if code == 5 || code == ERROR_SHARING_VIOLATION {
-        format!("{to} 正在使用中。")
+        trf!("{to} 正在使用中。", "{to} is in use.")
     } else {
-        format!("無法寫入 {to}（錯誤 {code}）。")
+        trf!("無法寫入 {to}（錯誤 {code}）。", "Couldn't write {to} (error {code}).")
     })
 }
 
@@ -217,10 +217,10 @@ fn create_shortcut(lnk: &str, target: &str, dir: &str) -> Result<(), String> {
         let mut link: *mut c_void = std::ptr::null_mut();
         let hr = CoCreateInstance(&CLSID_SHELL_LINK, std::ptr::null_mut(), CLSCTX_INPROC_SERVER, &IID_ISHELL_LINK_W, &mut link);
         if hr < 0 || link.is_null() {
-            return Err(format!("無法建立捷徑（0x{:08X}）。", hr as u32));
+            return Err(trf!("無法建立捷徑（0x{:08X}）。", "Couldn't create the shortcut (0x{:08X}).", hr as u32));
         }
         let v = vtbl::<IShellLinkWVtbl>(link);
-        let (t, d, desc) = (w(target), w(dir), w("Stillfeather 檔案管理"));
+        let (t, d, desc) = (w(target), w(dir), w(tr!("Stillfeather 檔案管理", "Stillfeather file manager")));
         (v.SetPath)(link, t.as_ptr());
         (v.SetWorkingDirectory)(link, d.as_ptr());
         (v.SetDescription)(link, desc.as_ptr());
@@ -234,10 +234,10 @@ fn create_shortcut(lnk: &str, target: &str, dir: &str) -> Result<(), String> {
             if hr >= 0 {
                 Ok(())
             } else {
-                Err(format!("無法儲存捷徑 {lnk}（0x{:08X}）。", hr as u32))
+                Err(trf!("無法儲存捷徑 {lnk}（0x{:08X}）。", "Couldn't save the shortcut {lnk} (0x{:08X}).", hr as u32))
             }
         } else {
-            Err("無法儲存捷徑。".into())
+            Err(tr!("無法儲存捷徑。", "Couldn't save the shortcut.").into())
         };
         release(link);
         result
@@ -263,16 +263,16 @@ fn today() -> String {
 pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> {
     let dir = &opts.dir;
     let exe = paths::join(dir, install::EXE_NAME);
-    progress(5, "準備安裝資料夾…");
-    std::fs::create_dir_all(dir).map_err(|e| format!("無法建立安裝資料夾：{e}"))?;
+    progress(5, tr!("準備安裝資料夾…", "Preparing the install folder…"));
+    std::fs::create_dir_all(dir).map_err(|e| trf!("無法建立安裝資料夾：{e}", "Couldn't create the install folder: {e}"))?;
 
-    progress(15, "寫入 Stillfeather…");
+    progress(15, tr!("寫入 Stillfeather…", "Writing Stillfeather…"));
     // 背景攔截 Win+E 執行中會鎖住 exe：先請它結束（裝好後再啟動，見 start_win_e）
     shellreg::stop_win_e(5000);
     if let Err(first) = write_file_atomic(&exe, PAYLOAD) {
         // 正在執行的舊版鎖住了 exe：請它關閉後再寫一次
         if app_running() {
-            progress(20, "正在關閉執行中的 Stillfeather…");
+            progress(20, tr!("正在關閉執行中的 Stillfeather…", "Closing the running Stillfeather…"));
             close_app()?;
         }
         // 剛關閉的 Stillfeather（例如更新提醒啟動了這個安裝程式後自己關閉）可能還沒完全結束，exe 仍被占用：稍等再試
@@ -292,26 +292,26 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
         }
     }
 
-    // 「其他程式開啟檔案時也用 Stillfeather」的取代元件：放在 exe 旁邊。登記的是 Stillfeather 複製到
+    // 「其他程式開啟或儲存檔案時也用 Stillfeather」的取代元件：放在 exe 旁邊。登記的是 Stillfeather 複製到
     // %LOCALAPPDATA% 的那一份（其他程式載入的是它），所以這裡的一份不會被占用，可以直接取代。
     if !PICKER_PAYLOAD.is_empty() {
-        progress(32, "寫入開啟檔案視窗元件…");
+        progress(32, tr!("寫入開啟檔案視窗元件…", "Writing the file dialog component…"));
         write_file_atomic(&paths::join(dir, feather_core::picker::DLL_NAME), PICKER_PAYLOAD)?;
     }
 
-    progress(40, "寫入解除安裝程式…");
-    let me = own_exe().ok_or("找不到安裝程式本身的位置。")?;
+    progress(40, tr!("寫入解除安裝程式…", "Writing the uninstaller…"));
+    let me = own_exe().ok_or(tr!("找不到安裝程式本身的位置。", "Can't find where the installer itself is."))?;
     let uninstaller = paths::join(dir, install::UNINSTALLER_NAME);
     if !install::same_path(&me, &uninstaller) {
         let tmp = format!("{uninstaller}.new");
         let (f, t) = (w(&me), w(&tmp));
         if unsafe { CopyFileW(f.as_ptr(), t.as_ptr(), 0) } == 0 {
-            return Err(format!("無法寫入解除安裝程式（錯誤 {}）。", unsafe { GetLastError() }));
+            return Err(trf!("無法寫入解除安裝程式（錯誤 {}）。", "Couldn't write the uninstaller (error {}).", unsafe { GetLastError() }));
         }
         replace_file(&tmp, &uninstaller)?;
     }
 
-    progress(55, "登記到「已安裝的應用程式」…");
+    progress(55, tr!("登記到「已安裝的應用程式」…", "Registering in “Installed apps”…"));
     let size_kb = ((PAYLOAD.len() + PICKER_PAYLOAD.len() + std::fs::metadata(&me).map(|m| m.len() as usize).unwrap_or(0)) / 1024) as u32;
     let entry = install::uninstall_entry(dir, VERSION, size_kb, &today());
     for (name, data) in &entry.strings {
@@ -323,7 +323,7 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
     shellreg::set_string(install::APP_KEY, "InstallDir", dir)?;
     shellreg::set_string(install::APP_KEY, "Version", VERSION)?;
 
-    progress(70, "建立捷徑…");
+    progress(70, tr!("建立捷徑…", "Creating shortcuts…"));
     let (start, desktop) = shortcut_paths();
     for (path, wanted) in [(start, opts.start_menu), (desktop, opts.desktop)] {
         let Some(path) = path else { continue };
@@ -338,7 +338,7 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
         }
     }
 
-    progress(85, "設定預設檔案總管…");
+    progress(85, tr!("設定預設檔案總管…", "Setting the default file manager…"));
     match opts.default_fm {
         Some(true) => {
             shellreg::set_default_file_manager(&exe)?;
@@ -360,7 +360,7 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
     }
 
     // 選用的功能：失敗不影響安裝（Stillfeather 每次啟動會依使用者的選擇再處理一次）
-    progress(92, "設定開啟檔案視窗…");
+    progress(92, tr!("設定開啟檔案視窗…", "Setting up the file dialogs…"));
     match opts.picker {
         Some(true) => {
             let _ = shellreg::set_picker_choice(true);
@@ -380,7 +380,7 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
     // 背景攔截 Win+E（新版 Windows 11 需要；選項預設開啟，只在預設檔案總管是 Stillfeather 時執行）：登入時啟動
     shellreg::sync_win_e_autorun();
     shellreg::notify_assoc_changed();
-    progress(100, "完成");
+    progress(100, tr!("完成", "Done"));
     Ok(())
 }
 
@@ -410,9 +410,9 @@ fn install_in_place_or_elevated(opts: &InstallOptions, elevated: bool, progress:
     match check_writable(&opts.dir) {
         Access::Ok => install(opts, progress),
         Access::Failed(e) => Err(e),
-        Access::NeedsAdmin if elevated || is_elevated() => Err("沒有權限寫入這個資料夾。".into()),
+        Access::NeedsAdmin if elevated || is_elevated() => Err(tr!("沒有權限寫入這個資料夾。", "You don't have permission to write to this folder.").into()),
         Access::NeedsAdmin => {
-            progress(10, "這個位置需要系統管理員權限，請在 Windows 的提示中允許…");
+            progress(10, tr!("這個位置需要系統管理員權限，請在 Windows 的提示中允許…", "This location needs administrator permission. Allow it in the Windows prompt…"));
             let flag = |on: bool, yes: &str, no: &str| if on { yes.to_string() } else { no.to_string() };
             let mut args = vec!["--elevated".to_string(), "/S".to_string(), "--dir".to_string(), opts.dir.clone()];
             if let Some(d) = opts.default_fm {
@@ -441,13 +441,13 @@ fn install_in_place_or_elevated(opts: &InstallOptions, elevated: bool, progress:
 
 /// 解除安裝（在暫存資料夾的那一份執行）。回傳仍需在程式結束後刪除的檔案（例如還在執行的 Uninstall.exe）。
 pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
-    progress(5, "正在關閉 Stillfeather…");
+    progress(5, tr!("正在關閉 Stillfeather…", "Closing Stillfeather…"));
     close_app()?;
     // 背景攔截 Win+E：結束它（它鎖住 exe）並拿掉登入時的啟動
     shellreg::stop_win_e(5000);
     let _ = shellreg::set_win_e_autorun(None);
 
-    progress(20, "改回 Windows 檔案總管…");
+    progress(20, tr!("改回 Windows 檔案總管…", "Switching back to File Explorer…"));
     let mut errors = Vec::new();
     if let Err(e) = shellreg::restore_default_file_manager() {
         errors.push(e);
@@ -457,21 +457,21 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
         errors.push(e);
     }
 
-    progress(35, "刪除捷徑…");
+    progress(35, tr!("刪除捷徑…", "Deleting shortcuts…"));
     let (start, desktop) = shortcut_paths();
     let exe = paths::join(dir, install::EXE_NAME);
     for lnk in [start, desktop].into_iter().flatten() {
         delete_file(&lnk);
     }
 
-    progress(50, "刪除設定與記錄…");
+    progress(50, tr!("刪除設定與記錄…", "Deleting settings and logs…"));
     if let Some(base) = local_app_data() {
         // 目前的資料夾，以及舊版用的 %LOCALAPPDATA%\FeatherFiles（還沒被新版清掉時）
         for data in [install::data_dir(&base), install::old_data_dir(&base)] {
             move_loaded_picker(&data);
             if std::path::Path::new(&data).exists() {
                 if let Err(e) = std::fs::remove_dir_all(&data) {
-                    errors.push(format!("無法刪除 {data}：{e}"));
+                    errors.push(trf!("無法刪除 {data}：{e}", "Couldn't delete {data}: {e}"));
                 }
             }
         }
@@ -487,10 +487,10 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
         }
     }
 
-    progress(70, "刪除程式檔案…");
+    progress(70, tr!("刪除程式檔案…", "Deleting program files…"));
     let mut later = Vec::new();
     if !delete_file(&exe) {
-        errors.push(format!("無法刪除 {exe}。"));
+        errors.push(trf!("無法刪除 {exe}。", "Couldn't delete {exe}."));
     }
     for name in install::GENERATED_FILES {
         delete_file(&paths::join(dir, name));
@@ -502,7 +502,7 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
         later.push(uninstaller);
     }
 
-    progress(85, "移除登錄項目…");
+    progress(85, tr!("移除登錄項目…", "Removing registry entries…"));
     for key in [install::UNINSTALL_KEY, install::APP_KEY] {
         if let Err(e) = shellreg::delete_tree(key) {
             errors.push(e);
@@ -514,7 +514,7 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
             RemoveDirectoryW(d.as_ptr());
         }
     }
-    progress(100, "完成");
+    progress(100, tr!("完成", "Done"));
     if errors.is_empty() {
         Ok(later)
     } else {
@@ -541,7 +541,7 @@ fn move_loaded_picker(data_dir: &str) {
 pub fn uninstall_with_elevation(dir: &str, elevated: bool, progress: Progress) -> Result<Vec<String>, String> {
     let needs_admin = std::path::Path::new(dir).exists() && matches!(check_writable(dir), Access::NeedsAdmin);
     if needs_admin && !elevated && !is_elevated() {
-        progress(10, "需要系統管理員權限才能刪除程式檔案，請在 Windows 的提示中允許…");
+        progress(10, tr!("需要系統管理員權限才能刪除程式檔案，請在 Windows 的提示中允許…", "Administrator permission is needed to delete the program files. Allow it in the Windows prompt…"));
         run_elevated(vec!["--uninstall".into(), "--elevated".into(), "/S".into(), "--dir".into(), dir.to_string()])?;
         return Ok(Vec::new());
     }
@@ -642,9 +642,9 @@ fn close(process: HANDLE) -> u32 {
 
 /// 以系統管理員身分執行自己（帶 --result=暫存檔），等它結束並讀回結果。
 fn run_elevated(mut args: Vec<String>) -> Result<(), String> {
-    let me = own_exe().ok_or("找不到安裝程式本身的位置。")?;
+    let me = own_exe().ok_or(tr!("找不到安裝程式本身的位置。", "Can't find where the installer itself is."))?;
     let result_file = paths::join(&std::env::temp_dir().to_string_lossy(), &format!("Stillfeather-setup-result-{}-{}.txt", std::process::id(), unsafe { GetTickCount64() }));
-    let _ = std::fs::write(&result_file, "未完成：以系統管理員身分執行的安裝程式沒有回報結果。");
+    let _ = std::fs::write(&result_file, tr!("未完成：以系統管理員身分執行的安裝程式沒有回報結果。", "Not finished: the installer running as administrator didn't report a result."));
     args.push(format!("--result={result_file}"));
     let params = args.iter().map(|a| install::quote_arg(a)).collect::<Vec<_>>().join(" ");
     let (verb, file, p) = (w("runas"), w(&me), w(&params));
@@ -658,7 +658,7 @@ fn run_elevated(mut args: Vec<String>) -> Result<(), String> {
     if unsafe { ShellExecuteExW(&mut info) } == 0 || info.hProcess == 0 {
         let code = unsafe { GetLastError() };
         let _ = std::fs::remove_file(&result_file);
-        return Err(if code == ERROR_CANCELLED { "需要系統管理員權限才能繼續，已取消。可以改裝到你的使用者資料夾（不需要權限）。".into() } else { format!("無法以系統管理員身分執行（錯誤 {code}）。") });
+        return Err(if code == ERROR_CANCELLED { tr!("需要系統管理員權限才能繼續，已取消。可以改裝到你的使用者資料夾（不需要權限）。", "Administrator permission is needed to continue, so this was cancelled. You can install to your user folder instead (no permission needed).").into() } else { trf!("無法以系統管理員身分執行（錯誤 {code}）。", "Couldn't run as administrator (error {code}).") });
     }
     let code = wait(info.hProcess);
     let text = std::fs::read_to_string(&result_file).unwrap_or_default();
@@ -666,7 +666,7 @@ fn run_elevated(mut args: Vec<String>) -> Result<(), String> {
     if code == 0 && text.trim().is_empty() {
         Ok(())
     } else if text.trim().is_empty() {
-        Err(format!("以系統管理員身分執行的步驟失敗（代碼 {code}）。"))
+        Err(trf!("以系統管理員身分執行的步驟失敗（代碼 {code}）。", "The step running as administrator failed (code {code})."))
     } else {
         Err(text.trim().to_string())
     }

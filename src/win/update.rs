@@ -72,7 +72,7 @@ impl Ui {
 
 fn state_path() -> Result<String, String> {
     let settings = app::settings_path()?;
-    let dir = paths::parent(&settings).ok_or("設定檔位置無效。")?;
+    let dir = paths::parent(&settings).ok_or(tr!("設定檔位置無效。", "Invalid settings file location."))?;
     Ok(paths::join(&dir, STATE_FILE))
 }
 
@@ -100,23 +100,29 @@ pub fn start_check(manual: bool) -> bool {
     true
 }
 
-const NO_KEY: &str = "這一版 Stillfeather 沒有內建更新金鑰，無法確認更新的來源，所以不檢查更新。";
-const UNSIGNED: &str = "最新版的更新資訊沒有簽章（update.json.sig），無法確認是 Stillfeather 發佈的，為了安全沒有更新。";
-const BAD_SIGNATURE: &str = "更新資訊的簽章不正確，可能被竄改過，為了安全沒有更新。";
+fn no_key() -> &'static str {
+    tr!("這一版 Stillfeather 沒有內建更新金鑰，無法確認更新的來源，所以不檢查更新。", "This build of Stillfeather has no built-in update key, so it can't verify where updates come from and doesn't check for them.")
+}
+fn unsigned() -> &'static str {
+    tr!("最新版的更新資訊沒有簽章（update.json.sig），無法確認是 Stillfeather 發佈的，為了安全沒有更新。", "The latest update information isn't signed (update.json.sig), so it can't be confirmed as published by Stillfeather. For safety, nothing was updated.")
+}
+fn bad_signature() -> &'static str {
+    tr!("更新資訊的簽章不正確，可能被竄改過，為了安全沒有更新。", "The update information has an invalid signature and may have been tampered with. For safety, nothing was updated.")
+}
 
 /// 下載並核對 update.json：先確認簽章（update.json.sig）是 Stillfeather 的更新金鑰簽的，才相信裡面的內容。
 fn fetch_manifest(url: &str) -> Result<Manifest, String> {
     if update::public_key().is_none() {
-        return Err(NO_KEY.into());
+        return Err(no_key().into());
     }
     let bytes = match fetch(url, update::MAX_MANIFEST_BYTES, &mut |_, _| {}) {
         Ok(b) => b,
-        Err((404, _)) => return Err("GitHub 上還沒有含 update.json 的正式版。".into()),
+        Err((404, _)) => return Err(tr!("GitHub 上還沒有含 update.json 的正式版。", "There's no release with update.json on GitHub yet.").into()),
         Err((_, e)) => return Err(e),
     };
     let signature = match fetch(&update::signature_url(url), update::MAX_SIGNATURE_BYTES, &mut |_, _| {}) {
         Ok(b) => String::from_utf8_lossy(&b).into_owned(),
-        Err((404, _)) => return Err(UNSIGNED.into()),
+        Err((404, _)) => return Err(unsigned().into()),
         Err((_, e)) => return Err(e),
     };
     check_signed(&bytes, &signature)
@@ -124,13 +130,13 @@ fn fetch_manifest(url: &str) -> Result<Manifest, String> {
 
 /// 簽章正確才解析 update.json（簽的是檔案的原始位元組，所以先驗證、後解析）
 fn check_signed(manifest: &[u8], signature: &str) -> Result<Manifest, String> {
-    let key = update::public_key().ok_or(NO_KEY)?;
-    let sig = update::parse_signature(signature).ok_or(UNSIGNED)?;
+    let key = update::public_key().ok_or(no_key())?;
+    let sig = update::parse_signature(signature).ok_or(unsigned())?;
     if !signature_valid(manifest, &sig, &key) {
         crumb("更新：update.json 的簽章不正確");
-        return Err(BAD_SIGNATURE.into());
+        return Err(bad_signature().into());
     }
-    let text = std::str::from_utf8(manifest).map_err(|_| "更新資訊不是 UTF-8 文字。".to_string())?;
+    let text = std::str::from_utf8(manifest).map_err(|_| tr!("更新資訊不是 UTF-8 文字。", "The update information isn't UTF-8 text.").to_string())?;
     update::parse_manifest(text)
 }
 
@@ -145,7 +151,7 @@ pub fn verify_release_files(manifest_path: &str) -> i32 {
     let Ok(signature) = std::fs::read_to_string(format!("{manifest_path}{}", update::SIGNATURE_SUFFIX)) else { return 3 };
     match check_signed(&manifest, &signature) {
         Ok(_) => 0,
-        Err(e) if e == UNSIGNED || e == BAD_SIGNATURE => 3,
+        Err(e) if e == unsigned() || e == bad_signature() => 3,
         Err(_) => 4,
     }
 }
@@ -275,9 +281,9 @@ impl App {
                             if offer == Offer::Newer {
                                 // 設定還開著：「檢查更新」改成「立即更新」；已經關了就直接跳出提醒（見下面）
                                 settings_dialog::update_found(&m.version);
-                            } else if !settings_dialog::update_status("已是最新版本") {
+                            } else if !settings_dialog::update_status(tr!("已是最新版本", "You have the latest version")) {
                                 // 設定已經關了：在狀態列告訴使用者
-                                self.set_footer(format!("Stillfeather {VERSION} 已是最新版本"));
+                                self.set_footer(trf!("Stillfeather {VERSION} 已是最新版本", "Stillfeather {VERSION} is the latest version"));
                             }
                         }
                         // 自動檢查：關掉提醒的話不跳出來（例如檢查途中剛好在設定裡關掉）
@@ -289,19 +295,19 @@ impl App {
                     Err(e) => {
                         crumb("更新：檢查失敗");
                         if manual && !settings_dialog::update_failed(&e) {
-                            dialog::error(self.hwnd, "無法檢查更新", &e);
+                            dialog::error(self.hwnd, tr!("無法檢查更新", "Couldn't check for updates"), &e);
                         }
                     }
                 }
             }
-            Event::Progress(p) => self.set_footer(format!("正在下載 Stillfeather 更新… {p}%")),
+            Event::Progress(p) => self.set_footer(trf!("正在下載 Stillfeather 更新… {p}%", "Downloading the Stillfeather update… {p}%")),
             Event::Downloaded(result) => {
                 self.updates.downloading = false;
                 match result {
                     Ok(path) => self.run_update_setup(&path),
                     Err(e) => {
-                        self.set_footer("更新沒有完成".into());
-                        dialog::error(self.hwnd, "更新沒有完成", &e);
+                        self.set_footer(tr!("更新沒有完成", "The update didn't finish").into());
+                        dialog::error(self.hwnd, tr!("更新沒有完成", "The update didn't finish"), &e);
                     }
                 }
             }
@@ -329,14 +335,14 @@ impl App {
         self.updates.prompted = true;
         self.hide_preview();
         let installed = installed_dir().is_some();
-        let mut foot = if installed { "更新時會先關閉 Stillfeather，安裝完成後自動重新開啟。".to_string() } else { "會開啟新版的安裝程式。".to_string() };
+        let mut foot = if installed { tr!("更新時會先關閉 Stillfeather，安裝完成後自動重新開啟。", "Stillfeather closes while it updates and reopens when the installation is done.").to_string() } else { tr!("會開啟新版的安裝程式。", "The installer for the new version will open.").to_string() };
         if !manual {
-            foot.push_str("不想收到提醒，可以在設定開啟「不要啟用更新提醒」。");
+            foot.push_str(tr!("不想收到提醒，可以在設定開啟「不要啟用更新提醒」。", "To stop these reminders, turn on “No update reminders” in Settings."));
         }
-        let mut spec = dialog::Spec::new(Icon::Info, "Stillfeather 有新版本")
-            .rows(vec![("目前版本".into(), VERSION.into()), ("新版本".into(), m.version.clone()), ("下載大小".into(), format_size(Some(m.size)))])
+        let mut spec = dialog::Spec::new(Icon::Info, tr!("Stillfeather 有新版本", "A new version of Stillfeather is available"))
+            .rows(vec![(tr!("目前版本", "Current version").into(), VERSION.into()), (tr!("新版本", "New version").into(), m.version.clone()), (tr!("下載大小", "Download size").into(), format_size(Some(m.size)))])
             .footnote(&foot)
-            .buttons(vec![Button::primary(1, "更新").key('U'), Button::normal(2, "略過這個版本"), Button::normal(0, "稍後")], 0)
+            .buttons(vec![Button::primary(1, tr!("更新", "Update")).key('U'), Button::normal(2, tr!("略過這個版本", "Skip this version")), Button::normal(0, tr!("稍後", "Later"))], 0)
             .width(480);
         let notes = notes_preview(&m.notes);
         if !notes.is_empty() {
@@ -345,7 +351,7 @@ impl App {
         match spec.show(self.hwnd) {
             1 => self.start_update_download(m),
             2 => {
-                self.set_footer(format!("已略過 {} 版；有更新的版本時會再提醒", m.version));
+                self.set_footer(trf!("已略過 {} 版；有更新的版本時會再提醒", "Skipped version {}; you'll be reminded when a newer version is available", m.version));
                 self.updates.state.skipped = Some(m.version);
                 self.updates.save();
             }
@@ -358,7 +364,7 @@ impl App {
             return;
         }
         self.updates.downloading = true;
-        self.set_footer(format!("正在下載 Stillfeather {}…", m.version));
+        self.set_footer(trf!("正在下載 Stillfeather {}…", "Downloading Stillfeather {}…", m.version));
         std::thread::spawn(move || {
             let result = download(&m);
             app::post(WorkerMsg::Update(Event::Downloaded(result)));
@@ -369,8 +375,8 @@ impl App {
     fn run_update_setup(&mut self, setup: &str) {
         let dir = installed_dir();
         if dir.is_some() && self.op_busy {
-            dialog::info(self.hwnd, "檔案作業還在進行", "更新會關閉 Stillfeather。請等檔案作業完成後，再到設定按「檢查更新」更新。");
-            self.set_footer("檔案作業完成後再更新".into());
+            dialog::info(self.hwnd, tr!("檔案作業還在進行", "A file operation is still running"), tr!("更新會關閉 Stillfeather。請等檔案作業完成後，再到設定按「檢查更新」更新。", "Updating closes Stillfeather. Wait for the file operation to finish, then click “Check for updates” in Settings."));
+            self.set_footer(tr!("檔案作業完成後再更新", "Update after the file operation finishes").into());
             return;
         }
         let mut cmd = std::process::Command::new(setup);
@@ -383,13 +389,13 @@ impl App {
         match cmd.spawn() {
             Ok(_) if dir.is_some() => {
                 crumb("更新：已啟動安裝程式，關閉主視窗");
-                self.set_footer("正在更新 Stillfeather…".into());
+                self.set_footer(tr!("正在更新 Stillfeather…", "Updating Stillfeather…").into());
                 unsafe {
                     PostMessageW(self.hwnd, WM_CLOSE, 0, 0);
                 }
             }
-            Ok(_) => self.set_footer("已開啟新版的安裝程式".into()),
-            Err(e) => dialog::error(self.hwnd, "無法開啟安裝程式", &e.to_string()),
+            Ok(_) => self.set_footer(tr!("已開啟新版的安裝程式", "Opened the installer for the new version").into()),
+            Err(e) => dialog::error(self.hwnd, tr!("無法開啟安裝程式", "Couldn't open the installer"), &e.to_string()),
         }
     }
 
@@ -455,27 +461,27 @@ fn download(m: &Manifest) -> Result<String, String> {
             app::post(WorkerMsg::Update(Event::Progress(pct)));
         }
     })
-    .map_err(|(status, e)| if status == 404 { "找不到這個版本的安裝程式（HTTP 404）。".to_string() } else { e })?;
+    .map_err(|(status, e)| if status == 404 { tr!("找不到這個版本的安裝程式（HTTP 404）。", "Can't find the installer for this version (HTTP 404).").to_string() } else { e })?;
     if data.len() as u64 != m.size {
-        return Err(format!("下載的檔案大小不符（{} / {} 位元組），可能沒有下載完整。", data.len(), m.size));
+        return Err(trf!("下載的檔案大小不符（{} / {} 位元組），可能沒有下載完整。", "The downloaded file has the wrong size ({} / {} bytes); the download may be incomplete.", data.len(), m.size));
     }
     if update::sha256(&data) != m.sha256 {
-        return Err("下載的檔案和更新資訊不符（SHA-256 不同），可能下載不完整或被竄改，已停止更新。".into());
+        return Err(tr!("下載的檔案和更新資訊不符（SHA-256 不同），可能下載不完整或被竄改，已停止更新。", "The downloaded file doesn't match the update information (different SHA-256); it may be incomplete or tampered with, so the update was stopped.").into());
     }
     if !data.starts_with(b"MZ") {
-        return Err("下載的檔案不是 Windows 程式，已停止更新。".into());
+        return Err(tr!("下載的檔案不是 Windows 程式，已停止更新。", "The downloaded file isn't a Windows program, so the update was stopped.").into());
     }
     let dir = std::env::temp_dir().join(TEMP_FOLDER);
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("無法建立暫存資料夾：{e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| trf!("無法建立暫存資料夾：{e}", "Couldn't create the temporary folder: {e}"))?;
     let version: String = m.version.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-')).collect();
     let path = dir.join(format!("StillfeatherSetup-{version}.exe"));
-    std::fs::write(&path, &data).map_err(|e| format!("無法寫入安裝程式：{e}"))?;
+    std::fs::write(&path, &data).map_err(|e| trf!("無法寫入安裝程式：{e}", "Couldn't write the installer: {e}"))?;
     let path = path.to_string_lossy().to_string();
     // 目前這一版有簽章：新版也必須有有效的簽章
     if current_exe_path().is_some_and(|me| is_signed(&me)) && !is_signed(&path) {
         let _ = std::fs::remove_file(&path);
-        return Err("新版的安裝程式沒有有效的數位簽章，已停止更新。".into());
+        return Err(tr!("新版的安裝程式沒有有效的數位簽章，已停止更新。", "The new installer doesn't have a valid digital signature, so the update was stopped.").into());
     }
     Ok(path)
 }
@@ -529,12 +535,12 @@ impl Drop for Net {
 
 fn net_error() -> String {
     match unsafe { GetLastError() } {
-        12002 => "連線逾時，請稍後再試。".into(),
-        12007 => "找不到伺服器（可能沒有連上網路）。".into(),
-        12029 | 12030 => "無法連線到伺服器（可能沒有連上網路，或被防火牆擋住）。".into(),
-        12175 | 12045 | 12037 | 12038 => "無法建立安全連線（憑證有問題，或網路被攔截）。".into(),
-        12152 => "伺服器的回應無效。".into(),
-        c => format!("網路錯誤（代碼 {c}）。"),
+        12002 => tr!("連線逾時，請稍後再試。", "The connection timed out. Try again later.").into(),
+        12007 => tr!("找不到伺服器（可能沒有連上網路）。", "Can't find the server (you may not be connected to the internet).").into(),
+        12029 | 12030 => tr!("無法連線到伺服器（可能沒有連上網路，或被防火牆擋住）。", "Can't connect to the server (you may not be connected to the internet, or a firewall is blocking it).").into(),
+        12175 | 12045 | 12037 | 12038 => tr!("無法建立安全連線（憑證有問題，或網路被攔截）。", "Couldn't establish a secure connection (a certificate problem, or the network is being intercepted).").into(),
+        12152 => tr!("伺服器的回應無效。", "The server's response is invalid.").into(),
+        c => trf!("網路錯誤（代碼 {c}）。", "Network error (code {c})."),
     }
 }
 
@@ -547,8 +553,8 @@ unsafe fn query_number(req: HINTERNET, level: u32) -> Option<u32> {
 /// 以 HTTPS GET 下載（跟隨轉址，例如 GitHub 的 releases/latest），內容超過 `limit` 位元組就停止。
 /// 錯誤附上 HTTP 狀態碼（網路錯誤時是 0）。
 fn fetch(url: &str, limit: u64, progress: &mut dyn FnMut(u64, Option<u64>)) -> Result<Vec<u8>, (u32, String)> {
-    let (host, port, path) = update::split_https_url(url).ok_or((0, "網址必須是 https。".to_string()))?;
-    let too_big = || (0, "檔案比預期的大，已停止下載。".to_string());
+    let (host, port, path) = update::split_https_url(url).ok_or((0, tr!("網址必須是 https。", "The address must use https.").to_string()))?;
+    let too_big = || (0, tr!("檔案比預期的大，已停止下載。", "The file is larger than expected, so the download was stopped.").to_string());
     unsafe {
         let agent = wide(&format!("Stillfeather/{VERSION}"));
         let mut h = WinHttpOpen(agent.as_ptr(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, std::ptr::null(), std::ptr::null(), 0);
@@ -567,7 +573,7 @@ fn fetch(url: &str, limit: u64, progress: &mut dyn FnMut(u64, Option<u64>)) -> R
         }
         let status = query_number(req.0, WINHTTP_QUERY_STATUS_CODE).unwrap_or(0);
         if status != 200 {
-            return Err((status, format!("伺服器回應 HTTP {status}。")));
+            return Err((status, trf!("伺服器回應 HTTP {status}。", "The server responded with HTTP {status}.")));
         }
         let total = query_number(req.0, WINHTTP_QUERY_CONTENT_LENGTH).map(u64::from);
         if total.is_some_and(|t| t > limit) {
@@ -597,7 +603,7 @@ fn fetch(url: &str, limit: u64, progress: &mut dyn FnMut(u64, Option<u64>)) -> R
             progress(out.len() as u64, total);
         }
         if total.is_some_and(|t| out.len() as u64 != t) {
-            return Err((0, "下載沒有完成（連線中斷）。".into()));
+            return Err((0, tr!("下載沒有完成（連線中斷）。", "The download didn't finish (the connection was lost).").into()));
         }
         Ok(out)
     }

@@ -1,4 +1,4 @@
-//! 選擇器模式（`Stillfeather.exe --pick <請求檔>`）：其他程式要開啟檔案或選擇資料夾時開的精簡視窗。
+//! 選擇器模式（`Stillfeather.exe --pick <請求檔>`）：其他程式要開啟檔案、另存新檔或選擇資料夾時開的精簡視窗。
 //!
 //! 由 picker/ 的取代元件啟動（見 src/picker.rs 的流程說明）。和一般的 Stillfeather 是不同的程序：
 //! 不佔用單一實例、不檢查更新、不寫入設定檔與資料夾檢視記錄，記錄檔另外寫成 picker-trace.log 等。
@@ -6,6 +6,9 @@
 //! 介面只保留選檔需要的部分：上一頁／下一頁／上一層、重新整理、路徑列、搜尋、新增資料夾、排序與檢視、
 //! 左側資料夾樹、檔案清單，以及底部的檔名欄、檔案類型、確定與取消。沒有分頁、雙欄與個人化卡片。
 //! 選好後把路徑寫進結果檔，以結束代碼告訴取代元件是確定、取消，還是改用 Windows 原本的視窗。
+//!
+//! 另存新檔（`Mode::Save`）：檔名欄一開始就有焦點並選取主檔名，存檔時照 Windows 的做法補上副檔名、
+//! 換類型時跟著換副檔名、檔案已經存在時先問要不要取代。檔案可以還不存在（結果是要存的位置）。
 
 use super::app::{self, id, App, NavKind};
 use super::controls::{self, Kind, Surface};
@@ -77,7 +80,16 @@ impl Picker {
     }
 
     pub fn shows_types(&self) -> bool {
-        self.req.mode == Mode::Files && !self.req.types.is_empty()
+        self.req.mode != Mode::Folders && !self.req.types.is_empty()
+    }
+
+    fn saving(&self) -> bool {
+        self.req.mode == Mode::Save
+    }
+
+    /// 另存新檔時目前的類型要加的副檔名
+    fn save_extension(&self) -> Option<String> {
+        self.req.save_extension(self.type_index)
     }
 
     fn type_label(&self) -> String {
@@ -141,15 +153,19 @@ impl App {
         p.type_btn = controls::create(hwnd, id::PICK_TYPE, Kind::Menu(glyph::FILTER), &p.type_label(), Surface::Card, false);
         p.ok_btn = controls::create(hwnd, id::PICK_OK, Kind::Text, &p.req.ok_text(), Surface::Card, false);
         controls::set_primary(p.ok_btn);
-        p.cancel_btn = controls::create(hwnd, id::PICK_CANCEL, Kind::Text, "取消", Surface::Card, false);
-        p.system_btn = controls::create(hwnd, id::PICK_SYSTEM, Kind::Text, "使用 Windows 視窗", Surface::Page, false);
+        p.cancel_btn = controls::create(hwnd, id::PICK_CANCEL, Kind::Text, tr!("取消", "Cancel"), Surface::Card, false);
+        p.system_btn = controls::create(hwnd, id::PICK_SYSTEM, Kind::Text, tr!("使用 Windows 視窗", "Use Windows dialog"), Surface::Page, false);
         controls::set_subtle(p.system_btn);
         let font = self.theme.fonts.ui;
         let name_edit = p.name_edit;
         let multi = p.req.multi;
         let file_name = p.req.file_name.clone();
         send(name_edit, WM_SETFONT, font as WPARAM, 1);
-        let cue = wide(if p.req.mode == Mode::Folders { "選取資料夾，或輸入路徑" } else { "選取檔案，或輸入名稱、路徑" });
+        let cue = wide(match p.req.mode {
+            Mode::Folders => tr!("選取資料夾，或輸入路徑", "Select a folder, or type a path"),
+            Mode::Save => tr!("輸入檔案名稱", "Type a file name"),
+            Mode::Files => tr!("選取檔案，或輸入名稱、路徑", "Select files, or type a name or path"),
+        });
         send_ptr(name_edit, EM_SETCUEBANNER, 1, cue.as_ptr());
         if !file_name.is_empty() {
             set_window_text(name_edit, &file_name);
@@ -173,7 +189,9 @@ impl App {
         let candidates = [Some(p.req.folder.clone()), recent, Some(p.req.default_folder.clone())];
         let folder = candidates.into_iter().flatten().find(|f| !f.trim().is_empty() && fs::is_dir(f)).unwrap_or_else(|| self.default_path.clone());
         let name = p.req.file_name.trim().to_string();
-        let select = if name.is_empty() || picker::is_pattern(&name) { vec![] } else { vec![picker::resolve(&folder, &name)] };
+        // 另存新檔不選取同名的檔案（選取會把檔名欄換成那個名稱，蓋掉一開始選好的主檔名）
+        let saving = p.saving();
+        let select = if saving || name.is_empty() || picker::is_pattern(&name) { vec![] } else { vec![picker::resolve(&folder, &name)] };
         let filter = p.filter();
         let id = self.active_tab_id();
         if let Some(t) = self.tabs.get_mut(&id) {
@@ -182,6 +200,9 @@ impl App {
         self.navigate(id, &folder, NavKind::NoHistory, select);
         unsafe {
             SetForegroundWindow(self.hwnd);
+        }
+        if saving {
+            self.picker_focus_name();
         }
         if self.picker.as_ref().is_some_and(|p| p.host != 0) {
             unsafe {
@@ -275,6 +296,21 @@ impl App {
         theme::round_rect(dc, &frame, frame.height(), Some(pal.surface), Some(border));
     }
 
+    /// 焦點放進檔名欄，選取主檔名（不含副檔名），直接打字就換掉名稱
+    fn picker_focus_name(&self) {
+        let Some(p) = self.picker.as_ref() else { return };
+        let text = window_text(p.name_edit);
+        let stem = match picker::extension_of(&text) {
+            Some(ext) => text.len() - ext.len() - 1,
+            None => text.len(),
+        };
+        let stem_units = text[..stem].encode_utf16().count();
+        unsafe {
+            SetFocus(p.name_edit);
+        }
+        send(p.name_edit, EM_SETSEL, 0, stem_units as LPARAM);
+    }
+
     /// 選取改變：選了檔案（選資料夾時是資料夾）就把名稱填進檔名欄，其他情況保留使用者打的字。
     pub(super) fn picker_selection_changed(&mut self, side: Side) {
         let Some(p) = self.picker.as_ref() else { return };
@@ -299,6 +335,9 @@ impl App {
         let dirs: Vec<String> = entries.iter().filter(|e| e.is_dir).map(|e| e.full_path()).collect();
         if mode == Mode::Files && !files.is_empty() {
             self.picker_accept(files);
+        } else if mode == Mode::Save && !files.is_empty() {
+            // 另存新檔時雙擊已有的檔案：存成它（先問要不要取代）
+            self.picker_save(files[0].clone());
         } else if let Some(dir) = dirs.first().filter(|_| dirs.len() == 1 || files.is_empty()) {
             let id = self.active_tab_id();
             let dir = dir.clone();
@@ -307,8 +346,9 @@ impl App {
         }
     }
 
+    /// 進到另一個資料夾後清掉檔名欄。另存新檔時保留打好的檔名（換資料夾不換檔名）。
     fn picker_clear_name(&mut self) {
-        if let Some(p) = self.picker.as_ref() {
+        if let Some(p) = self.picker.as_ref().filter(|p| !p.saving()) {
             set_window_text(p.name_edit, "");
         }
     }
@@ -320,9 +360,13 @@ impl App {
         let text = window_text(edit).trim().to_string();
         let Some(folder) = self.active_tab().filter(|t| !t.loading).map(|t| t.path.clone()) else { return };
         let side = self.active_side();
+        if mode == Mode::Save {
+            self.picker_save_confirm(&text, &folder);
+            return;
+        }
         if text.is_empty() {
             match mode {
-                Mode::Files => self.picker_activate(side),
+                Mode::Files | Mode::Save => self.picker_activate(side),
                 Mode::Folders => {
                     // 沒有選也沒有打字：選目前的資料夾
                     let dirs: Vec<String> = self.selected_entries(side).iter().filter(|e| e.is_dir).map(|e| e.full_path()).collect();
@@ -371,17 +415,111 @@ impl App {
             return;
         }
         if !multi && full.len() > 1 {
-            dialog::Spec::new(Icon::Warning, "只能選一個").body("這個程式一次只接受一個檔案。").show(self.hwnd);
+            dialog::Spec::new(Icon::Warning, tr!("只能選一個", "Only one item can be selected")).body(tr!("這個程式一次只接受一個檔案。", "This program accepts only one file at a time.")).show(self.hwnd);
             return;
         }
         let missing: Vec<&String> = full.iter().filter(|f| if mode == Mode::Folders { !fs::is_dir(f) } else { !fs::is_file(f) }).collect();
         if !missing.is_empty() && (must_exist || mode == Mode::Folders) {
-            let what = if mode == Mode::Folders { "資料夾" } else { "檔案" };
+            let what = if mode == Mode::Folders { tr!("資料夾", "folder") } else { tr!("檔案", "file") };
             let list: Vec<String> = missing.iter().take(5).map(|f| paths::file_name(f).to_string()).collect();
-            dialog::Spec::new(Icon::Warning, &format!("找不到{what}")).body(&format!("{}\n\n請確認名稱是否正確。", list.join("\n"))).show(self.hwnd);
+            dialog::Spec::new(Icon::Warning, &trf!("找不到{what}", "Can't find the {what}")).body(&trf!("{}\n\n請確認名稱是否正確。", "{}\n\nCheck that the name is correct.", list.join("\n"))).show(self.hwnd);
             return;
         }
         self.picker_accept(full);
+    }
+
+    /// 另存新檔的確定：檔名欄打的名稱補上副檔名，變成要存的位置。
+    fn picker_save_confirm(&mut self, text: &str, folder: &str) {
+        let Some(p) = self.picker.as_ref() else { return };
+        let side = self.active_side();
+        if text.is_empty() {
+            // 沒打檔名：選了資料夾就進去，否則提醒要輸入檔名
+            if self.selected_entries(side).iter().any(|e| e.is_dir) {
+                self.picker_activate(side);
+            } else {
+                self.picker_focus_name();
+            }
+            return;
+        }
+        // 打的是萬用字元：當作臨時的類型篩選（與 Windows 的視窗相同）
+        if picker::is_pattern(text) {
+            let filter = Filter::from_spec(text);
+            let id = self.active_tab_id();
+            if let Some(t) = self.tabs.get_mut(&id) {
+                t.pick = Some(filter);
+                t.refilter();
+            }
+            self.refresh_list(side, true);
+            self.update_chrome();
+            return;
+        }
+        // 選了搜尋結果裡的檔案：以它所在的資料夾為準
+        if let Some(e) = self.selected_entries(side).into_iter().find(|e| !e.is_dir && e.name == text) {
+            self.picker_save(e.full_path());
+            return;
+        }
+        let ext = p.save_extension();
+        let strict = p.req.strict_types.then(|| p.filter());
+        let original = p.req.file_name.clone();
+        let edit = p.name_edit;
+        // 打的是資料夾（例如 `..`、`D:\工作`）：進去，檔名欄換回原本的檔名
+        let raw = picker::resolve(folder, text.trim_matches('"'));
+        if fs::is_dir(&raw) {
+            let id = self.active_tab_id();
+            self.navigate(id, &raw, NavKind::Normal, vec![]);
+            set_window_text(edit, &original);
+            self.picker_focus_name();
+            return;
+        }
+        let name = picker::save_name(text, ext.as_deref(), strict.as_ref(), known_extension);
+        let file = paths::file_name(&name).trim().to_string();
+        if file.is_empty() {
+            self.picker_focus_name();
+            return;
+        }
+        if let Some(c) = picker::invalid_name_char(&name) {
+            dialog::Spec::new(Icon::Warning, tr!("檔名不能用這個字元", "This character can't be used in file names")).body(&trf!("「{c}」不能出現在檔名裡。\n\n檔名不能包含下列字元：\\ / : * ? \" < > |", "“{c}” can't be used in a file name.\n\nFile names can't contain any of these characters: \\ / : * ? \" < > |")).show(self.hwnd);
+            self.picker_focus_name();
+            return;
+        }
+        if picker::reserved_name(&name) {
+            dialog::Spec::new(Icon::Warning, tr!("這個名稱不能當檔名", "This name can't be used as a file name")).body(&trf!("「{file}」是 Windows 保留給裝置的名稱，請換一個名稱。", "“{file}” is reserved by Windows for a device. Choose a different name.")).show(self.hwnd);
+            self.picker_focus_name();
+            return;
+        }
+        let full = picker::resolve(folder, &name);
+        if let Some(parent) = paths::parent(&full).filter(|d| !fs::is_dir(d)) {
+            dialog::Spec::new(Icon::Warning, tr!("找不到資料夾", "Folder not found")).body(&trf!("{parent}\n\n請確認路徑是否正確。", "{parent}\n\nCheck that the path is correct.")).show(self.hwnd);
+            self.picker_focus_name();
+            return;
+        }
+        if fs::is_dir(&full) {
+            let id = self.active_tab_id();
+            self.navigate(id, &full, NavKind::Normal, vec![]);
+            set_window_text(edit, &original);
+            self.picker_focus_name();
+            return;
+        }
+        self.picker_save(full);
+    }
+
+    /// 存成 `path`：已經存在時先問要不要取代（程式要求時），唯讀的檔案不能選（程式要求時）。
+    fn picker_save(&mut self, path: String) {
+        let Some(p) = self.picker.as_ref() else { return };
+        let (overwrite_prompt, no_readonly) = (p.req.overwrite_prompt, p.req.no_readonly);
+        if let Some(attrs) = fs::attributes(&path).filter(|a| a & FILE_ATTRIBUTE_DIRECTORY == 0) {
+            let name = paths::file_name(&path).to_string();
+            if no_readonly && attrs & FILE_ATTRIBUTE_READONLY != 0 {
+                dialog::Spec::new(Icon::Warning, tr!("這個檔案是唯讀的", "This file is read-only")).body(&trf!("無法取代「{name}」。請換一個名稱，或先取消檔案的唯讀屬性。", "Can't replace “{name}”. Choose a different name, or clear the file's read-only attribute first.")).show(self.hwnd);
+                self.picker_focus_name();
+                return;
+            }
+            if overwrite_prompt && !dialog::confirm(self.hwnd, Icon::Warning, &trf!("「{name}」已經存在", "“{name}” already exists"), tr!("要取代它嗎？原本的內容會被新存的檔案蓋掉。", "Do you want to replace it? The new file will overwrite what's in it now."), tr!("取代", "Replace")) {
+                self.picker_focus_name();
+                return;
+            }
+        }
+        self.picker_accept(vec![path]);
     }
 
     /// 類型選單
@@ -402,12 +540,20 @@ impl App {
         if index >= p.req.types.len() {
             return;
         }
+        let old_ext = p.save_extension();
         p.type_index = index;
         let filter = p.filter();
         let label = p.type_label();
         let button = p.type_btn;
         set_window_text(button, &label);
         invalidate(button);
+        // 另存新檔：檔名欄的副檔名跟著換（報告.txt → 報告.html）
+        if p.saving() {
+            let edit = p.name_edit;
+            if let Some(swapped) = picker::swap_extension(&window_text(edit), old_ext.as_deref(), p.save_extension().as_deref()) {
+                set_window_text(edit, &swapped);
+            }
+        }
         let id = self.active_tab_id();
         if let Some(t) = self.tabs.get_mut(&id) {
             t.pick = Some(filter);
@@ -430,7 +576,7 @@ impl App {
         let host = p.req.host.clone();
         let response = Response { paths: chosen, type_index };
         if let Err(e) = app::write_atomic(&out, &response.to_text()) {
-            self.show_error(&format!("無法把選取的項目交給程式：{e}"));
+            self.show_error(&trf!("無法把選取的項目交給程式：{e}", "Couldn't pass the selected items to the program: {e}"));
             return;
         }
         let folder = self.active_tab().filter(|t| !t.search_mode).map(|t| t.path.clone()).unwrap_or_default();
@@ -516,6 +662,22 @@ impl App {
     }
 }
 
+/// 系統認得這個副檔名嗎（登錄的 HKEY_CLASSES_ROOT\.副檔名）：不認得的當成檔名的一部分，存檔時再補上副檔名
+fn known_extension(ext: &str) -> bool {
+    if ext.is_empty() || ext.contains([' ', '\\', '/']) {
+        return false;
+    }
+    let key = wide(&format!(".{ext}"));
+    let mut h: HKEY = 0;
+    unsafe {
+        if RegOpenKeyExW(HKEY_CLASSES_ROOT, key.as_ptr(), 0, KEY_QUERY_VALUE, &mut h) != 0 {
+            return false;
+        }
+        RegCloseKey(h);
+    }
+    true
+}
+
 // ---------------------------------------------------------------- 開啟／關閉（設定）
 
 /// 程式資料夾裡的取代元件（建置或安裝時放在 exe 旁邊）
@@ -527,7 +689,7 @@ fn bundled_dll() -> Option<String> {
 
 /// 把程式資料夾裡的取代元件複製到登記的位置，回傳它的路徑
 fn deploy_dll() -> Result<String, String> {
-    let src = bundled_dll().ok_or_else(|| format!("找不到 {}。開發版請重新執行 build.ps1；安裝版請重新安裝 Stillfeather。", picker::DLL_NAME))?;
+    let src = bundled_dll().ok_or_else(|| trf!("找不到 {}。開發版請重新執行 build.ps1；安裝版請重新安裝 Stillfeather。", "Can't find {}. For a development build, run build.ps1 again; for an installed copy, reinstall Stillfeather.", picker::DLL_NAME))?;
     shellreg::deploy_picker(&src)
 }
 
@@ -539,7 +701,7 @@ fn deploy_dll() -> Result<String, String> {
 /// 程式資料夾和登記的那一份都不在時取消登記，免得其他程式開不了檔案。
 pub(super) fn maintain() {
     if !shellreg::picker_choice() {
-        if shellreg::picker_enabled() {
+        if shellreg::picker_enabled() || shellreg::picker_save_enabled() {
             let _ = shellreg::disable_picker();
         }
         return;
@@ -568,12 +730,12 @@ pub(super) fn maintain() {
 }
 
 impl App {
-    /// 設定裡的「其他程式開啟檔案時也用 Stillfeather」
+    /// 設定裡的「其他程式開啟或儲存檔案時也用 Stillfeather」
     pub(super) fn set_picker_enabled(&mut self, on: bool) {
         // 先記下選擇：之後每次啟動都照這個選擇處理（沒選過時預設關閉）
         let _ = shellreg::set_picker_choice(on);
         let result = if on {
-            current_exe_path().ok_or_else(|| "找不到 Stillfeather 程式的位置。".to_string()).and_then(|exe| {
+            current_exe_path().ok_or_else(|| tr!("找不到 Stillfeather 程式的位置。", "Can't find where the Stillfeather program is.").to_string()).and_then(|exe| {
                 let dll = deploy_dll()?;
                 shellreg::enable_picker(&dll, &exe)
             })
@@ -581,9 +743,9 @@ impl App {
             shellreg::disable_picker()
         };
         match result {
-            Ok(()) if on => self.set_footer("已開啟：其他程式開啟檔案、網頁上傳時會跳出 Stillfeather（已經開著的程式可能要重新開啟）".into()),
-            Ok(()) => self.set_footer("已改回 Windows 的開啟檔案視窗（已經開著的程式可能要重新開啟）".into()),
-            Err(e) => self.show_error(&format!("無法變更開啟檔案視窗：{e}")),
+            Ok(()) if on => self.set_footer(tr!("已開啟：其他程式開啟、儲存檔案與網頁上傳時會跳出 Stillfeather（已經開著的程式可能要重新開啟）", "Turned on: other programs show Stillfeather when they open or save files, and for uploads on web pages (programs that are already open may need to be restarted)").into()),
+            Ok(()) => self.set_footer(tr!("已改回 Windows 的開啟檔案與另存新檔視窗（已經開著的程式可能要重新開啟）", "Switched back to the Windows Open and Save As dialogs (programs that are already open may need to be restarted)").into()),
+            Err(e) => self.show_error(&trf!("無法變更開啟檔案視窗：{e}", "Couldn't change the file dialog: {e}")),
         }
     }
 }

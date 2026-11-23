@@ -59,17 +59,17 @@ impl App {
 
     /// 選單上顯示的「復原…」文字；沒有可復原的操作時為 None。
     pub(super) fn undo_label(&self) -> Option<String> {
-        self.history.last().map(|a| format!("復原{}", a.label()))
+        self.history.last().map(|a| trf!("復原{}", "Undo {}", a.label()))
     }
 
     pub(super) fn undo(&mut self) {
         if self.op_busy {
-            self.set_footer("請等目前的檔案操作完成再復原".into());
+            self.set_footer(tr!("請等目前的檔案操作完成再復原", "Wait for the current file operation to finish before undoing").into());
             return;
         }
         loop {
             let Some(action) = self.history.pop() else {
-                self.set_footer("沒有可以復原的操作".into());
+                self.set_footer(tr!("沒有可以復原的操作", "There's nothing to undo").into());
                 return;
             };
             match action {
@@ -82,9 +82,9 @@ impl App {
                     match fileops::rename(&to, &from) {
                         Ok(()) => {
                             self.refresh_after_undo(std::slice::from_ref(&from));
-                            self.set_footer(format!("已復原重新命名：「{}」改回「{}」", paths::file_name(&to), paths::file_name(&from)));
+                            self.set_footer(trf!("已復原重新命名：「{}」改回「{}」", "Undid rename: “{}” is back to “{}”", paths::file_name(&to), paths::file_name(&from)));
                         }
-                        Err(e) => self.show_error(&format!("無法復原重新命名：{e}")),
+                        Err(e) => self.show_error(&trf!("無法復原重新命名：{e}", "Couldn't undo the rename: {e}")),
                     }
                     return;
                 }
@@ -113,7 +113,7 @@ impl App {
     fn run_undo(&mut self, action: Action) {
         self.op_busy = true;
         self.op_pending = None;
-        self.set_footer(format!("正在復原{}…", action.label()));
+        self.set_footer(trf!("正在復原{}…", "Undoing {}…", action.label()));
         fileops::start_undo(action, self.hwnd);
     }
 }

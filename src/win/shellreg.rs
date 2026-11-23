@@ -26,8 +26,8 @@ fn name_ptr(name: &[u16]) -> *const u16 {
 
 fn reg_error(code: i32) -> String {
     match code as u32 {
-        5 => "沒有權限修改登錄。".into(),
-        c => format!("登錄錯誤（代碼 {c}）。"),
+        5 => tr!("沒有權限修改登錄。", "You don't have permission to change the registry.").into(),
+        c => trf!("登錄錯誤（代碼 {c}）。", "Registry error (code {c})."),
     }
 }
 
@@ -374,7 +374,7 @@ pub fn stop_win_e(wait_ms: u32) -> bool {
     }
 }
 
-// ---------------------------------------------------------------- 其他程式的「開啟檔案」視窗
+// ---------------------------------------------------------------- 其他程式的「開啟檔案」「另存新檔」視窗
 
 /// 目前登記在目前使用者底下的「開啟檔案」視窗元件（沒有登記時是 None：用的是 Windows 原本的）
 pub fn picker_registered_dll() -> Option<String> {
@@ -386,18 +386,34 @@ pub fn picker_enabled() -> bool {
     picker_registered_dll().is_some_and(|p| install::is_picker_dll(&p))
 }
 
-/// 登記 Stillfeather 的取代元件（`dll`），並記下它要啟動的 Stillfeather（`exe`）。
-/// 已經有別的程式取代了這個視窗時不覆寫，回報錯誤。
+/// 登記 Stillfeather 的取代元件（`dll`，「開啟檔案」視窗），並記下它要啟動的 Stillfeather（`exe`）。
+/// 「另存新檔」視窗登記旁邊另一個檔名的那一份（deploy_picker 一起放好的，見 install::picker_save_server_key）。
+/// 已經有別的程式取代了開啟檔案視窗時不覆寫，回報錯誤；只有另存新檔視窗被別的程式取代時，只登記開啟檔案。
 pub fn enable_picker(dll: &str, exe: &str) -> Result<(), String> {
     if let Some(current) = picker_registered_dll() {
         if !install::is_picker_dll(&current) {
-            return Err(format!("另一個程式已經取代了 Windows 的開啟檔案視窗（{current}），為了不影響它，沒有變更。"));
+            return Err(trf!("另一個程式已經取代了 Windows 的開啟檔案視窗（{current}），為了不影響它，沒有變更。", "Another program has already replaced the Windows Open dialog ({current}); it was left unchanged so that program keeps working."));
         }
     }
     set_string(install::APP_KEY, install::PICKER_EXE_VALUE, exe)?;
     let server = install::picker_server_key();
     set_string(&server, "", dll)?;
-    set_string(&server, "ThreadingModel", "Apartment")
+    set_string(&server, "ThreadingModel", "Apartment")?;
+    let save_dll = paths::parent(dll).map(|d| paths::join(&d, feather_core::picker::SAVE_DLL_NAME));
+    let save_free = read_string(&install::picker_save_server_key(), "").is_none_or(|p| install::is_picker_dll(&p));
+    if let Some(save_dll) = save_dll.filter(|p| save_free && std::path::Path::new(p).is_file()) {
+        let save = install::picker_save_server_key();
+        // 失敗不影響開啟檔案：存檔時照樣是 Windows 的視窗
+        if set_string(&save, "", &save_dll).and_then(|_| set_string(&save, "ThreadingModel", "Apartment")).is_err() {
+            let _ = delete_tree(&save);
+        }
+    }
+    Ok(())
+}
+
+/// 另存新檔視窗也登記成 Stillfeather 的了嗎（診斷用）
+pub fn picker_save_enabled() -> bool {
+    read_string(&install::picker_save_server_key(), "").is_some_and(|p| install::is_picker_dll(&p))
 }
 
 /// 使用者要不要這個功能（沒選過時預設關閉，見 install::picker_wanted）
@@ -418,31 +434,37 @@ pub fn deployed_picker_path() -> Option<String> {
 }
 
 /// 把程式資料夾裡的取代元件（`src`）複製到登記的位置（內容相同就不動），回傳它的路徑。
-/// 舊的那一份可能正載入在其他程式裡（無法覆寫或刪除）：先改名讓出位置，那些程式結束後下次再清掉。
+/// 旁邊再放一份另存新檔用的（同樣的內容、另一個檔名；放不好時另存新檔照樣用 Windows 的視窗）。
 pub fn deploy_picker(src: &str) -> Result<String, String> {
-    let dst = deployed_picker_path().ok_or("找不到 %LOCALAPPDATA%。")?;
-    let dir = paths::parent(&dst).ok_or("位置無效。")?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("無法建立 {dir}：{e}"))?;
-    let data = std::fs::read(src).map_err(|e| format!("無法讀取 {src}：{e}"))?;
-    if std::fs::read(&dst).is_ok_and(|old| old == data) {
-        remove_old_picker_copies(&dir);
-        return Ok(dst);
-    }
-    if std::path::Path::new(&dst).exists() && std::fs::remove_file(&dst).is_err() {
-        let old = format!("{dst}.old-{}", unsafe { GetTickCount64() });
-        std::fs::rename(&dst, &old).map_err(|e| format!("無法更新 {dst}（正被其他程式使用）：{e}"))?;
-    }
-    std::fs::write(&dst, &data).map_err(|e| format!("無法寫入 {dst}：{e}"))?;
+    let dst = deployed_picker_path().ok_or(tr!("找不到 %LOCALAPPDATA%。", "Can't find %LOCALAPPDATA%."))?;
+    let dir = paths::parent(&dst).ok_or(tr!("位置無效。", "Invalid location."))?;
+    std::fs::create_dir_all(&dir).map_err(|e| trf!("無法建立 {dir}：{e}", "Couldn't create {dir}: {e}"))?;
+    let data = std::fs::read(src).map_err(|e| trf!("無法讀取 {src}：{e}", "Couldn't read {src}: {e}"))?;
+    deploy_copy(&data, &dst)?;
+    let _ = deploy_copy(&data, &paths::join(&dir, feather_core::picker::SAVE_DLL_NAME));
     remove_old_picker_copies(&dir);
     Ok(dst)
 }
 
+/// 寫一份取代元件。舊的那一份可能正載入在其他程式裡（無法覆寫或刪除）：先改名讓出位置，那些程式結束後下次再清掉。
+fn deploy_copy(data: &[u8], dst: &str) -> Result<(), String> {
+    if std::fs::read(dst).is_ok_and(|old| old == data) {
+        return Ok(());
+    }
+    if std::path::Path::new(dst).exists() && std::fs::remove_file(dst).is_err() {
+        let old = format!("{dst}.old-{}", unsafe { GetTickCount64() });
+        std::fs::rename(dst, &old).map_err(|e| trf!("無法更新 {dst}（正被其他程式使用）：{e}", "Couldn't update {dst} (it's being used by another program): {e}"))?;
+    }
+    std::fs::write(dst, data).map_err(|e| trf!("無法寫入 {dst}：{e}", "Couldn't write {dst}: {e}"))
+}
+
 /// 刪掉之前改名讓位的舊版（還在使用中的刪不掉，下次再試）
 fn remove_old_picker_copies(dir: &str) {
-    let prefix = format!("{}.old-", feather_core::picker::DLL_NAME).to_lowercase();
+    let prefixes = [feather_core::picker::DLL_NAME, feather_core::picker::SAVE_DLL_NAME].map(|n| format!("{n}.old-").to_lowercase());
     if let Ok(entries) = std::fs::read_dir(dir) {
         for e in entries.flatten() {
-            if e.file_name().to_string_lossy().to_lowercase().starts_with(&prefix) {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            if prefixes.iter().any(|p| name.starts_with(p)) {
                 let _ = std::fs::remove_file(e.path());
             }
         }
@@ -455,6 +477,11 @@ pub fn disable_picker() -> Result<(), String> {
     if picker_enabled() {
         result = delete_tree(&install::picker_server_key());
         delete_key_if_empty(&install::picker_clsid_key());
+    }
+    if picker_save_enabled() {
+        let r = delete_tree(&install::picker_save_server_key());
+        delete_key_if_empty(&install::picker_save_clsid_key());
+        result = result.and(r);
     }
     let _ = delete_value(install::APP_KEY, install::PICKER_EXE_VALUE);
     delete_key_if_empty(install::APP_KEY);

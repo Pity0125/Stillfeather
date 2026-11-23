@@ -8,6 +8,7 @@ use super::menu::{self, Item, Look, Mark};
 use super::theme::glyph;
 use feather_core::folderviews;
 use feather_core::settings::Settings;
+use feather_core::sorting;
 use feather_core::view::{self, ViewMode};
 use feather_core::workspace::Side;
 
@@ -39,21 +40,55 @@ impl App {
         self.hide_preview();
         let (col, desc) = self.current_sort();
         let items = vec![
-            Item::radio(id::SORT_NAME, "名稱", col == 0),
-            Item::radio(id::SORT_DATE, "修改日期", col == 3),
-            Item::radio(id::SORT_TYPE, "類型", col == 2),
+            Item::radio(id::SORT_NAME, tr!("名稱", "Name"), col == 0),
+            Item::radio(id::SORT_DATE, tr!("修改日期", "Date modified"), col == 3),
+            Item::radio(id::SORT_TYPE, tr!("類型", "Type"), col == 2),
             Item::Submenu {
-                text: "更多選項",
+                text: tr!("更多選項", "More options"),
                 glyph: None,
-                items: vec![Item::radio(id::SORT_SIZE, "大小", col == 1), Item::radio(id::SORT_LOCATION, "所在位置", col == 4)],
+                items: vec![Item::radio(id::SORT_SIZE, tr!("大小", "Size"), col == 1), Item::radio(id::SORT_LOCATION, tr!("所在位置", "Location"), col == 4)],
             },
             Item::Separator,
-            Item::radio(id::SORT_ASC, "遞增", !desc),
-            Item::radio(id::SORT_DESC, "遞減", desc),
+            Item::radio(id::SORT_ASC, tr!("遞增", "Ascending"), !desc),
+            Item::radio(id::SORT_DESC, tr!("遞減", "Descending"), desc),
+            Item::Separator,
+            Item::check(id::SORT_FOLDERS_ON_TOP, tr!("資料夾一律排在最前面", "Keep folders on top"), self.settings.folders_on_top),
         ];
         if let Some(cmd) = menu::drop_down(self.hwnd, self.sort_btn, &items, &self.menu_look()) {
-            self.sort_command(cmd);
+            if cmd == id::SORT_FOLDERS_ON_TOP {
+                self.toggle_folders_on_top();
+            } else {
+                self.sort_command(cmd);
+            }
         }
+    }
+
+    /// 排序選單的「資料夾一律排在最前面」：關著時和檔案總管相同（遞增時資料夾在前、遞減時在後）。
+    /// 每個分頁都照新的規則重新排好。
+    fn toggle_folders_on_top(&mut self) {
+        self.change_setting(|s| s.folders_on_top = !s.folders_on_top);
+        let on = self.settings.folders_on_top;
+        // 顯示中的分頁：保留選取、重畫清單
+        for side in [Side::Left, Side::Right] {
+            if let Some(t) = self.bound[side.index()].and_then(|id| self.tabs.get(&id)) {
+                let (col, desc) = (t.sort_col, t.desc);
+                self.sort_to(side, col, desc);
+            }
+        }
+        // 其他分頁：直接重排，切換過去時就是新的順序
+        let shown: Vec<_> = self.bound.iter().flatten().copied().collect();
+        for (id, t) in self.tabs.iter_mut() {
+            if !shown.contains(id) && !t.working() {
+                sorting::sort_entries(&mut t.entries, t.sort_col, t.desc, on);
+                t.refilter();
+            }
+        }
+        self.update_chrome();
+        self.set_footer(if on {
+            tr!("資料夾一律排在最前面", "Folders are always kept on top").into()
+        } else {
+            tr!("資料夾跟著排序方向：遞增在前、遞減在後（和檔案總管相同）", "Folders follow the sort order: first when ascending, last when descending (like File Explorer)").into()
+        });
     }
 
     /// 換排序欄位時保留目前的遞增／遞減；遞增、遞減只換方向。
@@ -86,20 +121,23 @@ impl App {
             .collect();
         items.push(Item::Separator);
         items.push(Item::Submenu {
-            text: "顯示",
+            text: tr!("顯示", "Show"),
             glyph: Some(glyph::HIDDEN),
             items: vec![
-                Item::check(id::SHOW_COMPACT, "精簡檢視", self.settings.compact_rows),
-                Item::check(id::SHOW_EXTENSIONS, "副檔名", self.settings.show_extensions),
-                Item::check(id::HIDDEN, "隱藏的項目", self.show_hidden),
+                Item::check(id::SHOW_COMPACT, tr!("精簡檢視", "Compact view"), self.settings.compact_rows),
+                Item::check(id::SHOW_EXTENSIONS, tr!("副檔名", "File name extensions"), self.settings.show_extensions),
+                Item::check(id::HIDDEN, tr!("隱藏的項目", "Hidden items"), self.show_hidden),
+                Item::Separator,
+                Item::check(id::SHOW_MEDIA_ICONS, tr!("相片資料夾用大圖示", "Large icons for photo folders"), self.settings.media_folder_icons),
             ],
         });
-        items.push(Item::Command { id: id::VIEW_APPLY_ALL, text: "套用到所有資料夾", glyph: None, mark: Mark::None, on: false, enabled: true });
+        items.push(Item::Command { id: id::VIEW_APPLY_ALL, text: tr!("套用到所有資料夾", "Apply to all folders"), glyph: None, mark: Mark::None, on: false, enabled: true });
         let Some(cmd) = menu::drop_down(self.hwnd, self.view_btn, &items, &self.menu_look()) else { return };
         match cmd {
             id::SHOW_COMPACT => self.toggle_compact(),
             id::SHOW_EXTENSIONS => self.toggle_extensions(),
             id::HIDDEN => self.toggle_hidden(),
+            id::SHOW_MEDIA_ICONS => self.toggle_media_icons(),
             id::VIEW_APPLY_ALL => self.apply_view_to_all(),
             c if (id::VIEW_FIRST..id::VIEW_FIRST + 8).contains(&c) => {
                 if let Some(mode) = ViewMode::from_digit((c - id::VIEW_FIRST + 1) as u8) {
@@ -129,19 +167,21 @@ impl App {
             areas.push(self.layout.panes[other.index()].inflate(self.s(4), self.s(6)));
         }
         let _fade = self.crossfade(areas, anim::CROSSFADE_MS);
-        let changed = self.views.set(&key, mode, self.settings.view_mode);
+        // 和這個資料夾的預設（相片資料夾是大圖示）一樣就不必記
+        let folder_default = self.active_tab().map(|t| self.folder_default_view(t)).unwrap_or(self.settings.view_mode);
+        let changed = self.views.set(&key, mode, folder_default);
         self.view[side.index()] = mode;
         self.apply_view_side(side);
         if other_same {
             self.sync_view(other);
         }
-        let place = if searching { "搜尋結果" } else { "這個資料夾" };
+        let place = if searching { tr!("搜尋結果", "search results") } else { tr!("這個資料夾", "this folder") };
         if !changed {
-            self.set_footer(format!("檢視：{}", mode.label()));
+            self.set_footer(trf!("檢視：{}", "View: {}", mode.label()));
         } else {
             match write_folder_views(&self.views) {
-                Ok(()) => self.set_footer(format!("檢視：{}（記在{place}）", mode.label())),
-                Err(e) => self.set_footer(format!("檢視已切換，但無法儲存資料夾檢視記錄：{e}")),
+                Ok(()) => self.set_footer(trf!("檢視：{}（記在{place}）", "View: {} (remembered for {place})", mode.label())),
+                Err(e) => self.set_footer(trf!("檢視已切換，但無法儲存資料夾檢視記錄：{e}", "The view changed, but the folder view record couldn't be saved: {e}")),
             }
         }
         for s in [Side::Left, Side::Right] {
@@ -149,12 +189,12 @@ impl App {
         }
     }
 
-    /// 「套用到所有資料夾」：目前的檢視變成預設，清掉個別資料夾的記錄。
+    /// 「套用到所有資料夾」：目前的檢視變成預設，清掉個別資料夾的記錄；相片資料夾也不再另外用大圖示。
     pub(super) fn apply_view_to_all(&mut self) {
         let mode = self.view[self.active_side().index()];
         if !self.views.is_empty() {
-            let body = format!("所有資料夾都會改用「{}」，各資料夾記住的 {} 個檢視會清除。", mode.label(), self.views.len());
-            if !dialog::confirm(self.hwnd, Icon::Info, "套用到所有資料夾？", &body, "套用") {
+            let body = trf!("所有資料夾都會改用「{}」，各資料夾記住的 {} 個檢視會清除。", "Every folder will use “{}”, and the {} views remembered by individual folders will be cleared.", mode.label(), self.views.len());
+            if !dialog::confirm(self.hwnd, Icon::Info, tr!("套用到所有資料夾？", "Apply to all folders?"), &body, tr!("套用", "Apply")) {
                 return;
             }
         }
@@ -162,14 +202,15 @@ impl App {
         let saved_views = write_folder_views(&self.views);
         let mut new = self.settings.clone();
         new.view_mode = mode;
+        new.media_folder_icons = false;
         match (write_settings(&new), saved_views) {
             (Ok(()), Ok(())) => {
                 self.settings = new;
-                self.set_footer(format!("所有資料夾都改用「{}」", mode.label()));
+                self.set_footer(trf!("所有資料夾都改用「{}」", "Every folder now uses “{}”", mode.label()));
             }
             (Err(e), _) | (_, Err(e)) => {
                 self.settings = new;
-                self.set_footer(format!("已套用，但無法儲存：{e}"));
+                self.set_footer(trf!("已套用，但無法儲存：{e}", "Applied, but couldn't save: {e}"));
             }
         }
         let areas: Vec<_> = (0..if self.ws.dual { 2 } else { 1 }).map(|i| self.layout.panes[i].inflate(self.s(4), self.s(6))).collect();
@@ -185,7 +226,7 @@ impl App {
         change(&mut new);
         match write_settings(&new) {
             Ok(()) => self.apply_settings(new),
-            Err(e) => self.show_error(&format!("設定未儲存，保留先前設定：{e}")),
+            Err(e) => self.show_error(&trf!("設定未儲存，保留先前設定：{e}", "Settings weren't saved; the previous settings are kept: {e}")),
         }
     }
 
@@ -195,5 +236,12 @@ impl App {
 
     pub(super) fn toggle_extensions(&mut self) {
         self.change_setting(|s| s.show_extensions = !s.show_extensions);
+    }
+
+    /// 「檢視 › 顯示 › 相片資料夾用大圖示」：沒記住檢視的相片資料夾用大圖示顯示縮圖
+    pub(super) fn toggle_media_icons(&mut self) {
+        self.change_setting(|s| s.media_folder_icons = !s.media_folder_icons);
+        let on = self.settings.media_folder_icons;
+        self.set_footer(if on { tr!("相片資料夾會用大圖示顯示縮圖", "Photo folders show thumbnails in large icons").into() } else { tr!("相片資料夾改用預設的檢視", "Photo folders use the default view").into() });
     }
 }

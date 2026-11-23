@@ -50,12 +50,12 @@ impl Format {
 
     pub fn label(self) -> &'static str {
         match self {
-            Format::Word => "Word 文件",
-            Format::Excel => "Excel 活頁簿",
-            Format::PowerPoint => "PowerPoint 簡報",
-            Format::OdText => "OpenDocument 文字",
-            Format::OdSheet => "OpenDocument 試算表",
-            Format::OdPresentation => "OpenDocument 簡報",
+            Format::Word => tr!("Word 文件", "Word document"),
+            Format::Excel => tr!("Excel 活頁簿", "Excel workbook"),
+            Format::PowerPoint => tr!("PowerPoint 簡報", "PowerPoint presentation"),
+            Format::OdText => tr!("OpenDocument 文字", "OpenDocument text"),
+            Format::OdSheet => tr!("OpenDocument 試算表", "OpenDocument spreadsheet"),
+            Format::OdPresentation => tr!("OpenDocument 簡報", "OpenDocument presentation"),
         }
     }
 
@@ -120,8 +120,8 @@ pub enum Office {
 pub fn extract(format: Format, data: &[u8]) -> Result<Office, String> {
     let zip = match Zip::open(data) {
         Ok(z) => z,
-        Err(e) if e == "ole" => return Err("這個檔案有密碼保護，或是舊版 Office 格式，沒有內容預覽。按 Enter 開啟。".into()),
-        Err(_) => return Err("檔案不是有效的 Office 文件，或已經損壞。".into()),
+        Err(e) if e == "ole" => return Err(tr!("這個檔案有密碼保護，或是舊版 Office 格式，沒有內容預覽。按 Enter 開啟。", "This file is password-protected or uses an old Office format, so there's no content preview. Press Enter to open it.").into()),
+        Err(_) => return Err(tr!("檔案不是有效的 Office 文件，或已經損壞。", "This isn't a valid Office document, or it's damaged.").into()),
     };
     let result = match format {
         Format::Word => word(&zip).map(Office::Document),
@@ -143,7 +143,7 @@ pub fn extract(format: Format, data: &[u8]) -> Result<Office, String> {
             Ok(Office::Workbook(book))
         }
     };
-    result.map_err(|e| format!("無法讀取文件內容：{e}"))
+    result.map_err(|e| trf!("無法讀取文件內容：{e}", "Couldn't read the document: {e}"))
 }
 
 /// 文件裡有沒有存縮圖（PowerPoint 預設會存第 1 張投影片；OpenDocument 一律有）。
@@ -240,17 +240,17 @@ pub fn caption(format: Format, office: &Office) -> String {
         Office::Document(d) => {
             let mut parts = vec![format.label().to_string()];
             if format.is_presentation() {
-                parts.push(format!("{} 張投影片", d.slides));
+                parts.push(trn!(d.slides; "{} 張投影片", "{} slide", "{} slides", d.slides));
             } else {
                 let paras = d.blocks.iter().filter(|b| !matches!(b, Block::Table(_) | Block::Slide { .. })).count();
-                parts.push(format!("{paras} 段"));
+                parts.push(trn!(paras; "{paras} 段", "{paras} paragraph", "{paras} paragraphs"));
                 let tables = d.blocks.iter().filter(|b| matches!(b, Block::Table(_))).count();
                 if tables > 0 {
-                    parts.push(format!("{tables} 個表格"));
+                    parts.push(trn!(tables; "{tables} 個表格", "{tables} table", "{tables} tables"));
                 }
             }
             if d.truncated {
-                parts.push("只顯示前面的內容".into());
+                parts.push(tr!("只顯示前面的內容", "Only the beginning is shown").into());
             }
             parts.join(" · ")
         }
@@ -258,11 +258,11 @@ pub fn caption(format: Format, office: &Office) -> String {
             let name = w.sheets.get(w.shown).cloned().unwrap_or_default();
             let mut parts = vec![if name.is_empty() { format.label().to_string() } else { name }];
             if w.sheets.len() > 1 {
-                parts.push(format!("共 {} 個工作表", w.sheets.len()));
+                parts.push(trf!("共 {} 個工作表", "{} sheets in total", w.sheets.len()));
             }
-            parts.push(if w.rows_at_least { format!("超過 {} 列 × {} 欄", w.used_rows, w.used_cols) } else { format!("{} 列 × {} 欄", w.used_rows, w.used_cols) });
+            parts.push(if w.rows_at_least { trf!("超過 {} 列 × {} 欄", "More than {} rows × {} columns", w.used_rows, w.used_cols) } else { trf!("{} 列 × {} 欄", "{} rows × {} columns", w.used_rows, w.used_cols) });
             if w.table.more_rows || w.table.more_cols {
-                parts.push(format!("只顯示前 {} 列、{} 欄", w.table.rows.len(), w.table.cols));
+                parts.push(trf!("只顯示前 {} 列、{} 欄", "Only the first {} rows and {} columns are shown", w.table.rows.len(), w.table.cols));
             }
             parts.join(" · ")
         }
@@ -649,12 +649,12 @@ fn powerpoint(zip: &Zip) -> Result<Document, String> {
         }
         out.push(Block::Slide { number: i + 1 });
         let Ok(xml) = zip.read_string(slide, MAX_PART) else {
-            out.push(Block::Paragraph("（無法讀取這張投影片）".into()));
+            out.push(Block::Paragraph(tr!("（無法讀取這張投影片）", "(Couldn't read this slide)").into()));
             continue;
         };
         let blocks = slide_blocks(&xml);
         if blocks.is_empty() {
-            out.push(Block::Paragraph("（這張投影片沒有文字）".into()));
+            out.push(Block::Paragraph(tr!("（這張投影片沒有文字）", "(This slide has no text)").into()));
         }
         for b in blocks {
             out.push(b);
@@ -1275,7 +1275,7 @@ fn odf_presentation(xml: &str) -> Document {
     let flush = |out: &mut Out, titles: &mut Vec<Block>, rest: &mut Vec<Block>, number: usize| {
         out.push(Block::Slide { number });
         if titles.is_empty() && rest.is_empty() {
-            out.push(Block::Paragraph("（這張投影片沒有文字）".into()));
+            out.push(Block::Paragraph(tr!("（這張投影片沒有文字）", "(This slide has no text)").into()));
         }
         for b in titles.drain(..).chain(rest.drain(..)) {
             out.push(b);

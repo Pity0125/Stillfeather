@@ -41,7 +41,7 @@ impl<'a> Bits<'a> {
         self.buf >>= n;
         self.count -= n;
         if self.overrun() {
-            return Err("壓縮資料不完整。".into());
+            return Err(tr!("壓縮資料不完整。", "The compressed data is incomplete.").into());
         }
         Ok(v)
     }
@@ -84,7 +84,7 @@ impl Huffman {
             left <<= 1;
             left -= c as i32;
             if left < 0 {
-                return Err("Huffman 碼長不合法。".into());
+                return Err(tr!("Huffman 碼長不合法。", "Invalid Huffman code lengths.").into());
             }
         }
         let mut offs = [0u16; 16];
@@ -128,7 +128,7 @@ impl Huffman {
         if entry != 0 {
             bits.consume((entry & 0xF) as u32);
             if bits.overrun() {
-                return Err("壓縮資料不完整。".into());
+                return Err(tr!("壓縮資料不完整。", "The compressed data is incomplete.").into());
             }
             return Ok(entry >> 4);
         }
@@ -147,7 +147,7 @@ impl Huffman {
             first <<= 1;
             code <<= 1;
         }
-        Err("無效的 Huffman 碼。".into())
+        Err(tr!("無效的 Huffman 碼。", "Invalid Huffman code.").into())
     }
 }
 
@@ -183,12 +183,14 @@ pub fn inflate_prefix(data: &[u8], max: usize, hint: usize) -> Result<(Vec<u8>, 
     let mut out: Vec<u8> = Vec::with_capacity(hint.min(max).min(64 * 1024 * 1024));
     match run(data, max, &mut out) {
         Ok(()) => Ok((out, true)),
-        Err(e) if e == TOO_BIG => Ok((out, false)),
+        Err(e) if e == too_big() => Ok((out, false)),
         Err(e) => Err(e),
     }
 }
 
-const TOO_BIG: &str = "解壓縮後超過大小上限。";
+fn too_big() -> String {
+    tr!("解壓縮後超過大小上限。", "The decompressed data is larger than the size limit.").into()
+}
 
 fn run(data: &[u8], limit: usize, out: &mut Vec<u8>) -> Result<(), String> {
     let mut bits = Bits::new(data);
@@ -201,10 +203,10 @@ fn run(data: &[u8], limit: usize, out: &mut Vec<u8>) -> Result<(), String> {
                 let len = bits.bits(16)?;
                 let nlen = bits.bits(16)?;
                 if len != !nlen & 0xFFFF {
-                    return Err("不壓縮區塊的長度不一致。".into());
+                    return Err(tr!("不壓縮區塊的長度不一致。", "The length of an uncompressed block doesn't match.").into());
                 }
                 if out.len() + len as usize > limit {
-                    return Err(TOO_BIG.into());
+                    return Err(too_big());
                 }
                 // 位元緩衝區裡剩下的整數位元組要先用掉
                 for _ in 0..len {
@@ -216,7 +218,7 @@ fn run(data: &[u8], limit: usize, out: &mut Vec<u8>) -> Result<(), String> {
                 let (lit, dist) = dynamic_tables(&mut bits)?;
                 block(&mut bits, out, &lit, &dist, limit)?;
             }
-            _ => return Err("無效的壓縮區塊類型。".into()),
+            _ => return Err(tr!("無效的壓縮區塊類型。", "Invalid compressed block type.").into()),
         }
         if last == 1 {
             break;
@@ -243,7 +245,7 @@ fn dynamic_tables(bits: &mut Bits) -> Result<(Huffman, Huffman), String> {
     let hdist = bits.bits(5)? as usize + 1;
     let hclen = bits.bits(4)? as usize + 4;
     if hlit > 286 || hdist > 30 {
-        return Err("動態 Huffman 表過大。".into());
+        return Err(tr!("動態 Huffman 表過大。", "The dynamic Huffman table is too large.").into());
     }
     let mut code_lengths = [0u8; 19];
     for &i in CODE_ORDER.iter().take(hclen) {
@@ -260,10 +262,10 @@ fn dynamic_tables(bits: &mut Bits) -> Result<(Huffman, Huffman), String> {
                 i += 1;
             }
             16 => {
-                let prev = *lengths.get(i.wrapping_sub(1)).ok_or("重複碼長缺少前一個值。")?;
+                let prev = *lengths.get(i.wrapping_sub(1)).ok_or(tr!("重複碼長缺少前一個值。", "A repeated code length has no previous value."))?;
                 let n = 3 + bits.bits(2)? as usize;
                 if i + n > lengths.len() {
-                    return Err("碼長超出範圍。".into());
+                    return Err(tr!("碼長超出範圍。", "Code length out of range.").into());
                 }
                 lengths[i..i + n].fill(prev);
                 i += n;
@@ -271,15 +273,15 @@ fn dynamic_tables(bits: &mut Bits) -> Result<(Huffman, Huffman), String> {
             17 | 18 => {
                 let n = if sym == 17 { 3 + bits.bits(3)? as usize } else { 11 + bits.bits(7)? as usize };
                 if i + n > lengths.len() {
-                    return Err("碼長超出範圍。".into());
+                    return Err(tr!("碼長超出範圍。", "Code length out of range.").into());
                 }
                 i += n; // 已經是 0
             }
-            _ => return Err("無效的碼長符號。".into()),
+            _ => return Err(tr!("無效的碼長符號。", "Invalid code length symbol.").into()),
         }
     }
     if lengths[256] == 0 {
-        return Err("缺少區塊結尾碼。".into());
+        return Err(tr!("缺少區塊結尾碼。", "Missing end-of-block code.").into());
     }
     Ok((Huffman::new(&lengths[..hlit])?, Huffman::new(&lengths[hlit..])?))
 }
@@ -289,7 +291,7 @@ fn block(bits: &mut Bits, out: &mut Vec<u8>, lit: &Huffman, dist: &Huffman, limi
         let sym = lit.decode(bits)? as usize;
         if sym < 256 {
             if out.len() >= limit {
-                return Err(TOO_BIG.into());
+                return Err(too_big());
             }
             out.push(sym as u8);
         } else if sym == 256 {
@@ -297,19 +299,19 @@ fn block(bits: &mut Bits, out: &mut Vec<u8>, lit: &Huffman, dist: &Huffman, limi
         } else {
             let li = sym - 257;
             if li >= 29 {
-                return Err("無效的長度碼。".into());
+                return Err(tr!("無效的長度碼。", "Invalid length code.").into());
             }
             let len = LEN_BASE[li] as usize + bits.bits(LEN_EXTRA[li] as u32)? as usize;
             let di = dist.decode(bits)? as usize;
             if di >= 30 {
-                return Err("無效的距離碼。".into());
+                return Err(tr!("無效的距離碼。", "Invalid distance code.").into());
             }
             let d = DIST_BASE[di] as usize + bits.bits(DIST_EXTRA[di] as u32)? as usize;
             if d > out.len() {
-                return Err("距離超出已解壓的資料。".into());
+                return Err(tr!("距離超出已解壓的資料。", "The distance goes past the decompressed data.").into());
             }
             if out.len() + len > limit {
-                return Err(TOO_BIG.into());
+                return Err(too_big());
             }
             let start = out.len() - d;
             if d >= len {

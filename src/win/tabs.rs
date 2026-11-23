@@ -111,7 +111,7 @@ pub fn create(parent: HWND, side: Side) -> HWND {
         drop: None,
     });
     let class = wide(TABS_CLASS);
-    let name = wide(if side == Side::Left { "左欄分頁" } else { "右欄分頁" });
+    let name = wide(if side == Side::Left { tr!("左欄分頁", "Left pane tabs") } else { tr!("右欄分頁", "Right pane tabs") });
     unsafe {
         let hwnd = CreateWindowExW(
             0,

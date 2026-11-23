@@ -721,7 +721,7 @@ unsafe fn update(window: DropWindow, keys: u32, pt: POINT, allowed: u32) -> u32 
         a.show_drop_zone(&st.zone, false);
         a.show_drop_zone(&zone, true);
         match &zone {
-            Zone::Pin => set_description(st.data, DROPIMAGE_LINK, "釘選到 %1", "常用位置"),
+            Zone::Pin => set_description(st.data, DROPIMAGE_LINK, tr!("釘選到 %1", "Pin to %1"), tr!("常用位置", "Favorites")),
             _ => set_description(st.data, DROPIMAGE_INVALID, "", ""),
         }
         if let Zone::Folder { path, .. } = &zone {

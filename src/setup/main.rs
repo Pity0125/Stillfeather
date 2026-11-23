@@ -10,6 +10,10 @@
 //!   參數見 `feather_core::install::parse_setup_args`。
 #![windows_subsystem = "windows"]
 
+// tr!／trf!（介面語言，見 src/i18n.rs）在每個模組都能直接用
+#[macro_use]
+extern crate feather_core;
+
 #[path = "../win/sys.rs"]
 mod sys;
 #[path = "../win/shellreg.rs"]
@@ -34,7 +38,7 @@ fn main() {
 
 fn message(text: &str) {
     let t = ops::w(text);
-    let c = ops::w("Stillfeather 安裝程式");
+    let c = ops::w(tr!("Stillfeather 安裝程式", "Stillfeather Setup"));
     unsafe {
         MessageBoxW(0, t.as_ptr(), c.as_ptr(), MB_OK | MB_ICONERROR);
     }
@@ -46,6 +50,14 @@ fn run() -> i32 {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED);
     }
+    // 介面語言：裝過的照 Stillfeather 設定的語言，否則跟隨 Windows 的顯示語言
+    let language = std::env::var("LOCALAPPDATA")
+        .ok()
+        .and_then(|base| std::fs::read_to_string(paths::join(&install::data_dir(&base), "settings.json")).ok())
+        .and_then(|t| feather_core::settings::Settings::from_json(&t).ok())
+        .map(|s| s.language)
+        .unwrap_or_default();
+    feather_core::i18n::set_english(language.english(system_ui_chinese()));
     let raw: Vec<String> = std::env::args().skip(1).collect();
     let mut args = match install::parse_setup_args(&raw) {
         Ok(a) => a,

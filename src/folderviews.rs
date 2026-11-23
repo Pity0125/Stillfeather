@@ -102,7 +102,7 @@ impl FolderViews {
     pub fn from_json(text: &str) -> Result<FolderViews, String> {
         let root = json::parse(text)?;
         let Some(Value::Arr(items)) = root.get("Folders") else {
-            return Err("資料夾檢視記錄缺少 Folders 清單。".into());
+            return Err(tr!("資料夾檢視記錄缺少 Folders 清單。", "The folder view record is missing its Folders list.").into());
         };
         let mut views = FolderViews::default();
         for item in items {

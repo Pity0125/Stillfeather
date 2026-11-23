@@ -24,11 +24,11 @@ impl Action {
     /// 選單與狀態列上的說明，例如「重新命名」「移動 3 個項目」。
     pub fn label(&self) -> String {
         match self {
-            Action::Rename { .. } => "重新命名".to_string(),
-            Action::Move { items } if items.len() == 1 => "移動".to_string(),
-            Action::Move { items } => format!("移動 {} 個項目", items.len()),
-            Action::Recycle { items, .. } if items.len() == 1 => "刪除".to_string(),
-            Action::Recycle { items, .. } => format!("刪除 {} 個項目", items.len()),
+            Action::Rename { .. } => tr!("重新命名", "rename").to_string(),
+            Action::Move { items } if items.len() == 1 => tr!("移動", "move").to_string(),
+            Action::Move { items } => trf!("移動 {} 個項目", "move of {} items", items.len()),
+            Action::Recycle { items, .. } if items.len() == 1 => tr!("刪除", "deletion").to_string(),
+            Action::Recycle { items, .. } => trf!("刪除 {} 個項目", "deletion of {} items", items.len()),
         }
     }
 }

@@ -168,16 +168,16 @@ fn require_dir(path: &str, reject_reparse: bool) -> Result<u32, FsError> {
         None => {
             let code = unsafe { GetLastError() };
             return Err(FsError::Message(match code {
-                ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => format!("資料夾不存在：{path}"),
+                ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => trf!("資料夾不存在：{path}", "The folder doesn't exist: {path}"),
                 _ => error_text(code),
             }));
         }
     };
     if a & FILE_ATTRIBUTE_DIRECTORY == 0 {
-        return Err(FsError::Message(format!("這不是資料夾：{path}")));
+        return Err(FsError::Message(trf!("這不是資料夾：{path}", "This isn't a folder: {path}")));
     }
     if reject_reparse && a & FILE_ATTRIBUTE_REPARSE_POINT != 0 && is_link_path(path) {
-        return Err(FsError::Message("不支援搜尋目錄連結（junction 或符號連結），請改選實際目標資料夾。".into()));
+        return Err(FsError::Message(tr!("不支援搜尋目錄連結（junction 或符號連結），請改選實際目標資料夾。", "Searching directory links (junctions or symbolic links) isn't supported; choose the actual target folder instead.").into()));
     }
     Ok(a)
 }
@@ -188,7 +188,7 @@ pub struct Listing {
 }
 
 /// 讀取單一資料夾，不開啟檔案內容；根目錄的列舉錯誤會回報給呼叫端，不以空清單掩蓋。
-pub fn read_dir(path: &str, show_hidden: bool, sort_col: usize, desc: bool, cancel: &AtomicBool) -> Result<Listing, FsError> {
+pub fn read_dir(path: &str, show_hidden: bool, sort_col: usize, desc: bool, folders_on_top: bool, cancel: &AtomicBool) -> Result<Listing, FsError> {
     require_dir(path, false)?;
     let dir: Arc<str> = Arc::from(path);
     let mut entries = Vec::new();
@@ -218,7 +218,7 @@ pub fn read_dir(path: &str, show_hidden: bool, sort_col: usize, desc: bool, canc
     if cancel.load(Ordering::Relaxed) {
         return Err(FsError::Cancelled);
     }
-    sorting::sort_entries(&mut entries, sort_col, desc);
+    sorting::sort_entries(&mut entries, sort_col, desc, folders_on_top);
     Ok(Listing { entries, skipped })
 }
 
@@ -417,7 +417,7 @@ pub fn search(
     mut report: impl FnMut(Vec<Entry>, usize, usize),
 ) -> Result<SearchSummary, FsError> {
     let Some(needle) = feather_core::namematch::Needle::new(query) else {
-        return Err(FsError::Message("請輸入要搜尋的檔案名稱。".into()));
+        return Err(FsError::Message(tr!("請輸入要搜尋的檔案名稱。", "Enter a file name to search for.").into()));
     };
     let (roots, computer) = match scope {
         SearchScope::Folder(root) => {
@@ -427,7 +427,7 @@ pub fn search(
         SearchScope::Computer => {
             let roots = computer_roots();
             if roots.is_empty() {
-                return Err(FsError::Message("找不到可以搜尋的磁碟。".into()));
+                return Err(FsError::Message(tr!("找不到可以搜尋的磁碟。", "Can't find any drives to search.").into()));
             }
             (roots, true)
         }
@@ -618,7 +618,7 @@ pub fn reparse_in_ancestors(path: &str, leaf_may_be_missing: bool) -> Result<Opt
             Some(a) if a & FILE_ATTRIBUTE_REPARSE_POINT != 0 && is_link_path(&p) => return Ok(Some(p)),
             Some(_) => {}
             None if leaf && leaf_may_be_missing => {}
-            None => return Err(format!("無法讀取：{p}（{}）", last_error_text())),
+            None => return Err(trf!("無法讀取：{p}（{}）", "Couldn't read: {p} ({})", last_error_text())),
         }
         leaf = false;
         current = paths::parent(&p);
@@ -630,19 +630,19 @@ pub fn reparse_in_ancestors(path: &str, leaf_may_be_missing: bool) -> Result<Opt
 pub fn reparse_in_tree(root: &str) -> Result<Option<String>, String> {
     let mut pending = vec![root.to_string()];
     while let Some(dir) = pending.pop() {
-        let Some(a) = attributes(&dir) else { return Err(format!("無法讀取：{dir}（{}）", last_error_text())) };
+        let Some(a) = attributes(&dir) else { return Err(trf!("無法讀取：{dir}（{}）", "Couldn't read: {dir} ({})", last_error_text())) };
         if a & FILE_ATTRIBUTE_REPARSE_POINT != 0 && is_link_path(&dir) {
             return Ok(Some(dir));
         }
         let mut f = match Finder::open(&dir) {
             Ok(Some(f)) => f,
             Ok(None) => continue,
-            Err(code) => return Err(format!("無法列舉：{dir}（{}）", error_text(code))),
+            Err(code) => return Err(trf!("無法列舉：{dir}（{}）", "Couldn't list: {dir} ({})", error_text(code))),
         };
         loop {
             match f.next() {
                 Next::End => break,
-                Next::Error(code) => return Err(format!("無法列舉：{dir}（{}）", error_text(code))),
+                Next::Error(code) => return Err(trf!("無法列舉：{dir}（{}）", "Couldn't list: {dir} ({})", error_text(code))),
                 Next::Item => {}
             }
             if f.is_dots() {

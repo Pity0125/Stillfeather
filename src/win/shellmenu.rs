@@ -206,7 +206,7 @@ impl ShellMenu {
         if hr >= 0 || hr as u32 == 0x800704C7 {
             Ok(())
         } else {
-            Err(format!("Windows 回報錯誤 0x{:08X}。", hr as u32))
+            Err(trf!("Windows 回報錯誤 0x{:08X}。", "Windows reported error 0x{:08X}.", hr as u32))
         }
     }
 }

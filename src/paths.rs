@@ -269,7 +269,7 @@ pub fn resolve_relative(base: &str, input: &str) -> Option<String> {
 /// 分頁標題：資料夾名稱，根目錄則顯示整個根路徑。
 pub fn tab_title(path: &str) -> String {
     if path.is_empty() {
-        return "新分頁".to_string();
+        return tr!("新分頁", "New tab").to_string();
     }
     let name = file_name(path);
     if name.is_empty() {

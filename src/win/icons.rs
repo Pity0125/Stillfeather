@@ -12,6 +12,8 @@ use feather_core::winres;
 use std::collections::HashMap;
 
 const IID_IIMAGELIST: GUID = GUID::from_u128(0x46EB5926_582E_4017_9FDF_E8998DAA0950);
+/// 透明的那一格（有縮圖的項目用它，縮圖由清單自繪畫在同一個位置）
+const BLANK_KEY: &str = "\\blank";
 
 pub struct Icons {
     pub list: HIMAGELIST,
@@ -90,6 +92,33 @@ impl Icons {
         }
         let index = unsafe { self.load("", true) };
         self.map.insert("\\dir".to_string(), index);
+        index
+    }
+
+    /// 完全透明的一格（小圖示與大圖示清單用同一個索引）：有縮圖的項目用它，縮圖另外畫上去
+    pub fn blank_index(&mut self) -> i32 {
+        if let Some(i) = self.map.get(BLANK_KEY) {
+            return *i;
+        }
+        let index = unsafe {
+            let icon = make_icon(&vec![0u32; (self.icon_px * self.row_px) as usize], self.icon_px, self.row_px);
+            if icon == 0 {
+                return I_IMAGENONE;
+            }
+            let i = (comctl().image_list_replace_icon)(self.list, -1, icon);
+            DestroyIcon(icon);
+            if i >= 0 {
+                self.order.push((BLANK_KEY.to_string(), false));
+                for slot in 0..2 {
+                    if self.big[slot] != 0 {
+                        add_big(self.big[slot], self.big_px[slot], BLANK_KEY, false);
+                    }
+                }
+            }
+            i
+        };
+        let index = if index >= 0 { index } else { I_IMAGENONE };
+        self.map.insert(BLANK_KEY.to_string(), index);
         index
     }
 
@@ -186,9 +215,9 @@ impl Icons {
     }
 }
 
-/// 把一個大圖示加進大圖示清單；取不到時放透明圖，讓索引仍與小圖示清單一致。
+/// 把一個大圖示加進大圖示清單；取不到時（以及透明的那一格）放透明圖，讓索引仍與小圖示清單一致。
 unsafe fn add_big(list: HIMAGELIST, px: i32, ext: &str, is_dir: bool) {
-    let mut icon = big_icon(ext, is_dir, px);
+    let mut icon = if ext == BLANK_KEY { 0 } else { big_icon(ext, is_dir, px) };
     if icon == 0 {
         icon = make_icon(&vec![0u32; (px * px) as usize], px, px);
     }

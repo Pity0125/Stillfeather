@@ -1,8 +1,9 @@
-//! StillfeatherPicker.dll：讓其他程式的「開啟檔案」「選擇資料夾」視窗改用 Stillfeather。
+//! StillfeatherPicker.dll：讓其他程式的「開啟檔案」「另存新檔」「選擇資料夾」視窗改用 Stillfeather。
 //!
 //! 在「設定」打開這個功能時，Stillfeather 在目前使用者的登錄（HKCU\Software\Classes\CLSID）把
-//! Windows「開啟檔案」視窗（CLSID_FileOpenDialog）指到這個 DLL。之後其他程式建立這個視窗時，
-//! 拿到的是這裡的物件：
+//! Windows「開啟檔案」視窗（CLSID_FileOpenDialog）指到這個 DLL，「另存新檔」視窗（CLSID_FileSaveDialog）
+//! 指到旁邊另一個檔名的同一份 DLL（StillfeatherSavePicker.dll，原因見 src/install.rs 的 picker_save_server_key）。
+//! 之後其他程式建立這兩種視窗時，拿到的是這裡的物件：
 //!
 //! - 它同時建立一個 Windows 原本的視窗物件（從 HKLM 登記的 comdlg32.dll 直接取得，不經過 COM 查表，
 //!   所以不會又繞回這裡），程式做的每一個設定都照樣轉交給它。
@@ -10,7 +11,10 @@
 //!   等使用者選好（期間照常處理程式的視窗訊息），再把結果以 IShellItem 交回，並照 Windows 的做法通知程式（OnFileOk）。
 //! - 找不到 Stillfeather、它無法啟動、使用者按「使用 Windows 視窗」、要選的不是一般檔案（例如手機、媒體櫃）、
 //!   程式在視窗裡加了自己的選項（IFileDialogCustomize 的勾選方塊、下拉選單、按鈕，例如「編碼」「以唯讀開啟」），
+//!   存檔時要讓使用者填檔案內容（SetProperties、SetCollectedProperties 的作者、標籤欄），
 //!   或是 Stillfeather 自己的程式要開檔時，就直接顯示 Windows 原本的視窗：程式永遠可以選到檔案，也不會少了它的選項。
+//! - 另存新檔時要存的檔案通常還不存在：結果以「簡單的」IShellItem（SHSimpleIDListFromPath）交回，
+//!   和 Windows 的視窗一樣可以取得它的路徑。檔案已經存在時的「要取代嗎？」由 Stillfeather 問（不呼叫程式的 OnOverwrite）。
 //!
 //! 每個 COM 方法都接住 panic 並回傳錯誤（這個 DLL 是在別人的程式裡執行）。只支援 64 位元：
 //! IFileDialogCustomize 以「最多三個暫存器參數」的方式原封轉交，這在 x64 的呼叫慣例下才成立。
@@ -21,6 +25,11 @@
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("StillfeatherPicker.dll 只支援 64 位元。");
 
+// src/paths.rs、src/picker.rs 用到 tr!（這個元件沒有畫面，一律是中文）
+#[path = "../../src/i18n.rs"]
+#[macro_use]
+#[allow(dead_code, unused_macros)]
+mod i18n;
 #[path = "../../src/paths.rs"]
 #[allow(dead_code)]
 mod paths;
@@ -57,11 +66,13 @@ const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> GUID {
 }
 
 const CLSID_FILE_OPEN_DIALOG: GUID = guid(0xDC1C5A9C, 0xE88A, 0x4DDE, [0xA5, 0xA1, 0x60, 0xF8, 0x2A, 0x20, 0xAE, 0xF7]);
+const CLSID_FILE_SAVE_DIALOG: GUID = guid(0xC0B4E2F3, 0xBA21, 0x4773, [0x8D, 0xBA, 0x33, 0x5E, 0xC9, 0x46, 0xEB, 0x8B]);
 const IID_IUNKNOWN: GUID = guid(0x00000000, 0x0000, 0x0000, [0xC0, 0, 0, 0, 0, 0, 0, 0x46]);
 const IID_ICLASSFACTORY: GUID = guid(0x00000001, 0x0000, 0x0000, [0xC0, 0, 0, 0, 0, 0, 0, 0x46]);
 const IID_IMODALWINDOW: GUID = guid(0xB4DB1657, 0x70D7, 0x485E, [0x8E, 0x3E, 0x6F, 0xCB, 0x5A, 0x5C, 0x18, 0x02]);
 const IID_IFILEDIALOG: GUID = guid(0x42F85136, 0xDB7E, 0x439C, [0x85, 0xF1, 0xE4, 0x07, 0x5D, 0x13, 0x5F, 0xC8]);
 const IID_IFILEOPENDIALOG: GUID = guid(0xD57C7288, 0xD4AD, 0x4768, [0xBE, 0x02, 0x9D, 0x96, 0x95, 0x32, 0xD9, 0x60]);
+const IID_IFILESAVEDIALOG: GUID = guid(0x84BCCD23, 0x5FDE, 0x4CDB, [0xAE, 0xA4, 0xAF, 0x64, 0xB8, 0x3D, 0x78, 0xAB]);
 const IID_IFILEDIALOGCUSTOMIZE: GUID = guid(0xE6FDD21A, 0x163F, 0x4975, [0x9C, 0x8C, 0xA6, 0x9F, 0x1B, 0xA3, 0x70, 0x34]);
 const IID_ISHELLITEM: GUID = guid(0x43826D1E, 0xE718, 0x42EE, [0xBC, 0x55, 0xA1, 0xE2, 0x61, 0xC3, 0x7B, 0xFE]);
 
@@ -78,13 +89,18 @@ const CLASS_E_CLASSNOTAVAILABLE: HRESULT = 0x8004_0111_u32 as i32;
 const E_CANCELLED: HRESULT = 0x8007_04C7_u32 as i32;
 const S_FALSE: HRESULT = 1;
 
+const FOS_OVERWRITEPROMPT: u32 = 0x2;
+const FOS_STRICTFILETYPES: u32 = 0x4;
 const FOS_PICKFOLDERS: u32 = 0x20;
 const FOS_ALLNONSTORAGEITEMS: u32 = 0x80;
 const FOS_ALLOWMULTISELECT: u32 = 0x200;
 const FOS_FILEMUSTEXIST: u32 = 0x1000;
+const FOS_NOREADONLYRETURN: u32 = 0x8000;
 const FOS_FORCESHOWHIDDEN: u32 = 0x1000_0000;
 /// 開啟檔案視窗的預設選項（FOS_NOCHANGEDIR | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST）
 const FOS_OPEN_DEFAULT: u32 = 0x1808;
+/// 另存新檔視窗的預設選項（FOS_OVERWRITEPROMPT | FOS_NOCHANGEDIR | FOS_PATHMUSTEXIST | FOS_NOREADONLYRETURN）
+const FOS_SAVE_DEFAULT: u32 = 0x880A;
 const SIGDN_FILESYSPATH: u32 = 0x8005_8000;
 
 const HKEY_CURRENT_USER: isize = 0x8000_0001_u32 as i32 as isize;
@@ -206,6 +222,7 @@ extern "system" {
     fn SHCreateItemFromParsingName(path: *const u16, bc: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT;
     fn SHParseDisplayName(name: *const u16, bc: *mut c_void, pidl: *mut *mut c_void, sfgao_in: u32, sfgao_out: *mut u32) -> HRESULT;
     fn SHCreateShellItemArrayFromIDLists(count: u32, pidls: *const *const c_void, out: *mut *mut c_void) -> HRESULT;
+    fn SHCreateItemFromIDList(pidl: *const c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT;
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -287,6 +304,43 @@ unsafe fn item_from_path(path: &str, out: *mut *mut c_void) -> HRESULT {
     SHCreateItemFromParsingName(w.as_ptr(), std::ptr::null_mut(), &IID_ISHELLITEM, out)
 }
 
+type SimpleIdListFn = unsafe extern "system" fn(*const u16) -> *mut c_void;
+
+/// shell32 的 SHSimpleIDListFromPath。執行時才找（以名稱，找不到再以序號 162）：
+/// 萬一這一版 Windows 沒有以名稱匯出，也只是另存新檔改用 Windows 的視窗，不會讓這個 DLL 整個載入失敗。
+fn simple_id_list_fn() -> Option<SimpleIdListFn> {
+    static CACHED: OnceLock<Option<usize>> = OnceLock::new();
+    let p = *CACHED.get_or_init(|| unsafe {
+        let module = LoadLibraryW(wide("shell32.dll").as_ptr());
+        if module == 0 {
+            return None;
+        }
+        let mut f = GetProcAddress(module, c"SHSimpleIDListFromPath".as_ptr().cast());
+        if f.is_null() {
+            f = GetProcAddress(module, 162usize as *const u8);
+        }
+        (!f.is_null()).then_some(f as usize)
+    });
+    p.map(|p| unsafe { std::mem::transmute::<usize, SimpleIdListFn>(p) })
+}
+
+/// 另存新檔的結果：檔案已經存在就照一般的方式，還不存在（通常是這樣）就建立「簡單的」項目，和 Windows 的視窗一樣。
+unsafe fn item_for_save(path: &str, out: *mut *mut c_void) -> HRESULT {
+    let hr = item_from_path(path, out);
+    if hr >= 0 {
+        return hr;
+    }
+    let Some(simple) = simple_id_list_fn() else { return hr };
+    let w = wide(path);
+    let pidl = simple(w.as_ptr());
+    if pidl.is_null() {
+        return hr;
+    }
+    let created = SHCreateItemFromIDList(pidl, &IID_ISHELLITEM, out);
+    CoTaskMemFree(pidl);
+    created
+}
+
 unsafe fn co_string(s: &str) -> *mut u16 {
     let w = wide(s);
     let p = CoTaskMemAlloc(w.len() * 2) as *mut u16;
@@ -307,19 +361,54 @@ fn guard(f: impl FnOnce() -> HRESULT) -> HRESULT {
 
 type DllGetClassObjectFn = unsafe extern "system" fn(*const GUID, *const GUID, *mut *mut c_void) -> HRESULT;
 
-/// HKLM 登記的「開啟檔案」視窗元件（通常是 System32\comdlg32.dll）的 DllGetClassObject
-fn system_class_object() -> Option<DllGetClassObjectFn> {
-    static CACHED: OnceLock<Option<usize>> = OnceLock::new();
-    let p = *CACHED.get_or_init(|| unsafe {
+/// 取代的是哪一種視窗
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Kind {
+    /// 開啟檔案、選擇資料夾（IFileOpenDialog）
+    Open,
+    /// 另存新檔（IFileSaveDialog）
+    Save,
+}
+
+impl Kind {
+    fn clsid(self) -> GUID {
+        match self {
+            Kind::Open => CLSID_FILE_OPEN_DIALOG,
+            Kind::Save => CLSID_FILE_SAVE_DIALOG,
+        }
+    }
+
+    fn clsid_text(self) -> &'static str {
+        match self {
+            Kind::Open => protocol::CLSID_FILE_OPEN_DIALOG,
+            Kind::Save => protocol::CLSID_FILE_SAVE_DIALOG,
+        }
+    }
+
+    fn iid(self) -> GUID {
+        match self {
+            Kind::Open => IID_IFILEOPENDIALOG,
+            Kind::Save => IID_IFILESAVEDIALOG,
+        }
+    }
+}
+
+/// HKLM 登記的「開啟檔案」或「另存新檔」視窗元件（通常是 System32\comdlg32.dll）的 DllGetClassObject
+fn system_class_object(kind: Kind) -> Option<DllGetClassObjectFn> {
+    static OPEN: OnceLock<Option<usize>> = OnceLock::new();
+    static SAVE: OnceLock<Option<usize>> = OnceLock::new();
+    let cache = if kind == Kind::Open { &OPEN } else { &SAVE };
+    let p = *cache.get_or_init(|| unsafe {
         let mut candidates = Vec::new();
-        let key = wide(&format!(r"SOFTWARE\Classes\CLSID\{}\InprocServer32", protocol::CLSID_FILE_OPEN_DIALOG));
+        let key = wide(&format!(r"SOFTWARE\Classes\CLSID\{}\InprocServer32", kind.clsid_text()));
         let mut buf = vec![0u16; 1024];
         let mut size = (buf.len() * 2) as u32;
         // RegGetValueW 會展開 %SystemRoot%
         if RegGetValueW(HKEY_LOCAL_MACHINE, key.as_ptr(), std::ptr::null(), RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut size) == 0 {
             let path = from_wide_buf(&buf);
             // 萬一 HKLM 也指到 Stillfeather（不應該發生），不要載入自己
-            if !paths::file_name(&path).eq_ignore_ascii_case(protocol::DLL_NAME) {
+            let name = paths::file_name(&path);
+            if !name.eq_ignore_ascii_case(protocol::DLL_NAME) && !name.eq_ignore_ascii_case(protocol::SAVE_DLL_NAME) {
                 candidates.push(path);
             }
         }
@@ -344,16 +433,16 @@ fn system_class_object() -> Option<DllGetClassObjectFn> {
     p.map(|p| unsafe { std::mem::transmute::<usize, DllGetClassObjectFn>(p) })
 }
 
-/// 建立 Windows 原本的「開啟檔案」視窗物件
-unsafe fn create_system_dialog() -> *mut c_void {
-    let Some(get) = system_class_object() else { return std::ptr::null_mut() };
+/// 建立 Windows 原本的「開啟檔案」或「另存新檔」視窗物件
+unsafe fn create_system_dialog(kind: Kind) -> *mut c_void {
+    let Some(get) = system_class_object(kind) else { return std::ptr::null_mut() };
     let mut factory: *mut c_void = std::ptr::null_mut();
-    if get(&CLSID_FILE_OPEN_DIALOG, &IID_ICLASSFACTORY, &mut factory) < 0 || factory.is_null() {
+    if get(&kind.clsid(), &IID_ICLASSFACTORY, &mut factory) < 0 || factory.is_null() {
         return std::ptr::null_mut();
     }
     let vt = &**(factory as *const *const ClassFactoryVtbl);
     let mut dialog: *mut c_void = std::ptr::null_mut();
-    let hr = (vt.create_instance)(factory, std::ptr::null_mut(), &IID_IFILEOPENDIALOG, &mut dialog);
+    let hr = (vt.create_instance)(factory, std::ptr::null_mut(), &kind.iid(), &mut dialog);
     release(factory);
     if hr < 0 {
         return std::ptr::null_mut();
@@ -453,14 +542,18 @@ struct State {
     shown: Shown,
     /// 程式加了自己的選項（勾選方塊、下拉選單…）：Stillfeather 的視窗顯示不出來，改用 Windows 的視窗
     custom_controls: bool,
+    /// 另存新檔時程式要讓使用者填檔案內容（作者、標籤…）：同樣改用 Windows 的視窗
+    properties: bool,
 }
 
 #[repr(C)]
 struct Dialog {
+    /// OPEN_VTBL 或 SAVE_VTBL（兩者開頭都是 IFileDialog 的方法）
     vtbl: *const DialogVtbl,
     custom_vtbl: *const CustomizeVtbl,
     refs: AtomicU32,
-    /// Windows 原本的視窗物件（IFileOpenDialog）；建立失敗時是 null，只用 Stillfeather
+    kind: Kind,
+    /// Windows 原本的視窗物件（IFileOpenDialog 或 IFileSaveDialog，和 kind 一致）；建立失敗時是 null，只用 Stillfeather
     real: *mut c_void,
     /// 它的 IFileDialogCustomize（程式加的勾選方塊、下拉選單都交給它保存）
     real_custom: *mut c_void,
@@ -478,6 +571,16 @@ impl Dialog {
         } else {
             Some(unsafe { &**(self.real as *const *const DialogVtbl) })
         }
+    }
+
+    /// Windows 原本的物件的 IFileOpenDialog 方法（只有開啟檔案視窗有）
+    fn real_open_vtbl(&self) -> Option<&OpenVtbl> {
+        (self.kind == Kind::Open && !self.real.is_null()).then(|| unsafe { &**(self.real as *const *const OpenVtbl) })
+    }
+
+    /// Windows 原本的物件的 IFileSaveDialog 方法（只有另存新檔視窗有）
+    fn real_save_vtbl(&self) -> Option<&SaveVtbl> {
+        (self.kind == Kind::Save && !self.real.is_null()).then(|| unsafe { &**(self.real as *const *const SaveVtbl) })
     }
 }
 
@@ -516,11 +619,33 @@ struct DialogVtbl {
     set_client_guid: unsafe extern "system" fn(*mut c_void, *const GUID) -> HRESULT,
     clear_client_data: unsafe extern "system" fn(*mut c_void) -> HRESULT,
     set_filter: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
+}
+
+/// IFileOpenDialog：IFileDialog 再加兩個方法
+#[repr(C)]
+struct OpenVtbl {
+    dialog: DialogVtbl,
     get_results: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> HRESULT,
     get_selected_items: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> HRESULT,
 }
 
-static DIALOG_VTBL: DialogVtbl = DialogVtbl {
+/// IFileSaveDialog：IFileDialog 再加五個方法
+#[repr(C)]
+struct SaveVtbl {
+    dialog: DialogVtbl,
+    set_save_as_item: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
+    set_properties: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
+    set_collected_properties: unsafe extern "system" fn(*mut c_void, *mut c_void, BOOL) -> HRESULT,
+    get_properties: unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> HRESULT,
+    apply_properties: unsafe extern "system" fn(*mut c_void, *mut c_void, *mut c_void, HWND, *mut c_void) -> HRESULT,
+}
+
+static OPEN_VTBL: OpenVtbl = OpenVtbl { dialog: DIALOG_METHODS, get_results, get_selected_items };
+
+static SAVE_VTBL: SaveVtbl = SaveVtbl { dialog: DIALOG_METHODS, set_save_as_item, set_properties, set_collected_properties, get_properties, apply_properties };
+
+/// 兩種視窗共用的 IFileDialog 方法
+const DIALOG_METHODS: DialogVtbl = DialogVtbl {
     base: UnknownVtbl { query_interface, add_ref: dialog_add_ref, release: dialog_release },
     show,
     set_file_types,
@@ -546,8 +671,6 @@ static DIALOG_VTBL: DialogVtbl = DialogVtbl {
     set_client_guid,
     clear_client_data,
     set_filter,
-    get_results,
-    get_selected_items,
 };
 
 unsafe extern "system" fn query_interface(this: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
@@ -558,7 +681,7 @@ unsafe extern "system" fn query_interface(this: *mut c_void, riid: *const GUID, 
         *out = std::ptr::null_mut();
         let d = dialog(this);
         let iid = *riid;
-        if iid == IID_IUNKNOWN || iid == IID_IMODALWINDOW || iid == IID_IFILEDIALOG || iid == IID_IFILEOPENDIALOG {
+        if iid == IID_IUNKNOWN || iid == IID_IMODALWINDOW || iid == IID_IFILEDIALOG || iid == d.kind.iid() {
             *out = this;
         } else if iid == IID_IFILEDIALOGCUSTOMIZE && !d.real_custom.is_null() {
             *out = std::ptr::addr_of!(d.custom_vtbl) as *mut c_void;
@@ -609,7 +732,10 @@ unsafe extern "system" fn show(this: *mut c_void, owner: HWND) -> HRESULT {
         // 狀態每次重新取用，不跨過會呼叫回程式的地方（程式可能在事件裡再呼叫這個物件）
         d.state().shown = Shown::None;
         let options = current_options(d);
-        if use_system_dialog(options) || d.state().custom_controls {
+        let (custom_controls, properties) = (d.state().custom_controls, d.state().properties);
+        // 另存新檔時要填檔案內容，或是選資料夾（不是一般的用法），或是沒辦法為還不存在的檔案建立結果：也交給 Windows
+        let unusual_save = d.kind == Kind::Save && (properties || options & FOS_PICKFOLDERS != 0 || simple_id_list_fn().is_none());
+        if use_system_dialog(options) || custom_controls || unusual_save {
             return show_system(d, owner);
         }
         // 程式在 OnFileOk 拒絕時（例如檔案不符合它的要求）重新選，最多幾次
@@ -688,9 +814,16 @@ unsafe fn run_picker(d: &Dialog, owner: HWND, options: u32) -> Outcome {
     let request_path = paths::join(&tmp, &format!("{tag}.txt"));
     let out_path = paths::join(&tmp, &format!("{tag}-out.txt"));
     let st = d.state();
+    let saving = d.kind == Kind::Save;
     let request = Request {
-        mode: if options & FOS_PICKFOLDERS != 0 { Mode::Folders } else { Mode::Files },
-        multi: options & FOS_ALLOWMULTISELECT != 0,
+        mode: if saving {
+            Mode::Save
+        } else if options & FOS_PICKFOLDERS != 0 {
+            Mode::Folders
+        } else {
+            Mode::Files
+        },
+        multi: !saving && options & FOS_ALLOWMULTISELECT != 0,
         title: st.title.clone(),
         ok_label: st.ok_label.clone(),
         name_label: st.name_label.clone(),
@@ -700,8 +833,11 @@ unsafe fn run_picker(d: &Dialog, owner: HWND, options: u32) -> Outcome {
         types: st.types.clone(),
         type_index: st.type_index,
         default_ext: st.default_ext.clone(),
-        must_exist: options & FOS_FILEMUSTEXIST != 0,
+        must_exist: !saving && options & FOS_FILEMUSTEXIST != 0,
         show_hidden: options & FOS_FORCESHOWHIDDEN != 0,
+        overwrite_prompt: saving && options & FOS_OVERWRITEPROMPT != 0,
+        strict_types: saving && options & FOS_STRICTFILETYPES != 0,
+        no_readonly: saving && options & FOS_NOREADONLYRETURN != 0,
         owner: root,
         enable_owner: disable,
         host_pid: GetCurrentProcessId(),
@@ -1015,6 +1151,7 @@ unsafe extern "system" fn get_result(this: *mut c_void, out: *mut *mut c_void) -
         let d = dialog(this);
         match (our_paths(d), d.real_vtbl()) {
             (Some(paths), _) => match paths.first() {
+                Some(p) if d.kind == Kind::Save => item_for_save(p, out),
                 Some(p) => item_from_path(p, out),
                 None => E_UNEXPECTED,
             },
@@ -1052,7 +1189,7 @@ unsafe extern "system" fn get_results(this: *mut c_void, out: *mut *mut c_void) 
         }
         *out = std::ptr::null_mut();
         let d = dialog(this);
-        match (our_paths(d), d.real_vtbl()) {
+        match (our_paths(d), d.real_open_vtbl()) {
             (Some(paths), _) => results_array(paths, out),
             (None, Some(vt)) => (vt.get_results)(d.real, out),
             (None, None) => E_UNEXPECTED,
@@ -1067,7 +1204,7 @@ unsafe extern "system" fn get_selected_items(this: *mut c_void, out: *mut *mut c
         }
         *out = std::ptr::null_mut();
         let d = dialog(this);
-        match (our_paths(d), d.real_vtbl()) {
+        match (our_paths(d), d.real_open_vtbl()) {
             (Some(paths), _) => results_array(paths, out),
             (None, Some(vt)) => (vt.get_selected_items)(d.real, out),
             (None, None) => E_UNEXPECTED,
@@ -1084,6 +1221,7 @@ unsafe extern "system" fn get_current_selection(this: *mut c_void, out: *mut *mu
         let d = dialog(this);
         match (our_paths(d), d.real_vtbl()) {
             (Some(paths), _) => match paths.first() {
+                Some(p) if d.kind == Kind::Save => item_for_save(p, out),
                 Some(p) => item_from_path(p, out),
                 None => E_FAIL,
             },
@@ -1128,6 +1266,78 @@ unsafe extern "system" fn get_file_name(this: *mut c_void, out: *mut *mut u16) -
             E_OUTOFMEMORY
         } else {
             S_OK
+        }
+    })
+}
+
+// ---- IFileSaveDialog（只在另存新檔視窗的物件上）
+
+/// 一開始的資料夾與檔名（例如「另存新檔」時目前檔案的位置）
+unsafe extern "system" fn set_save_as_item(this: *mut c_void, item: *mut c_void) -> HRESULT {
+    guard(|| {
+        let d = dialog(this);
+        if let Some(path) = shell_item_path(item) {
+            let st = d.state();
+            if let Some(dir) = paths::parent(&path) {
+                st.folder = dir;
+            }
+            st.file_name = paths::file_name(&path).to_string();
+        }
+        match d.real_save_vtbl() {
+            Some(vt) => (vt.set_save_as_item)(d.real, item),
+            None => S_OK,
+        }
+    })
+}
+
+unsafe extern "system" fn set_properties(this: *mut c_void, store: *mut c_void) -> HRESULT {
+    guard(|| {
+        let d = dialog(this);
+        let hr = match d.real_save_vtbl() {
+            Some(vt) => (vt.set_properties)(d.real, store),
+            None => E_NOTIMPL,
+        };
+        if hr >= 0 {
+            d.state().properties = true;
+        }
+        hr
+    })
+}
+
+unsafe extern "system" fn set_collected_properties(this: *mut c_void, list: *mut c_void, append_default: BOOL) -> HRESULT {
+    guard(|| {
+        let d = dialog(this);
+        let hr = match d.real_save_vtbl() {
+            Some(vt) => (vt.set_collected_properties)(d.real, list, append_default),
+            None => E_NOTIMPL,
+        };
+        if hr >= 0 {
+            d.state().properties = true;
+        }
+        hr
+    })
+}
+
+unsafe extern "system" fn get_properties(this: *mut c_void, out: *mut *mut c_void) -> HRESULT {
+    guard(|| {
+        if out.is_null() {
+            return E_POINTER;
+        }
+        *out = std::ptr::null_mut();
+        let d = dialog(this);
+        match d.real_save_vtbl() {
+            Some(vt) => (vt.get_properties)(d.real, out),
+            None => E_UNEXPECTED,
+        }
+    })
+}
+
+unsafe extern "system" fn apply_properties(this: *mut c_void, item: *mut c_void, store: *mut c_void, owner: HWND, sink: *mut c_void) -> HRESULT {
+    guard(|| {
+        let d = dialog(this);
+        match d.real_save_vtbl() {
+            Some(vt) => (vt.apply_properties)(d.real, item, store, owner, sink),
+            None => E_NOTIMPL,
         }
     })
 }
@@ -1209,13 +1419,20 @@ struct Factory {
 
 unsafe impl Sync for Factory {}
 
-static FACTORY_VTBL: ClassFactoryVtbl = ClassFactoryVtbl {
+static OPEN_FACTORY_VTBL: ClassFactoryVtbl = ClassFactoryVtbl {
     base: UnknownVtbl { query_interface: factory_query_interface, add_ref: factory_add_ref, release: factory_release },
-    create_instance,
+    create_instance: create_open_instance,
     lock_server,
 };
 
-static FACTORY: Factory = Factory { vtbl: &FACTORY_VTBL };
+static SAVE_FACTORY_VTBL: ClassFactoryVtbl = ClassFactoryVtbl {
+    base: UnknownVtbl { query_interface: factory_query_interface, add_ref: factory_add_ref, release: factory_release },
+    create_instance: create_save_instance,
+    lock_server,
+};
+
+static OPEN_FACTORY: Factory = Factory { vtbl: &OPEN_FACTORY_VTBL };
+static SAVE_FACTORY: Factory = Factory { vtbl: &SAVE_FACTORY_VTBL };
 
 unsafe extern "system" fn factory_query_interface(this: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
     if out.is_null() || riid.is_null() {
@@ -1243,7 +1460,15 @@ unsafe extern "system" fn lock_server(_: *mut c_void, _: BOOL) -> HRESULT {
     S_OK
 }
 
-unsafe extern "system" fn create_instance(_: *mut c_void, outer: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
+unsafe extern "system" fn create_open_instance(_: *mut c_void, outer: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
+    create_instance(Kind::Open, outer, riid, out)
+}
+
+unsafe extern "system" fn create_save_instance(_: *mut c_void, outer: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
+    create_instance(Kind::Save, outer, riid, out)
+}
+
+unsafe fn create_instance(kind: Kind, outer: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
     guard(|| {
         if out.is_null() || riid.is_null() {
             return E_POINTER;
@@ -1252,9 +1477,9 @@ unsafe extern "system" fn create_instance(_: *mut c_void, outer: *mut c_void, ri
         if !outer.is_null() {
             return CLASS_E_NOAGGREGATION;
         }
-        let real = create_system_dialog();
+        let real = create_system_dialog(kind);
         let mut real_custom: *mut c_void = std::ptr::null_mut();
-        let mut options = FOS_OPEN_DEFAULT;
+        let mut options = if kind == Kind::Save { FOS_SAVE_DEFAULT } else { FOS_OPEN_DEFAULT };
         if !real.is_null() {
             let vt = &**(real as *const *const DialogVtbl);
             if (vt.base.query_interface)(real, &IID_IFILEDIALOGCUSTOMIZE, &mut real_custom) < 0 {
@@ -1265,10 +1490,15 @@ unsafe extern "system" fn create_instance(_: *mut c_void, outer: *mut c_void, ri
                 options = o;
             }
         }
+        let vtbl: *const DialogVtbl = match kind {
+            Kind::Open => &OPEN_VTBL.dialog,
+            Kind::Save => &SAVE_VTBL.dialog,
+        };
         let d = Box::new(Dialog {
-            vtbl: &DIALOG_VTBL,
+            vtbl,
             custom_vtbl: &CUSTOMIZE_VTBL,
             refs: AtomicU32::new(1),
+            kind,
             real,
             real_custom,
             state: UnsafeCell::new(State { options, ..Default::default() }),
@@ -1286,10 +1516,15 @@ pub unsafe extern "system" fn DllGetClassObject(rclsid: *const GUID, riid: *cons
         return E_POINTER;
     }
     *out = std::ptr::null_mut();
-    if *rclsid != CLSID_FILE_OPEN_DIALOG {
+    // 兩個檔名的 DLL 內容相同，兩種視窗都能建立（登錄決定哪一個檔名負責哪一種）
+    let factory = if *rclsid == CLSID_FILE_OPEN_DIALOG {
+        &OPEN_FACTORY
+    } else if *rclsid == CLSID_FILE_SAVE_DIALOG {
+        &SAVE_FACTORY
+    } else {
         return CLASS_E_CLASSNOTAVAILABLE;
-    }
-    factory_query_interface(&FACTORY as *const Factory as *mut c_void, riid, out)
+    };
+    factory_query_interface(factory as *const Factory as *mut c_void, riid, out)
 }
 
 /// 一律不卸載：載入在別人的程式裡，卸載 Rust 的執行環境沒有好處，風險卻不小
@@ -1309,11 +1544,38 @@ mod tests {
         assert_eq!(std::mem::size_of::<ProcessInformation>(), 24);
         assert_eq!(std::mem::size_of::<FilterSpec>(), 16);
         assert_eq!(std::mem::size_of::<GUID>(), 16);
-        // IFileOpenDialog：IUnknown 3 + IModalWindow 1 + IFileDialog 23 + IFileOpenDialog 2
-        assert_eq!(std::mem::size_of::<DialogVtbl>(), 29 * 8);
+        // IFileDialog：IUnknown 3 + IModalWindow 1 + IFileDialog 23
+        assert_eq!(std::mem::size_of::<DialogVtbl>(), 27 * 8);
+        // IFileOpenDialog：再加 GetResults、GetSelectedItems
+        assert_eq!(std::mem::size_of::<OpenVtbl>(), 29 * 8);
+        // IFileSaveDialog：再加 SetSaveAsItem、SetProperties、SetCollectedProperties、GetProperties、ApplyProperties
+        assert_eq!(std::mem::size_of::<SaveVtbl>(), 32 * 8);
+        assert_eq!(std::mem::offset_of!(SaveVtbl, set_save_as_item), 27 * 8);
         // IFileDialogCustomize：IUnknown 3 + 27
         assert_eq!(std::mem::size_of::<CustomizeVtbl>(), 30 * 8);
         assert_eq!(std::mem::offset_of!(Dialog, custom_vtbl), 8);
+    }
+
+    #[test]
+    fn guids() {
+        // 和登錄用的文字（src/picker.rs）是同一個
+        let text = |g: GUID| {
+            format!(
+                "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{}}}",
+                g.d1,
+                g.d2,
+                g.d3,
+                g.d4[0],
+                g.d4[1],
+                g.d4[2..].iter().map(|b| format!("{b:02X}")).collect::<String>()
+            )
+        };
+        assert!(text(CLSID_FILE_OPEN_DIALOG).eq_ignore_ascii_case(protocol::CLSID_FILE_OPEN_DIALOG));
+        assert!(text(CLSID_FILE_SAVE_DIALOG).eq_ignore_ascii_case(protocol::CLSID_FILE_SAVE_DIALOG));
+        assert_eq!(text(IID_IFILESAVEDIALOG), "{84BCCD23-5FDE-4CDB-AEA4-AF64B83D78AB}");
+        assert_eq!(Kind::Save.iid(), IID_IFILESAVEDIALOG);
+        assert_eq!(Kind::Open.clsid(), CLSID_FILE_OPEN_DIALOG);
+        assert_eq!(FOS_SAVE_DEFAULT, FOS_OVERWRITEPROMPT | 0x8 | 0x800 | FOS_NOREADONLYRETURN);
     }
 
     #[test]

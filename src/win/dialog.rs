@@ -73,7 +73,7 @@ impl Spec {
             body: String::new(),
             rows: Vec::new(),
             footnote: String::new(),
-            buttons: vec![Button::primary(1, "確定")],
+            buttons: vec![Button::primary(1, tr!("確定", "OK"))],
             cancel: 1,
             width: 440,
         }
@@ -131,7 +131,7 @@ impl Spec {
 pub fn confirm(owner: HWND, icon: Icon, heading: &str, body: &str, ok: &str) -> bool {
     Spec::new(icon, heading)
         .body(body)
-        .buttons(vec![Button::primary(1, ok).key('Y'), Button::normal(0, "取消").key('N')], 0)
+        .buttons(vec![Button::primary(1, ok).key('Y'), Button::normal(0, tr!("取消", "Cancel")).key('N')], 0)
         .show(owner)
         == 1
 }

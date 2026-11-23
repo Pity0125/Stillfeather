@@ -1,5 +1,5 @@
 //! 設定對話方塊：主題、重點色與背景色、側欄寬度、雙欄比例、緊湊清單、副檔名與快速預覽開關（含「按空白鍵預覽」），
-//! 以及「設為預設檔案總管」與「其他程式開啟檔案時也用 Stillfeather」（寫在登錄，不在設定檔；「還原預設」不會改它們）。
+//! 以及「設為預設檔案總管」與「其他程式開啟或儲存檔案時也用 Stillfeather」（寫在登錄，不在設定檔；「還原預設」不會改它們）。
 //! 「還原預設」只填入預設值，需再按「儲存」才會套用，並保留常用位置。
 
 use super::app;
@@ -7,7 +7,7 @@ use super::controls::{self, Kind, Surface};
 use super::sys::*;
 use super::theme;
 use super::util::*;
-use feather_core::settings::{color_to_hex, parse_color, Settings, ThemeMode, SIDEBAR_MAX, SIDEBAR_MIN, SPLIT_MAX, SPLIT_MIN};
+use feather_core::settings::{color_to_hex, parse_color, Language, Settings, ThemeMode, SIDEBAR_MAX, SIDEBAR_MIN, SPLIT_MAX, SPLIT_MIN};
 
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
@@ -16,6 +16,9 @@ const CLASS: &str = "FeatherFiles.Settings";
 const SEG_SYSTEM: u16 = 10;
 const SEG_LIGHT: u16 = 11;
 const SEG_DARK: u16 = 12;
+const LANG_SYSTEM: u16 = 13;
+const LANG_CHINESE: u16 = 14;
+const LANG_ENGLISH: u16 = 15;
 const ACCENT_EDIT: u16 = 20;
 const ACCENT_PICK: u16 = 21;
 const BG_EDIT: u16 = 22;
@@ -31,6 +34,7 @@ const T_DEFAULT_FM: u16 = 35;
 const T_NO_UPDATES: u16 = 36;
 const T_PICKER: u16 = 37;
 const T_WIN_E: u16 = 38;
+const T_RESTORE: u16 = 39;
 const CHECK_UPDATES: u16 = 41;
 const RESET: u16 = 40;
 const NOTE_ID: u16 = 90;
@@ -52,7 +56,7 @@ pub struct Integration {
     pub default_fm: bool,
     /// 攔截 Win+E（新版 Windows 需要；只在設為預設檔案總管時有作用）
     pub win_e: bool,
-    /// 其他程式開啟檔案時也用 Stillfeather
+    /// 其他程式開啟或儲存檔案時也用 Stillfeather
     pub picker: bool,
 }
 
@@ -63,11 +67,13 @@ struct State {
     integration: Integration,
     done: bool,
     segments: [HWND; 3],
+    /// 語言：跟隨系統、繁體中文、English
+    languages: [HWND; 3],
     accent: HWND,
     background: HWND,
     sidebar: HWND,
     split: HWND,
-    toggles: [HWND; 9],
+    toggles: [HWND; 10],
     frames: Vec<(RECT, HWND)>,
     custom_colors: [COLORREF; 16],
 }
@@ -85,12 +91,12 @@ pub fn update_status(text: &str) -> bool {
 /// 設定開著時，告訴使用者有新版本：「檢查更新」改成「立即更新」，按下就儲存設定、關閉並開始更新。
 /// 設定沒有開著時回傳 false。
 pub fn update_found(version: &str) -> bool {
-    if !update_status(&format!("有新版本 {version}")) {
+    if !update_status(&trf!("有新版本 {version}", "{version} available")) {
         return false;
     }
     let button = UPDATE_BUTTON.load(Ordering::Relaxed);
     if button != 0 {
-        set_window_text(button, "立即更新");
+        set_window_text(button, tr!("立即更新", "Update now"));
         controls::set_primary(button);
         unsafe {
             InvalidateRect(button, std::ptr::null(), 0);
@@ -108,10 +114,10 @@ pub fn take_update_now() -> bool {
 /// 設定開著時，顯示檢查失敗的原因（對話方塊開在設定上方）。設定沒有開著時回傳 false。
 pub fn update_failed(error: &str) -> bool {
     let dlg = DIALOG.load(Ordering::Relaxed);
-    if dlg == 0 || !update_status("檢查失敗") {
+    if dlg == 0 || !update_status(tr!("檢查失敗", "Check failed")) {
         return false;
     }
-    super::dialog::Spec::new(super::dialog::Icon::Warning, "無法檢查更新").body(error).show(dlg);
+    super::dialog::Spec::new(super::dialog::Icon::Warning, tr!("無法檢查更新", "Couldn't check for updates")).body(error).show(dlg);
     true
 }
 
@@ -129,7 +135,7 @@ fn save(hwnd: HWND, st: &mut State) -> bool {
             true
         }
         Err(e) => {
-            super::dialog::Spec::new(super::dialog::Icon::Warning, "設定有誤").body(&e).show(hwnd);
+            super::dialog::Spec::new(super::dialog::Icon::Warning, tr!("設定有誤", "Invalid setting")).body(&e).show(hwnd);
             false
         }
     }
@@ -248,6 +254,9 @@ fn fill(st: &State, s: &Settings) {
         let mode = [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark][i];
         controls::set_checked(*h, s.theme_mode == mode);
     }
+    for (i, h) in st.languages.iter().enumerate() {
+        controls::set_checked(*h, s.language == LANGUAGES[i]);
+    }
     set_window_text(st.accent, s.accent_color.as_deref().unwrap_or(""));
     set_window_text(st.background, s.background_color.as_deref().unwrap_or(""));
     set_window_text(st.sidebar, &s.sidebar_width.to_string());
@@ -257,7 +266,10 @@ fn fill(st: &State, s: &Settings) {
         controls::set_checked(*h, v);
     }
     controls::set_checked(st.toggles[6], !s.update_reminders);
+    controls::set_checked(st.toggles[9], s.restore_tabs);
 }
+
+const LANGUAGES: [Language; 3] = [Language::System, Language::Chinese, Language::English];
 
 fn collect(st: &State) -> Result<Settings, String> {
     let mut s = st.base.clone();
@@ -268,6 +280,7 @@ fn collect(st: &State) -> Result<Settings, String> {
     } else {
         ThemeMode::System
     };
+    s.language = st.languages.iter().position(|h| controls::is_checked(*h)).map_or(Language::System, |i| LANGUAGES[i]);
     let color = |h: HWND| -> Result<Option<String>, String> {
         let t = window_text(h).trim().to_string();
         if t.is_empty() {
@@ -276,7 +289,7 @@ fn collect(st: &State) -> Result<Settings, String> {
         let t = if t.starts_with('#') { t } else { format!("#{t}") };
         match parse_color(&t) {
             Some((r, g, b)) => Ok(Some(color_to_hex(r, g, b))),
-            None => Err("自訂顏色必須是 #RRGGBB，或留白使用預設。".into()),
+            None => Err(tr!("自訂顏色必須是 #RRGGBB，或留白使用預設。", "Custom colors must be #RRGGBB, or leave them blank to use the default.").into()),
         }
     };
     s.accent_color = color(st.accent)?;
@@ -284,18 +297,19 @@ fn collect(st: &State) -> Result<Settings, String> {
     s.sidebar_width = window_text(st.sidebar)
         .trim()
         .parse()
-        .map_err(|_| format!("側欄寬度需介於 {SIDEBAR_MIN} 與 {SIDEBAR_MAX}。"))?;
+        .map_err(|_| trf!("側欄寬度需介於 {SIDEBAR_MIN} 與 {SIDEBAR_MAX}。", "The sidebar width must be between {SIDEBAR_MIN} and {SIDEBAR_MAX}."))?;
     s.split_percent = window_text(st.split)
         .trim()
         .trim_end_matches('%')
         .parse()
-        .map_err(|_| format!("左欄比例需介於 {SPLIT_MIN}% 與 {SPLIT_MAX}%。"))?;
+        .map_err(|_| trf!("左欄比例需介於 {SPLIT_MIN}% 與 {SPLIT_MAX}%。", "The left pane ratio must be between {SPLIT_MIN}% and {SPLIT_MAX}%."))?;
     s.compact_rows = controls::is_checked(st.toggles[0]);
     s.show_extensions = controls::is_checked(st.toggles[1]);
     s.image_preview = controls::is_checked(st.toggles[2]);
     s.pdf_preview = controls::is_checked(st.toggles[3]);
     s.space_preview = controls::is_checked(st.toggles[4]);
     s.update_reminders = !controls::is_checked(st.toggles[6]);
+    s.restore_tabs = controls::is_checked(st.toggles[9]);
     s.validate()?;
     Ok(s)
 }
@@ -324,9 +338,9 @@ fn pick_color(dlg: HWND, st: &mut State, target: HWND, fallback: COLORREF) {
 pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option<(Settings, Integration)> {
     let t = app::theme();
     let s = |v: i32| t.s(v);
-    let (cw, ch) = (s(500), s(698));
+    let (cw, ch) = (s(500), s(718));
     let class = wide(CLASS);
-    let title = wide("設定");
+    let title = wide(tr!("設定", "Settings"));
     let dlg = unsafe {
         let mut or = RECT::default();
         GetWindowRect(owner, &mut or);
@@ -364,11 +378,12 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
         integration,
         done: false,
         segments: [0; 3],
+        languages: [0; 3],
         accent: 0,
         background: 0,
         sidebar: 0,
         split: 0,
-        toggles: [0; 9],
+        toggles: [0; 10],
         frames: Vec::new(),
         custom_colors: [rgb(255, 255, 255); 16],
     });
@@ -376,68 +391,76 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
     let fx = s(140);
     let row_h = s(32);
     let mut y = s(20);
-    label(dlg, "主題", RECT::new(lx, y, s(110), row_h));
-    for (i, (cid, text)) in [(SEG_SYSTEM, "跟隨系統"), (SEG_LIGHT, "淺色"), (SEG_DARK, "深色")].iter().enumerate() {
+    label(dlg, tr!("主題", "Theme"), RECT::new(lx, y, s(110), row_h));
+    for (i, (cid, text)) in [(SEG_SYSTEM, tr!("跟隨系統", "System")), (SEG_LIGHT, tr!("淺色", "Light")), (SEG_DARK, tr!("深色", "Dark"))].iter().enumerate() {
         st.segments[i] = button(dlg, *cid, Kind::Segment, text, RECT::new(fx + i as i32 * s(104), y, s(98), row_h));
     }
-    y += s(48);
-    label(dlg, "重點色", RECT::new(lx, y, s(110), row_h));
+    y += s(42);
+    // 語言：語言名稱用它自己的文字寫（看不懂目前的語言也找得到）
+    label(dlg, tr!("語言", "Language"), RECT::new(lx, y, s(110), row_h));
+    for (i, (cid, text)) in [(LANG_SYSTEM, tr!("跟隨系統", "System")), (LANG_CHINESE, "繁體中文"), (LANG_ENGLISH, "English")].iter().enumerate() {
+        st.languages[i] = button(dlg, *cid, Kind::Segment, text, RECT::new(fx + i as i32 * s(104), y, s(98), row_h));
+    }
+    y += s(44);
+    label(dlg, tr!("重點色", "Accent color"), RECT::new(lx, y, s(110), row_h));
     st.accent = edit(dlg, ACCENT_EDIT, RECT::new(fx, y, s(160), row_h), &mut st);
-    button(dlg, ACCENT_PICK, Kind::Text, "選色…", RECT::new(fx + s(170), y, s(84), row_h));
+    button(dlg, ACCENT_PICK, Kind::Text, tr!("選色…", "Pick…"), RECT::new(fx + s(170), y, s(84), row_h));
     y += s(42);
-    label(dlg, "背景色", RECT::new(lx, y, s(110), row_h));
+    label(dlg, tr!("背景色", "Background"), RECT::new(lx, y, s(110), row_h));
     st.background = edit(dlg, BG_EDIT, RECT::new(fx, y, s(160), row_h), &mut st);
-    button(dlg, BG_PICK, Kind::Text, "選色…", RECT::new(fx + s(170), y, s(84), row_h));
+    button(dlg, BG_PICK, Kind::Text, tr!("選色…", "Pick…"), RECT::new(fx + s(170), y, s(84), row_h));
     y += s(38);
-    note(dlg, "顏色留白使用主題預設；格式為 #RRGGBB。", RECT::new(fx, y, cw - fx - s(20), s(22)));
+    note(dlg, tr!("顏色留白使用主題預設；格式為 #RRGGBB。", "Blank uses the theme default. Format: #RRGGBB"), RECT::new(fx, y, cw - fx - s(20), s(22)));
     y += s(34);
-    label(dlg, "側欄寬度", RECT::new(lx, y, s(110), row_h));
+    label(dlg, tr!("側欄寬度", "Sidebar width"), RECT::new(lx, y, s(110), row_h));
     st.sidebar = edit(dlg, SIDEBAR_EDIT, RECT::new(fx, y, s(90), row_h), &mut st);
-    note(dlg, &format!("{SIDEBAR_MIN}–{SIDEBAR_MAX} 像素"), RECT::new(fx + s(100), y + s(7), s(160), s(22)));
+    note(dlg, &trf!("{SIDEBAR_MIN}–{SIDEBAR_MAX} 像素", "{SIDEBAR_MIN}–{SIDEBAR_MAX} pixels"), RECT::new(fx + s(100), y + s(7), s(160), s(22)));
     y += s(42);
-    label(dlg, "雙欄左欄比例", RECT::new(lx, y, s(116), row_h));
+    label(dlg, tr!("雙欄左欄比例", "Left pane ratio"), RECT::new(lx, y, s(116), row_h));
     st.split = edit(dlg, SPLIT_EDIT, RECT::new(fx, y, s(90), row_h), &mut st);
     note(dlg, &format!("{SPLIT_MIN}–{SPLIT_MAX} %"), RECT::new(fx + s(100), y + s(7), s(160), s(22)));
-    y += s(52);
-    let toggles = [(T_COMPACT, "緊湊清單"), (T_EXT, "顯示副檔名"), (T_IMAGE, "快速預覽圖片與影片"), (T_PDF, "快速預覽 PDF")];
+    y += s(46);
+    let toggles = [(T_COMPACT, tr!("緊湊清單", "Compact list")), (T_EXT, tr!("顯示副檔名", "Show file extensions")), (T_IMAGE, tr!("快速預覽圖片與影片", "Preview images & videos")), (T_PDF, tr!("快速預覽 PDF", "Preview PDFs"))];
     for (i, (cid, text)) in toggles.iter().enumerate() {
         let x = lx + (i as i32 % 2) * s(220);
         let yy = y + (i as i32 / 2) * s(38);
         st.toggles[i] = button(dlg, *cid, Kind::Toggle, text, RECT::new(x, yy, s(210), row_h));
     }
     let yy = y + 2 * s(38);
-    st.toggles[4] = button(dlg, T_SPACE, Kind::Toggle, "按空白鍵預覽", RECT::new(lx, yy, s(210), row_h));
-    note(dlg, "不自動懸停預覽；按住空白鍵時才預覽滑鼠下的項目，放開就關閉。", RECT::new(lx + s(4), yy + s(36), cw - lx * 2, s(22)));
-    let yy = yy + s(70);
-    st.toggles[5] = button(dlg, T_DEFAULT_FM, Kind::Toggle, "設為預設檔案總管（Win+E 與開啟資料夾）", RECT::new(lx, yy, cw - lx * 2, row_h));
+    st.toggles[4] = button(dlg, T_SPACE, Kind::Toggle, tr!("按空白鍵預覽", "Preview with Space"), RECT::new(lx, yy, s(210), row_h));
+    st.toggles[9] = button(dlg, T_RESTORE, Kind::Toggle, tr!("還原上次的分頁", "Restore last tabs"), RECT::new(lx + s(220), yy, s(210), row_h));
+    note(dlg, tr!("按空白鍵預覽：不自動懸停預覽，按住空白鍵時才預覽滑鼠下的項目。", "Preview with Space: hold Space to preview the item under the mouse."), RECT::new(lx + s(4), yy + s(36), cw - lx * 2, s(22)));
+    let yy = yy + s(64);
+    st.toggles[5] = button(dlg, T_DEFAULT_FM, Kind::Toggle, tr!("設為預設檔案總管（Win+E 與開啟資料夾）", "Set as default file manager (Win+E and opening folders)"), RECT::new(lx, yy, cw - lx * 2, row_h));
     controls::set_checked(st.toggles[5], integration.default_fm);
     // 攔截 Win+E：屬於「設為預設檔案總管」，沒有勾選時停用
     let yy = yy + s(38);
     let ix = lx + s(28);
-    st.toggles[8] = button(dlg, T_WIN_E, Kind::Toggle, "攔截 Win+E 按鍵，改開 Stillfeather", RECT::new(ix, yy, cw - ix - lx, row_h));
+    st.toggles[8] = button(dlg, T_WIN_E, Kind::Toggle, tr!("攔截 Win+E 按鍵，改開 Stillfeather", "Intercept Win+E and open Stillfeather"), RECT::new(ix, yy, cw - ix - lx, row_h));
     controls::set_checked(st.toggles[8], integration.win_e);
     controls::set_enabled(st.toggles[8], integration.default_fm);
-    note(dlg, "新版 Windows 11 需要；開著時會在背景執行一個小程式。", RECT::new(ix + s(4), yy + s(36), cw - ix - lx - s(4), s(22)));
-    let yy = yy + s(74);
-    st.toggles[7] = button(dlg, T_PICKER, Kind::Toggle, "其他程式開啟檔案時也用 Stillfeather（上傳、選擇資料夾）", RECT::new(lx, yy, cw - lx * 2, row_h));
+    note(dlg, tr!("新版 Windows 11 需要；開著時會在背景執行一個小程式。", "Needed on newer Windows 11; runs a small helper in the background."), RECT::new(ix + s(4), yy + s(36), cw - ix - lx - s(4), s(22)));
+    let yy = yy + s(68);
+    st.toggles[7] = button(dlg, T_PICKER, Kind::Toggle, tr!("其他程式開啟或儲存檔案時也用 Stillfeather（上傳、另存新檔）", "Use Stillfeather for other programs' Open and Save dialogs"), RECT::new(lx, yy, cw - lx * 2, row_h));
     controls::set_checked(st.toggles[7], integration.picker);
     // 更新：關掉自動提醒的開關、目前版本與檢查結果、手動檢查
     let yy = yy + s(42);
-    st.toggles[6] = button(dlg, T_NO_UPDATES, Kind::Toggle, "不要啟用更新提醒", RECT::new(lx, yy, s(200), row_h));
-    let check_w = s(100);
+    st.toggles[6] = button(dlg, T_NO_UPDATES, Kind::Toggle, tr!("不要啟用更新提醒", "No update reminders"), RECT::new(lx, yy, s(200), row_h));
+    // 英文的「Check for updates」比較長
+    let check_w = s(tr!(100, 136));
     let check_x = cw - lx - check_w;
-    let check = button(dlg, CHECK_UPDATES, Kind::Text, "檢查更新", RECT::new(check_x, yy, check_w, row_h));
+    let check = button(dlg, CHECK_UPDATES, Kind::Text, tr!("檢查更新", "Check for updates"), RECT::new(check_x, yy, check_w, row_h));
     let note_x = lx + s(212);
-    let update_note = note(dlg, &format!("目前版本 {}", super::update::VERSION), RECT::new(note_x, yy + s(7), check_x - s(10) - note_x, s(22)));
+    let update_note = note(dlg, &trf!("目前版本 {}", "Version {}", super::update::VERSION), RECT::new(note_x, yy + s(7), check_x - s(10) - note_x, s(22)));
     DIALOG.store(dlg, Ordering::Relaxed);
     UPDATE_NOTE.store(update_note, Ordering::Relaxed);
     UPDATE_BUTTON.store(check, Ordering::Relaxed);
     UPDATE_READY.store(false, Ordering::Relaxed);
     UPDATE_NOW.store(false, Ordering::Relaxed);
     let by = ch - s(56);
-    button(dlg, RESET, Kind::Text, "還原預設", RECT::new(lx, by, s(100), s(34)));
-    let cancel = button(dlg, IDCANCEL as u16, Kind::Text, "取消", RECT::new(cw - lx - s(92), by, s(92), s(34)));
-    let save = button(dlg, IDOK as u16, Kind::Text, "儲存", RECT::new(cw - lx - s(92) * 2 - s(8), by, s(92), s(34)));
+    button(dlg, RESET, Kind::Text, tr!("還原預設", "Restore defaults"), RECT::new(lx, by, s(tr!(100, 140)), s(34)));
+    let cancel = button(dlg, IDCANCEL as u16, Kind::Text, tr!("取消", "Cancel"), RECT::new(cw - lx - s(92), by, s(92), s(34)));
+    let save = button(dlg, IDOK as u16, Kind::Text, tr!("儲存", "Save"), RECT::new(cw - lx - s(92) * 2 - s(8), by, s(92), s(34)));
     controls::set_primary(save);
     let _ = cancel;
     fill(&st, current);
@@ -530,6 +553,11 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                         controls::set_checked(*h, i as u16 == cid - SEG_SYSTEM);
                     }
                 }
+                LANG_SYSTEM | LANG_CHINESE | LANG_ENGLISH => {
+                    for (i, h) in st.languages.iter().enumerate() {
+                        controls::set_checked(*h, i as u16 == cid - LANG_SYSTEM);
+                    }
+                }
                 ACCENT_PICK => {
                     let target = st.accent;
                     pick_color(hwnd, st, target, t.pal.accent);
@@ -545,7 +573,7 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                             UPDATE_NOW.store(true, Ordering::Relaxed);
                         }
                     } else {
-                        let text = if super::update::start_check(true) { "正在檢查…" } else { "這一版沒有設定更新來源" };
+                        let text = if super::update::start_check(true) { tr!("正在檢查…", "Checking…") } else { tr!("這一版沒有設定更新來源", "This build has no update source") };
                         update_status(text);
                     }
                 }

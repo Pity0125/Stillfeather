@@ -208,7 +208,7 @@ pub fn register(hinst: HINSTANCE) {
 
 pub fn create_popup(owner: HWND) -> HWND {
     let class = wide(POPUP_CLASS);
-    let name = wide("快速預覽");
+    let name = wide(tr!("快速預覽", "Quick preview"));
     unsafe {
         // 不搶焦點：鍵盤仍留在清單，方向鍵換項目、空白鍵或 Esc 關閉
         let hwnd = CreateWindowExW(
@@ -693,7 +693,7 @@ fn paint_text(state: &mut State, dc: HDC, body: &RECT) {
     let p = &t.pal;
     let Content::Text { doc, .. } = &state.content else { return };
     if doc.lines.is_empty() {
-        theme::draw_text(dc, "（空白檔案）", body, t.fonts.ui, p.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        theme::draw_text(dc, tr!("（空白檔案）", "(Empty file)"), body, t.fonts.ui, p.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return;
     }
     let digits = doc.lines.len().to_string().len() as i32;
@@ -765,7 +765,7 @@ fn paint(state: &mut State, hwnd: HWND, dc: HDC) {
     if buttons {
         let hot_fill = |on: bool| if on { p.hover } else { p.surface };
         theme::round_rect(dc, &open_r, open_r.height(), Some(hot_fill(state.hot == Hot::Open)), Some(p.line));
-        theme::draw_text(dc, "開啟", &open_r, f.ui, p.ink, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        theme::draw_text(dc, tr!("開啟", "Open"), &open_r, f.ui, p.ink, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         theme::round_rect(dc, &close_r, close_r.height(), Some(hot_fill(state.hot == Hot::Close)), None);
         theme::draw_text(dc, &theme::glyph::CLOSE.to_string(), &close_r, f.icon_small, p.ink, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
@@ -776,7 +776,7 @@ fn paint(state: &mut State, hwnd: HWND, dc: HDC) {
     mark("預覽：paint 內容");
     let caption = match &state.content {
         Content::Loading => {
-            theme::draw_text(dc, "正在載入預覽…", &body, f.ui, p.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            theme::draw_text(dc, tr!("正在載入預覽…", "Loading preview…"), &body, f.ui, p.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             String::new()
         }
         Content::Message(m) => {
@@ -830,17 +830,17 @@ fn paint(state: &mut State, hwnd: HWND, dc: HDC) {
     let sep = RECT { left: rect.left + s(PAD), top: foot.top, right: rect.right - s(PAD), bottom: foot.top + 1 };
     theme::fill(dc, &sep, theme::blend(p.ink, p.surface, 0.08));
     let scroll_hint = match state.content {
-        Content::Text { .. } | Content::Document { .. } => Some("滾輪捲動"),
-        Content::Sheet { .. } => Some("滾輪捲動（按住 Shift 左右）"),
+        Content::Text { .. } | Content::Document { .. } => Some(tr!("滾輪捲動", "Scroll with the mouse wheel")),
+        Content::Sheet { .. } => Some(tr!("滾輪捲動（按住 Shift 左右）", "Scroll with the mouse wheel (hold Shift for left/right)")),
         _ => None,
     };
     let hint = match (state.mode, scroll_hint) {
-        (Mode::Hover, _) if state.opts.space => "放開空白鍵關閉 · 按住時移到別的項目就換".to_string(),
-        (Mode::Hover, _) => "移開滑鼠就關閉 · 按住空白鍵放大".to_string(),
-        (Mode::Hold, Some(h)) => format!("放開空白鍵關閉 · 按住時 ↑↓ 換項目 · {h}"),
-        (Mode::Hold, None) => "放開空白鍵關閉 · 按住時 ↑↓ 換項目".to_string(),
-        (Mode::Pinned, Some(h)) => format!("空白鍵或 Esc 關閉 · ↑↓ 換項目 · {h} · Enter 開啟"),
-        (Mode::Pinned, None) => "空白鍵或 Esc 關閉 · ↑↓ 換項目 · Enter 開啟".to_string(),
+        (Mode::Hover, _) if state.opts.space => tr!("放開空白鍵關閉 · 按住時移到別的項目就換", "Release Space to close · move to another item while holding to switch").to_string(),
+        (Mode::Hover, _) => tr!("移開滑鼠就關閉 · 按住空白鍵放大", "Move the mouse away to close · hold Space to enlarge").to_string(),
+        (Mode::Hold, Some(h)) => trf!("放開空白鍵關閉 · 按住時 ↑↓ 換項目 · {h}", "Release Space to close · ↑↓ to switch items while holding · {h}"),
+        (Mode::Hold, None) => tr!("放開空白鍵關閉 · 按住時 ↑↓ 換項目", "Release Space to close · ↑↓ to switch items while holding").to_string(),
+        (Mode::Pinned, Some(h)) => trf!("空白鍵或 Esc 關閉 · ↑↓ 換項目 · {h} · Enter 開啟", "Space or Esc to close · ↑↓ to switch items · {h} · Enter to open"),
+        (Mode::Pinned, None) => tr!("空白鍵或 Esc 關閉 · ↑↓ 換項目 · Enter 開啟", "Space or Esc to close · ↑↓ to switch items · Enter to open").to_string(),
     };
     // 說明靠右（最多占一半多一點），操作提示在左邊剩下的空間，兩者不重疊
     let cap_w = if caption.is_empty() { 0 } else { (theme::text_width(dc, &caption, f.small) + s(2)).min(foot.width() * 55 / 100) };
@@ -1258,7 +1258,7 @@ fn draw_table(dc: HDC, t: &Table, cols: &[i32], rows: &[i32], x: i32, y: i32) {
     }
     if t.more_rows || t.more_cols {
         let note = RECT { left: x, top: y + height + s(4), right: x + width.max(s(320)), bottom: y + height + s(TABLE_NOTE) };
-        theme::draw_text(dc, "（表格還有更多內容沒有顯示）", &note, f.small, p.muted, DT_LEFT | DT_TOP | DT_SINGLELINE);
+        theme::draw_text(dc, tr!("（表格還有更多內容沒有顯示）", "(The table has more content that isn't shown)"), &note, f.small, p.muted, DT_LEFT | DT_TOP | DT_SINGLELINE);
     }
 }
 
@@ -1280,7 +1280,7 @@ fn draw_block(dc: HDC, b: &Block, l: &Laid, x: i32, y: i32, width: i32, fonts: &
             theme::draw_text(dc, text, &RECT { left: x + indent, ..r }, fonts.body, p.ink, PARA_FMT);
         }
         Block::Slide { number } => {
-            let label = format!("投影片 {number}");
+            let label = trf!("投影片 {number}", "Slide {number}");
             let pill = RECT { left: x, top: y, right: x + theme::text_width(dc, &label, fonts.label) + s(22), bottom: y + l.h };
             theme::round_rect(dc, &pill, pill.height(), Some(theme::blend(p.accent, p.surface, 0.14)), None);
             theme::draw_text(dc, &label, &pill, fonts.label, p.accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -1304,7 +1304,7 @@ fn paint_document(state: &mut State, dc: HDC, body: &RECT) {
     let Content::Document { doc, cover, layout, .. } = &mut state.content else { return };
     extend_layout(dc, &fonts, doc, cover.as_ref(), layout, inner.width(), inner.height(), scroll + inner.height());
     if doc.blocks.is_empty() && cover.is_none() {
-        theme::draw_text(dc, "（文件裡沒有文字內容）", body, th.fonts.ui, p.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        theme::draw_text(dc, tr!("（文件裡沒有文字內容）", "(The document has no text)"), body, th.fonts.ui, p.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return;
     }
     unsafe {
@@ -1400,7 +1400,7 @@ fn paint_sheet(state: &mut State, dc: HDC, body: &RECT) {
     }
     let t = &book.table;
     if t.rows.is_empty() {
-        theme::draw_text(dc, "（這個工作表是空的）", body, f.ui, p.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        theme::draw_text(dc, tr!("（這個工作表是空的）", "(This sheet is empty)"), body, f.ui, p.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return;
     }
     let grid = sheet_grid(body);
@@ -1528,14 +1528,14 @@ fn load(target: &Target, edge: i32, opts: Opts, cancel: &AtomicBool) -> Result<L
     let path = target.path.as_str();
     mark("背景：讀取屬性");
     let Some((attrs, size, modified)) = fs::attributes_size_modified(path) else {
-        return Err(FsError::Message(format!("無法讀取：{}", last_error_text())));
+        return Err(FsError::Message(trf!("無法讀取：{}", "Couldn't read: {}", last_error_text())));
     };
     if attrs & (FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) != 0 {
-        return msg("這個檔案在雲端，還沒下載到這台電腦；為了不觸發下載，先不讀取內容。按 Enter 開啟。");
+        return msg(tr!("這個檔案在雲端，還沒下載到這台電腦；為了不觸發下載，先不讀取內容。按 Enter 開啟。", "This file is in the cloud and hasn't been downloaded to this PC; its contents aren't read so the download isn't triggered. Press Enter to open it."));
     }
     if attrs & FILE_ATTRIBUTE_DIRECTORY != 0 {
         let count = std::fs::read_dir(paths::to_long_path(path)).map(|d| d.take(100_000).count()).unwrap_or(0);
-        return Ok(Loaded::Message(if count == 0 { "空的資料夾".to_string() } else { format!("這個資料夾有 {count} 個項目。按 Enter 開啟。") }));
+        return Ok(Loaded::Message(if count == 0 { tr!("空的資料夾", "Empty folder").to_string() } else { trn!(count; "這個資料夾有 {count} 個項目。按 Enter 開啟。", "This folder has {count} item. Press Enter to open it.", "This folder has {count} items. Press Enter to open it.") }));
     }
     let key = CacheKey { path: path.to_string(), size, modified, edge, images: opts.images, pdf: opts.pdf };
     if let Some(hit) = CACHE.lock().ok().and_then(|mut c| c.get(&key)) {
@@ -1567,12 +1567,12 @@ pub fn perf_load(path: &str, edge: i32, use_cache: bool) -> (f64, String) {
     let result = load(&target, edge, Opts { images: true, pdf: true, space: false }, &cancel);
     let ms = started.elapsed().as_secs_f64() * 1000.0;
     let what = match result {
-        Ok(Loaded::Image(img)) => format!("影像 {}×{}（{}）", img.width, img.height, img.caption),
-        Ok(Loaded::Text { doc, caption }) => format!("文字 {} 行（{}）", doc.lines.len(), caption),
-        Ok(Loaded::Office { cover, caption, .. }) => format!("Office（{caption}{}）", if cover.is_some() { " · 含封面縮圖" } else { "" }),
-        Ok(Loaded::Message(m)) => format!("訊息：{m}"),
-        Err(FsError::Message(m)) => format!("錯誤：{m}"),
-        Err(FsError::Cancelled) => "已取消".into(),
+        Ok(Loaded::Image(img)) => trf!("影像 {}×{}（{}）", "Image {}×{} ({})", img.width, img.height, img.caption),
+        Ok(Loaded::Text { doc, caption }) => trf!("文字 {} 行（{}）", "Text, {} lines ({})", doc.lines.len(), caption),
+        Ok(Loaded::Office { cover, caption, .. }) => trf!("Office（{caption}{}）", "Office ({caption}{})", if cover.is_some() { tr!(" · 含封面縮圖", " · with cover thumbnail") } else { "" }),
+        Ok(Loaded::Message(m)) => trf!("訊息：{m}", "Message: {m}"),
+        Err(FsError::Message(m)) => trf!("錯誤：{m}", "Error: {m}"),
+        Err(FsError::Cancelled) => tr!("已取消", "Cancelled").into(),
     };
     (ms, what)
 }
@@ -1580,17 +1580,17 @@ pub fn perf_load(path: &str, edge: i32, use_cache: bool) -> (f64, String) {
 fn load_content(target: &Target, size: u64, edge: i32, opts: Opts, cancel: &AtomicBool) -> Result<Loaded, FsError> {
     let path = target.path.as_str();
     match quicklook::classify(&target.name) {
-        Kind::Image | Kind::Video if !opts.images => msg("設定中已關閉圖片與影片的快速預覽。"),
-        Kind::Pdf if !opts.pdf => msg("設定中已關閉 PDF 的快速預覽。"),
-        Kind::Image if size > MAX_IMAGE_BYTES => msg("圖片超過 256 MiB，不產生預覽。"),
+        Kind::Image | Kind::Video if !opts.images => msg(tr!("設定中已關閉圖片與影片的快速預覽。", "Quick preview of images and videos is turned off in Settings.")),
+        Kind::Pdf if !opts.pdf => msg(tr!("設定中已關閉 PDF 的快速預覽。", "Quick preview of PDFs is turned off in Settings.")),
+        Kind::Image if size > MAX_IMAGE_BYTES => msg(tr!("圖片超過 256 MiB，不產生預覽。", "The image is larger than 256 MiB, so no preview is made.")),
         Kind::Image => thumbnail(path, edge, false, cancel),
         Kind::Video => thumbnail(path, edge, true, cancel),
-        Kind::Pdf if size > MAX_PDF_BYTES => msg("PDF 超過 64 MiB，不產生預覽。"),
+        Kind::Pdf if size > MAX_PDF_BYTES => msg(tr!("PDF 超過 64 MiB，不產生預覽。", "The PDF is larger than 64 MiB, so no preview is made.")),
         Kind::Pdf => pdf(path, edge, cancel),
         Kind::Text(lang) => text(path, size, lang),
-        Kind::Office(_) if size > MAX_OFFICE_BYTES => msg("文件超過 64 MiB，不產生預覽。"),
+        Kind::Office(_) if size > MAX_OFFICE_BYTES => msg(tr!("文件超過 64 MiB，不產生預覽。", "The document is larger than 64 MiB, so no preview is made.")),
         Kind::Office(format) => office_doc(path, format, edge, opts, cancel),
-        Kind::LegacyOffice => msg("舊版 Office 格式（.doc、.xls、.ppt）沒有內容預覽；用 Office 另存成 .docx、.xlsx 或 .pptx 就能預覽。按 Enter 開啟。"),
+        Kind::LegacyOffice => msg(tr!("舊版 Office 格式（.doc、.xls、.ppt）沒有內容預覽；用 Office 另存成 .docx、.xlsx 或 .pptx 就能預覽。按 Enter 開啟。", "Old Office formats (.doc, .xls, .ppt) have no content preview; save them as .docx, .xlsx or .pptx in Office to preview them. Press Enter to open.")),
         Kind::Other => {
             // 沒有副檔名的小檔案（LICENSE、README）試著當純文字
             if paths::extension_lower(&target.name).is_empty() && size <= MAX_TEXT_BYTES {
@@ -1598,7 +1598,7 @@ fn load_content(target: &Target, size: u64, edge: i32, opts: Opts, cancel: &Atom
                     return Ok(Loaded::Text { doc, caption });
                 }
             }
-            msg("這種檔案沒有內容預覽。按 Enter 用預設程式開啟。")
+            msg(tr!("這種檔案沒有內容預覽。按 Enter 用預設程式開啟。", "There's no content preview for this type of file. Press Enter to open it in its default app."))
         }
     }
 }
@@ -1609,7 +1609,7 @@ static SHELL_OFFICE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::
 
 fn office_doc(path: &str, format: Format, edge: i32, opts: Opts, cancel: &AtomicBool) -> Result<Loaded, FsError> {
     mark("背景：讀取 Office 文件");
-    let bytes = std::fs::read(paths::to_long_path(path)).map_err(|e| FsError::Message(format!("無法讀取：{e}")))?;
+    let bytes = std::fs::read(paths::to_long_path(path)).map_err(|e| FsError::Message(trf!("無法讀取：{e}", "Couldn't read: {e}")))?;
     if cancel.load(Ordering::Relaxed) {
         return Err(FsError::Cancelled);
     }
@@ -1642,7 +1642,7 @@ fn office_doc(path: &str, format: Format, edge: i32, opts: Opts, cancel: &Atomic
             }
             // 文字讀不出來但有縮圖：至少顯示第 1 張投影片
             (Err(_), Some(mut img)) => {
-                img.caption = format!("{} · 第 1 張投影片", format.label());
+                img.caption = trf!("{} · 第 1 張投影片", "{} · slide 1", format.label());
                 Ok(Loaded::Image(img))
             }
             (Err(e), None) => msg(&e),
@@ -1655,23 +1655,23 @@ fn text(path: &str, size: u64, lang: Lang) -> Result<Loaded, FsError> {
     let mut bytes = Vec::new();
     std::fs::File::open(paths::to_long_path(path))
         .and_then(|f| f.take(MAX_TEXT_BYTES).read_to_end(&mut bytes))
-        .map_err(|e| FsError::Message(format!("無法讀取：{e}")))?;
+        .map_err(|e| FsError::Message(trf!("無法讀取：{e}", "Couldn't read: {e}")))?;
     let (content, encoding) = match quicklook::decode(&bytes) {
         Decoded::Text(t) => (t, ""),
-        Decoded::Binary => return msg("看起來是二進位檔案，沒有文字預覽。"),
-        Decoded::Legacy => (legacy_decode(&bytes), "系統字碼頁 · "),
+        Decoded::Binary => return msg(tr!("看起來是二進位檔案，沒有文字預覽。", "This looks like a binary file, so there's no text preview.")),
+        Decoded::Legacy => (legacy_decode(&bytes), tr!("系統字碼頁 · ", "System code page · ")),
     };
     mark("背景：語法上色");
     let doc = quicklook::highlight(&content, lang);
     mark("背景：語法上色完成");
-    let mut caption = format!("{}{} · {} 行", encoding, lang.label(), doc.lines.len());
+    let mut caption = trf!("{}{} · {} 行", "{}{} · {} lines", encoding, lang.label(), doc.lines.len());
     if size > MAX_TEXT_BYTES {
-        caption.push_str(" · 只顯示前 1 MiB");
+        caption.push_str(tr!(" · 只顯示前 1 MiB", " · only the first 1 MiB is shown"));
     } else if doc.truncated_lines {
-        caption.push_str(&format!(" · 只顯示前 {} 行", quicklook::MAX_LINES));
+        caption.push_str(&trf!(" · 只顯示前 {} 行", " · only the first {} lines are shown", quicklook::MAX_LINES));
     }
     if doc.long_lines {
-        caption.push_str(" · 過長的行已截斷");
+        caption.push_str(tr!(" · 過長的行已截斷", " · long lines are cut off"));
     }
     Ok(Loaded::Text { doc, caption })
 }
@@ -1704,11 +1704,11 @@ fn duration_text(hundred_ns: u64) -> String {
 
 fn thumbnail(path: &str, edge: i32, video: bool, cancel: &AtomicBool) -> Result<Loaded, FsError> {
     mark("背景：縮圖工作程序");
-    let exe = std::env::current_exe().map_err(|e| FsError::Message(format!("找不到預覽工作程式：{e}")))?;
+    let exe = std::env::current_exe().map_err(|e| FsError::Message(trf!("找不到預覽工作程式：{e}", "Can't find the preview worker: {e}")))?;
     let edge_arg = edge.to_string();
     let out = run_child(exe.as_os_str(), &["--preview-worker".as_ref(), path.as_ref(), edge_arg.as_ref()], &[], cancel)?;
     let (mut img, ow, oh, dur) = parse_worker_output(out, video)?;
-    let mut parts = vec![if video { "影片縮圖".to_string() } else { "圖片".to_string() }];
+    let mut parts = vec![if video { tr!("影片縮圖", "Video thumbnail").to_string() } else { tr!("圖片", "Image").to_string() }];
     if ow > 0 && oh > 0 {
         parts.push(format!("{ow} × {oh}"));
     }
@@ -1717,7 +1717,7 @@ fn thumbnail(path: &str, edge: i32, video: bool, cancel: &AtomicBool) -> Result<
     }
     let ext = paths::extension_lower(path);
     if !video && (ext == "gif" || ext.starts_with("tif")) {
-        parts.push("顯示第 1 幀".into());
+        parts.push(tr!("顯示第 1 幀", "Showing frame 1").into());
     }
     img.caption = parts.join(" · ");
     Ok(Loaded::Image(img))
@@ -1733,7 +1733,7 @@ fn pdf(path: &str, edge: i32, cancel: &AtomicBool) -> Result<Loaded, FsError> {
         match thumbnail(path, edge, false, cancel) {
             Ok(Loaded::Image(mut img)) => {
                 SHELL_PDF.store(1, Ordering::Relaxed);
-                img.caption = "PDF 第 1 頁".to_string();
+                img.caption = tr!("PDF 第 1 頁", "PDF page 1").to_string();
                 return Ok(Loaded::Image(img));
             }
             Err(FsError::Cancelled) => return Err(FsError::Cancelled),
@@ -1749,14 +1749,14 @@ fn pdf(path: &str, edge: i32, cancel: &AtomicBool) -> Result<Loaded, FsError> {
 }
 
 fn pdf_powershell(path: &str, edge: i32, cancel: &AtomicBool) -> Result<Loaded, FsError> {
-    let exe = std::env::current_exe().map_err(|e| FsError::Message(format!("找不到預覽工作程式：{e}")))?;
+    let exe = std::env::current_exe().map_err(|e| FsError::Message(trf!("找不到預覽工作程式：{e}", "Can't find the preview worker: {e}")))?;
     let dir = std::env::temp_dir().join(format!(
         "FeatherFiles-preview-{}-{}-{}",
         std::process::id(),
         unsafe { GetTickCount64() },
         TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).map_err(|e| FsError::Message(format!("無法建立暫存資料夾：{e}")))?;
+    std::fs::create_dir_all(&dir).map_err(|e| FsError::Message(trf!("無法建立暫存資料夾：{e}", "Couldn't create the temporary folder: {e}")))?;
     let result = (|| {
         let png = dir.join("preview.png");
         let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
@@ -1787,8 +1787,8 @@ fn pdf_powershell(path: &str, edge: i32, cancel: &AtomicBool) -> Result<Loaded, 
         let out = run_child(exe.as_os_str(), &["--preview-worker".as_ref(), png_os.as_ref(), edge_str.as_ref()], &[], cancel)?;
         let (mut img, _, _, _) = parse_worker_output(out, false)?;
         img.caption = match pages {
-            Some(n) if n > 1 => format!("PDF 第 1 頁，共 {n} 頁"),
-            _ => "PDF 第 1 頁".to_string(),
+            Some(n) if n > 1 => trf!("PDF 第 1 頁，共 {n} 頁", "PDF page 1 of {n}"),
+            _ => tr!("PDF 第 1 頁", "PDF page 1").to_string(),
         };
         Ok(Loaded::Image(img))
     })();
@@ -1814,7 +1814,7 @@ fn run_child(program: &std::ffi::OsStr, args: &[&std::ffi::OsStr], envs: &[(&str
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let mut child = cmd.spawn().map_err(|e| FsError::Message(format!("無法啟動預覽工作程式：{e}")))?;
+    let mut child = cmd.spawn().map_err(|e| FsError::Message(trf!("無法啟動預覽工作程式：{e}", "Couldn't start the preview worker: {e}")))?;
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
     let out_reader = std::thread::spawn(move || {
@@ -1849,7 +1849,7 @@ fn run_child(program: &std::ffi::OsStr, args: &[&std::ffi::OsStr], envs: &[(&str
         if start.elapsed() > TIMEOUT {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(FsError::Message("預覽超過 8 秒，已停止工作程式。".into()));
+            return Err(FsError::Message(tr!("預覽超過 8 秒，已停止工作程式。", "The preview took longer than 8 seconds, so the worker was stopped.").into()));
         }
         std::thread::sleep(Duration::from_millis(25));
     };
@@ -1863,13 +1863,13 @@ fn simplify_error(stderr: &[u8], pdf: bool) -> String {
     let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
     if first.is_empty() {
         return if pdf {
-            "PDF 無法預覽；檔案可能損壞、受密碼保護，或系統 PDF 元件不可用。".into()
+            tr!("PDF 無法預覽；檔案可能損壞、受密碼保護，或系統 PDF 元件不可用。", "The PDF can't be previewed; the file may be damaged or password-protected, or the system PDF component isn't available.").into()
         } else {
-            "沒有可用的預覽；檔案可能損壞，或系統缺少對應的解碼器。".into()
+            tr!("沒有可用的預覽；檔案可能損壞，或系統缺少對應的解碼器。", "No preview available; the file may be damaged, or the system is missing a suitable decoder.").into()
         };
     }
     let short: String = first.chars().take(220).collect();
-    format!("無法預覽：{short}")
+    trf!("無法預覽：{short}", "Can't preview: {short}")
 }
 
 /// 解析工作程序的輸出："FFP2"、縮圖寬高、原始寬高、長度（100 奈秒）、BGRA 像素。
@@ -1877,21 +1877,21 @@ fn parse_worker_output(out: ChildOutput, video: bool) -> Result<(Image, u32, u32
     if out.code != 0 {
         let mut e = simplify_error(&out.stderr, false);
         if video && out.stderr.is_empty() {
-            e = "沒有可用的影片縮圖；系統可能缺少這種影片格式的解碼器。".into();
+            e = tr!("沒有可用的影片縮圖；系統可能缺少這種影片格式的解碼器。", "No video thumbnail available; the system may be missing a decoder for this video format.").into();
         }
         return Err(FsError::Message(e));
     }
     let b = &out.stdout;
     let u32_at = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
     if b.len() < 28 || &b[0..4] != MAGIC {
-        return Err(FsError::Message("預覽輸出無效。".into()));
+        return Err(FsError::Message(tr!("預覽輸出無效。", "The preview output is invalid.").into()));
     }
     let w = u32_at(4) as i32;
     let h = u32_at(8) as i32;
     let (ow, oh) = (u32_at(12), u32_at(16));
     let dur = u64::from_le_bytes(b[20..28].try_into().unwrap_or([0; 8]));
     if w < 1 || h < 1 || w > 2 * MAX_EDGE || h > 2 * MAX_EDGE || b.len() != 28 + (w * h * 4) as usize {
-        return Err(FsError::Message("預覽尺寸超過上限。".into()));
+        return Err(FsError::Message(tr!("預覽尺寸超過上限。", "The preview is larger than the size limit.").into()));
     }
     let pixels = b[28..].chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
     Ok((Image { width: w, height: h, pixels, caption: String::new() }, ow, oh, dur))
@@ -1998,25 +1998,30 @@ unsafe fn properties(path: &str) -> (u32, u32, u64) {
 }
 
 unsafe fn extract(path: &str, edge: i32) -> Result<(i32, i32, Vec<u32>), String> {
+    extract_with(path, edge, SIIGBF_RESIZETOFIT | SIIGBF_THUMBNAILONLY)
+}
+
+/// 用 Windows Shell 的縮圖介面取得 `path` 縮到邊長 `edge` 以內的影像（BGRA 像素）。清單縮圖的工作程序也用它。
+pub(super) unsafe fn extract_with(path: &str, edge: i32, flags: u32) -> Result<(i32, i32, Vec<u32>), String> {
     let w = wide(path);
     let mut obj: *mut std::ffi::c_void = std::ptr::null_mut();
     let hr = SHCreateItemFromParsingName(w.as_ptr(), std::ptr::null_mut(), &IID_ISHELLITEMIMAGEFACTORY, &mut obj);
     if hr < 0 || obj.is_null() {
-        return Err(format!("無法開啟檔案（0x{:08X}）。", hr as u32));
+        return Err(trf!("無法開啟檔案（0x{:08X}）。", "Couldn't open the file (0x{:08X}).", hr as u32));
     }
     let vt = &*(*(obj as *mut ComObject<ImageFactoryVtbl>)).vtbl;
     let mut hbm: HBITMAP = 0;
-    let hr = (vt.get_image)(obj, SIZE { cx: edge, cy: edge }, SIIGBF_RESIZETOFIT | SIIGBF_THUMBNAILONLY, &mut hbm);
+    let hr = (vt.get_image)(obj, SIZE { cx: edge, cy: edge }, flags, &mut hbm);
     (vt.release)(obj);
     if hr < 0 || hbm == 0 {
-        return Err("沒有可用的縮圖：格式可能不支援、檔案損壞，或系統缺少對應的解碼器。".into());
+        return Err(tr!("沒有可用的縮圖：格式可能不支援、檔案損壞，或系統缺少對應的解碼器。", "No thumbnail available: the format may not be supported, the file may be damaged, or the system is missing a suitable decoder.").into());
     }
     let mut bm: BITMAP = std::mem::zeroed();
     GetObjectW(hbm, std::mem::size_of::<BITMAP>() as i32, &mut bm as *mut BITMAP as *mut std::ffi::c_void);
     let (bw, bh) = (bm.bmWidth, bm.bmHeight.abs());
     if bw < 1 || bh < 1 || bw > 2 * MAX_EDGE || bh > 2 * MAX_EDGE {
         DeleteObject(hbm);
-        return Err("縮圖尺寸無效。".into());
+        return Err(tr!("縮圖尺寸無效。", "Invalid thumbnail size.").into());
     }
     let mut pixels = vec![0u32; (bw * bh) as usize];
     let mut bi = BITMAPINFO::top_down_32(bw, bh);
@@ -2025,7 +2030,7 @@ unsafe fn extract(path: &str, edge: i32) -> Result<(i32, i32, Vec<u32>), String>
     ReleaseDC(0, hdc);
     DeleteObject(hbm);
     if lines == 0 {
-        return Err("無法讀取縮圖像素。".into());
+        return Err(tr!("無法讀取縮圖像素。", "Couldn't read the thumbnail pixels.").into());
     }
     Ok((bw, bh, pixels))
 }

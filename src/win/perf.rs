@@ -108,7 +108,7 @@ fn folders(r: &mut Report) -> Vec<feather_core::entry::Entry> {
         let mut error = None;
         for _ in 0..3 {
             let t = Instant::now();
-            match fs::read_dir(&path, false, 0, false, &cancel) {
+            match fs::read_dir(&path, false, 0, false, false, &cancel) {
                 Ok(l) => {
                     times.push(ms(t));
                     count = l.entries.len();

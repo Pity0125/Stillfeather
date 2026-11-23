@@ -36,13 +36,13 @@ const ARCHIVE: &[&str] = &["zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", 
 impl Category {
     pub fn label(self) -> &'static str {
         match self {
-            Category::All => "全部",
-            Category::Folder => "資料夾",
-            Category::Image => "圖片",
-            Category::Document => "文件",
-            Category::Media => "影音",
-            Category::Archive => "壓縮檔",
-            Category::Other => "其他",
+            Category::All => tr!("全部", "All"),
+            Category::Folder => tr!("資料夾", "Folders"),
+            Category::Image => tr!("圖片", "Images"),
+            Category::Document => tr!("文件", "Documents"),
+            Category::Media => tr!("影音", "Media"),
+            Category::Archive => tr!("壓縮檔", "Archives"),
+            Category::Other => tr!("其他", "Other"),
         }
     }
 

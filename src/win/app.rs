@@ -27,6 +27,7 @@ use feather_core::format::{format_size, group_digits};
 use feather_core::install;
 use feather_core::paths;
 use feather_core::plan::OpKind;
+use feather_core::session::{Session, SideTabs};
 use feather_core::typeahead::TypeAhead;
 use feather_core::settings::{Settings, ThemeMode, SIDEBAR_MAX, SIDEBAR_MIN, SPLIT_MAX, SPLIT_MIN};
 use feather_core::view::ViewMode;
@@ -106,10 +107,14 @@ pub mod id {
     pub const SORT_LOCATION: u16 = 254;
     pub const SORT_ASC: u16 = 255;
     pub const SORT_DESC: u16 = 256;
+    /// 排序選單的「資料夾一律排在最前面」
+    pub const SORT_FOLDERS_ON_TOP: u16 = 257;
     pub const SHOW_COMPACT: u16 = 260;
     pub const SHOW_EXTENSIONS: u16 = 261;
     /// 把目前的檢視設為所有資料夾的檢視（清掉個別資料夾的記錄）
     pub const VIEW_APPLY_ALL: u16 = 262;
+    /// 「檢視 › 顯示 › 相片資料夾用大圖示」
+    pub const SHOW_MEDIA_ICONS: u16 = 263;
     /// 選擇器（見 picker.rs）：確定、取消、改用 Windows 視窗、檔案類型選單、檔名欄
     pub const PICK_OK: u16 = 270;
     pub const PICK_CANCEL: u16 = 271;
@@ -151,7 +156,7 @@ pub fn theme_opt() -> Option<&'static Theme> {
 
 /// 資料夾清單的狀態文字（項目數、無法讀取的項目數）。
 pub(super) fn folder_status(count: usize, skipped: usize) -> String {
-    format!("{} 個項目", group_digits(count as u64)) + &if skipped > 0 { format!("  ·  {} 個無法讀取", skipped) } else { String::new() }
+    trn!(count; "{} 個項目", "{} item", "{} items", group_digits(count as u64)) + &if skipped > 0 { trf!("  ·  {} 個無法讀取", "  ·  {} unreadable", skipped) } else { String::new() }
 }
 
 /// 背景工作把結果交回 UI 執行緒。
@@ -252,6 +257,10 @@ pub(super) struct Tab {
     pub work_started: Option<std::time::Instant>,
     /// 選擇器的檔案類型篩選（一般視窗是 None）
     pub pick: Option<feather_core::picker::Filter>,
+    /// 相片資料夾（圖片與影片佔一半以上）：沒記住檢視時用大圖示。換資料夾時判斷一次，自動重新整理不會讓檢視跳來跳去
+    pub media: bool,
+    /// 還原的分頁還沒讀取：第一次顯示時才讀（`requested` 是要開的資料夾）
+    pub restored: bool,
 }
 
 impl Tab {
@@ -273,7 +282,7 @@ impl Tab {
             query: String::new(),
             recursive: true,
             search_global: false,
-            status: "選擇資料夾開始瀏覽".into(),
+            status: tr!("選擇資料夾開始瀏覽", "Select a folder to start browsing").into(),
             generation: 0,
             cancel: Arc::new(AtomicBool::new(false)),
             view: ViewState::default(),
@@ -282,6 +291,8 @@ impl Tab {
             stale: false,
             work_started: None,
             pick: None,
+            media: false,
+            restored: false,
         }
     }
 
@@ -549,6 +560,8 @@ pub struct App {
     search_open: Tween,
     /// 自動重新整理：顯示中資料夾的變更通知與重新讀取排程
     pub(super) watch: super::watch::Watches,
+    /// 清單縮圖（見 thumbs.rs）
+    pub(super) thumbs: super::thumbs::Thumbs,
     /// 選擇器模式（其他程式要開啟檔案時）；一般視窗是 None
     pub(super) picker: Option<super::picker::Picker>,
 }
@@ -557,13 +570,19 @@ pub fn settings_path() -> Result<String, String> {
     if let Ok(custom) = std::env::var("FEATHER_SETTINGS_PATH") {
         if !custom.trim().is_empty() {
             if !paths::is_fully_qualified(&custom) {
-                return Err("設定檔位置必須是完整路徑。".into());
+                return Err(tr!("設定檔位置必須是完整路徑。", "The settings file location must be a full path.").into());
             }
             return Ok(custom);
         }
     }
-    let base = std::env::var("LOCALAPPDATA").map_err(|_| "找不到 %LOCALAPPDATA%。".to_string())?;
+    let base = std::env::var("LOCALAPPDATA").map_err(|_| tr!("找不到 %LOCALAPPDATA%。", "Can't find %LOCALAPPDATA%.").to_string())?;
     Ok(paths::join(&feather_core::install::data_dir(&base), "settings.json"))
+}
+
+/// 啟動時（建立任何視窗之前）依設定的語言切換介面語言。讀不到設定檔時跟隨 Windows 的顯示語言。
+pub fn apply_language() {
+    let language = settings_path().ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| Settings::from_json(&t).ok()).map(|s| s.language).unwrap_or_default();
+    feather_core::i18n::set_english(language.english(system_ui_chinese()));
 }
 
 fn load_settings() -> (Settings, Option<String>) {
@@ -582,16 +601,16 @@ fn load_settings() -> (Settings, Option<String>) {
     // 讀不懂的設定檔先備份：之後任何一次儲存都會用預設值覆寫它，常用位置等內容就找不回來了。
     let backup = format!("{path}.bak");
     let note = match std::fs::copy(&path, &backup) {
-        Ok(_) => format!("（原檔已備份為 {}）", paths::file_name(&backup)),
+        Ok(_) => trf!("（原檔已備份為 {}）", " (the original file was backed up as {})", paths::file_name(&backup)),
         Err(_) => String::new(),
     };
-    (Settings::default(), Some(format!("設定讀取失敗，使用預設值{note}：{error}")))
+    (Settings::default(), Some(trf!("設定讀取失敗，使用預設值{note}：{error}", "Couldn't read the settings, so the defaults are used{note}: {error}")))
 }
 
 /// 先寫入同資料夾的暫存檔並清空緩衝，再以改名取代，避免寫到一半損毀舊檔。
 pub(super) fn write_atomic(path: &str, text: &str) -> Result<(), String> {
     use std::io::Write;
-    let dir = paths::parent(path).ok_or("檔案位置無效。")?;
+    let dir = paths::parent(path).ok_or(tr!("檔案位置無效。", "Invalid file location."))?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let tmp = paths::join(&dir, &format!(".feather-{}-{}.tmp", std::process::id(), unsafe { GetTickCount64() }));
     let result = (|| {
@@ -617,23 +636,56 @@ pub fn write_settings(settings: &Settings) -> Result<(), String> {
     write_atomic(&settings_path()?, &copy.to_json())
 }
 
+/// 上次關閉時的分頁（見 feather_core::session）：和設定檔放在同一個資料夾
+fn session_path() -> Result<String, String> {
+    let settings = settings_path()?;
+    let dir = paths::parent(&settings).ok_or(tr!("設定檔位置無效。", "Invalid settings file location."))?;
+    Ok(paths::join(&dir, feather_core::session::FILE_NAME))
+}
+
+/// 讀出上次的分頁並刪掉記錄：這次正常關閉時會再寫，當掉的話下次就不會再開回可能讓它當掉的分頁。
+/// 本機硬碟上已經不在的資料夾不還原（網路與抽取式磁碟不檢查，避免啟動時等它們回應）。
+fn take_session() -> Option<Session> {
+    let path = session_path().ok()?;
+    let text = std::fs::read_to_string(&path).ok();
+    let _ = std::fs::remove_file(&path);
+    let mut session = Session::from_json(&text?).ok()?;
+    for side in [&mut session.left, &mut session.right] {
+        let selected = side.tabs.get(side.selected).cloned();
+        side.tabs.retain(|p| !on_fixed_drive(p) || fs::is_dir(p));
+        side.selected = selected.and_then(|s| side.tabs.iter().position(|p| *p == s)).unwrap_or(0);
+    }
+    let session = session.sanitize();
+    (!session.is_empty()).then_some(session)
+}
+
+/// 本機硬碟（不是網路、抽取式或光碟）上的路徑
+fn on_fixed_drive(path: &str) -> bool {
+    let b = path.as_bytes();
+    if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'\\' {
+        return false;
+    }
+    let root = wide(&path[..3]);
+    unsafe { GetDriveTypeW(root.as_ptr()) == DRIVE_FIXED }
+}
+
 /// 每個資料夾的檢視記錄：和設定檔放在同一個資料夾（Rust 版專用，C# 版不讀）。
 pub fn folder_views_path() -> Result<String, String> {
     let settings = settings_path()?;
-    let dir = paths::parent(&settings).ok_or("設定檔位置無效。")?;
+    let dir = paths::parent(&settings).ok_or(tr!("設定檔位置無效。", "Invalid settings file location."))?;
     Ok(paths::join(&dir, "folder-views.json"))
 }
 
 fn load_folder_views() -> (FolderViews, Option<String>) {
     let Ok(path) = folder_views_path() else { return (FolderViews::default(), None) };
     match std::fs::metadata(&path) {
-        Ok(m) if m.len() > folderviews::MAX_FILE_BYTES => return (FolderViews::default(), Some("資料夾檢視記錄太大，已改用預設檢視。".into())),
+        Ok(m) if m.len() > folderviews::MAX_FILE_BYTES => return (FolderViews::default(), Some(tr!("資料夾檢視記錄太大，已改用預設檢視。", "The folder view record is too large, so the default views are used.").into())),
         Err(_) => return (FolderViews::default(), None),
         Ok(_) => {}
     }
     match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| FolderViews::from_json(&t)) {
         Ok(v) => (v, None),
-        Err(e) => (FolderViews::default(), Some(format!("資料夾檢視記錄讀取失敗，改用預設檢視：{e}"))),
+        Err(e) => (FolderViews::default(), Some(trf!("資料夾檢視記錄讀取失敗，改用預設檢視：{e}", "Couldn't read the folder view record, so the default views are used: {e}"))),
     }
 }
 
@@ -706,7 +758,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
     let style = if pick.is_some() { (WS_OVERLAPPEDWINDOW & !WS_MINIMIZEBOX) | WS_CLIPCHILDREN } else { WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN };
     let hwnd = unsafe { CreateWindowExW(WS_EX_CONTROLPARENT, class.as_ptr(), title.as_ptr(), style, x, y, w, h, owner, 0, hinst, std::ptr::null()) };
     if hwnd == 0 {
-        message_box(0, &format!("無法建立主視窗：{}", last_error_text()), MB_OK | MB_ICONERROR);
+        message_box(0, &trf!("無法建立主視窗：{}", "Couldn't create the main window: {}", last_error_text()), MB_OK | MB_ICONERROR);
         return 1;
     }
     MAIN.store(hwnd, Ordering::Release);
@@ -773,7 +825,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         views,
         view: [default_view; 2],
         op_busy: false,
-        footer: "就緒".into(),
+        footer: tr!("就緒", "Ready").into(),
         footer_sticky: false,
         footer_info: FooterInfo::default(),
         layout: Layout::default(),
@@ -812,6 +864,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         search_fx: Tween::new(0.0),
         search_open: Tween::new(0.0),
         watch: Default::default(),
+        thumbs: Default::default(),
         picker: pick,
     });
     APP.store(Box::into_raw(boxed), Ordering::Release);
@@ -830,6 +883,8 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
     a.build_tree();
     a.relayout();
     a.bind(Side::Left);
+    // 還原上次的分頁（設定開著時；選擇器不還原）：在顯示視窗之前，畫面一出現就是上次的樣子
+    let restored = !a.picker_mode() && a.restore_session();
     a.update_chrome();
     unsafe {
         ShowWindow(hwnd, SW_SHOWNORMAL);
@@ -842,7 +897,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         let _ = (settings_error, views_error);
         a.picker_start();
     } else {
-        a.open_paths(paths_in, true);
+        a.open_paths(paths_in, true, restored);
         if let Some(e) = settings_error.or(views_error) {
             a.set_footer(e);
         }
@@ -851,7 +906,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         maintain_default_file_manager();
         // 「攔截 Win+E」（預設開啟）：新版 Windows 11 的 Win+E 不看登錄，在背景攔截按鍵改開 Stillfeather
         super::wine::maintain();
-        // 「其他程式開啟檔案時也用 Stillfeather」（預設關閉）：依使用者的選擇登記或取消，並更新登記的取代元件
+        // 「其他程式開啟或儲存檔案時也用 Stillfeather」（預設關閉）：依使用者的選擇登記或取消，並更新登記的取代元件
         super::picker::maintain();
         // 舊版的資料夾（%LOCALAPPDATA%\FeatherFiles）：設定已經搬走、取代元件也換到新資料夾之後刪掉
         super::rescue::remove_old_data_dir();
@@ -932,47 +987,47 @@ impl App {
         self.chips = chips::create(hwnd);
         let icon = |id: u16, g: char, text: &str, surface: Surface| controls::create(hwnd, id, Kind::Icon(g), text, surface, false);
         let round = |id: u16, g: char, text: &str| controls::create(hwnd, id, Kind::Round(g), text, Surface::Page, false);
-        self.back_btn = icon(id::BACK, glyph::BACK, "上一頁 (Alt+←)", Surface::Page);
-        self.forward_btn = icon(id::FORWARD, glyph::FORWARD, "下一頁 (Alt+→)", Surface::Page);
-        self.up_btn = icon(id::UP, glyph::UP, "上一層 (Alt+↑)", Surface::Page);
-        self.refresh_btn = icon(id::REFRESH, glyph::REFRESH, "重新整理 (F5)", Surface::Page);
-        self.address = create_edit(hwnd, id::ADDRESS, "資料夾路徑");
-        self.query = create_edit(hwnd, id::QUERY, "檔名搜尋");
-        let cue = wide("搜尋檔名…");
+        self.back_btn = icon(id::BACK, glyph::BACK, tr!("上一頁 (Alt+←)", "Back (Alt+←)"), Surface::Page);
+        self.forward_btn = icon(id::FORWARD, glyph::FORWARD, tr!("下一頁 (Alt+→)", "Forward (Alt+→)"), Surface::Page);
+        self.up_btn = icon(id::UP, glyph::UP, tr!("上一層 (Alt+↑)", "Up (Alt+↑)"), Surface::Page);
+        self.refresh_btn = icon(id::REFRESH, glyph::REFRESH, tr!("重新整理 (F5)", "Refresh (F5)"), Surface::Page);
+        self.address = create_edit(hwnd, id::ADDRESS, tr!("資料夾路徑", "Folder path"));
+        self.query = create_edit(hwnd, id::QUERY, tr!("檔名搜尋", "File name search"));
+        let cue = wide(tr!("搜尋檔名…", "Search file names…"));
         send_ptr(self.query, EM_SETCUEBANNER, 1, cue.as_ptr());
-        self.clear_btn = icon(id::CLEAR, glyph::CLOSE, "清除或取消搜尋", Surface::Card);
+        self.clear_btn = icon(id::CLEAR, glyph::CLOSE, tr!("清除或取消搜尋", "Clear or cancel search"), Surface::Card);
         // 不搶焦點：勾選後游標仍在搜尋框裡
-        self.global_btn = controls::create(hwnd, id::SEARCH_GLOBAL, Kind::Toggle, "全域搜尋", Surface::Card, false);
-        self.search_btn = round(id::SEARCH, glyph::SEARCH, "搜尋檔名 (Ctrl+F)");
+        self.global_btn = controls::create(hwnd, id::SEARCH_GLOBAL, Kind::Toggle, tr!("全域搜尋", "Whole PC"), Surface::Card, false);
+        self.search_btn = round(id::SEARCH, glyph::SEARCH, tr!("搜尋檔名 (Ctrl+F)", "Search file names (Ctrl+F)"));
 
         // 右上角：像參考圖的月亮、鈴鐺那樣的圓形按鈕
-        self.dual_btn = round(id::DUAL, glyph::DUAL, "切換雙欄 (Ctrl+Shift+D)");
-        self.theme_btn = round(id::THEME, glyph::MOON, "切換淺色／深色");
-        let settings = round(id::SETTINGS, glyph::SETTINGS, "設定 (Ctrl+,)");
+        self.dual_btn = round(id::DUAL, glyph::DUAL, tr!("切換雙欄 (Ctrl+Shift+D)", "Toggle dual pane (Ctrl+Shift+D)"));
+        self.theme_btn = round(id::THEME, glyph::MOON, tr!("切換淺色／深色", "Switch light/dark"));
+        let settings = round(id::SETTINGS, glyph::SETTINGS, tr!("設定 (Ctrl+,)", "Settings (Ctrl+,)"));
         self.top_buttons = vec![self.dual_btn, self.theme_btn, settings];
 
         // 標題列右側：主要動作是膠囊按鈕，其餘是圓形圖示按鈕
-        let new_folder = controls::create(hwnd, id::NEW_FOLDER, Kind::Pill(glyph::NEW_FOLDER), "新增資料夾", Surface::Page, false);
+        let new_folder = controls::create(hwnd, id::NEW_FOLDER, Kind::Pill(glyph::NEW_FOLDER), tr!("新增資料夾", "New folder"), Surface::Page, false);
         self.action_buttons = vec![new_folder];
         for (cid, g, text) in [
-            (id::CUT, glyph::CUT, "剪下 (Ctrl+X)"),
-            (id::COPY, glyph::COPY, "複製 (Ctrl+C)"),
-            (id::PASTE, glyph::PASTE, "貼上 (Ctrl+V)"),
-            (id::RENAME, glyph::RENAME, "重新命名 (F2)"),
-            (id::DELETE, glyph::DELETE, "刪除到資源回收筒 (Delete、Ctrl+D)"),
-            (id::COPY_ACROSS, glyph::COPY_ACROSS, "複製到另一欄"),
-            (id::PROPERTIES, glyph::PROPERTIES, "內容 (Alt+Enter)"),
+            (id::CUT, glyph::CUT, tr!("剪下 (Ctrl+X)", "Cut (Ctrl+X)")),
+            (id::COPY, glyph::COPY, tr!("複製 (Ctrl+C)", "Copy (Ctrl+C)")),
+            (id::PASTE, glyph::PASTE, tr!("貼上 (Ctrl+V)", "Paste (Ctrl+V)")),
+            (id::RENAME, glyph::RENAME, tr!("重新命名 (F2)", "Rename (F2)")),
+            (id::DELETE, glyph::DELETE, tr!("刪除到資源回收筒 (Delete、Ctrl+D)", "Delete to Recycle Bin (Delete, Ctrl+D)")),
+            (id::COPY_ACROSS, glyph::COPY_ACROSS, tr!("複製到另一欄", "Copy to the other pane")),
+            (id::PROPERTIES, glyph::PROPERTIES, tr!("內容 (Alt+Enter)", "Properties (Alt+Enter)")),
         ] {
             self.action_buttons.push(round(cid, g, text));
         }
         // 最右邊：排序與檢視（顯示隱藏項目、副檔名在「檢視 › 顯示」裡）
-        self.sort_btn = controls::create(hwnd, id::SORT_MENU, Kind::Menu(glyph::SORT), "排序", Surface::Page, false);
-        self.view_btn = controls::create(hwnd, id::VIEW_MENU, Kind::Menu(glyph::VIEW_DETAILS), "檢視", Surface::Page, false);
+        self.sort_btn = controls::create(hwnd, id::SORT_MENU, Kind::Menu(glyph::SORT), tr!("排序", "Sort"), Surface::Page, false);
+        self.view_btn = controls::create(hwnd, id::VIEW_MENU, Kind::Menu(glyph::VIEW_DETAILS), tr!("檢視", "View"), Surface::Page, false);
 
         // 側欄
-        self.help_btn = icon(id::HELP, glyph::HELP_CIRCLE, "使用說明", Surface::Sidebar);
+        self.help_btn = icon(id::HELP, glyph::HELP_CIRCLE, tr!("使用說明", "Help"), Surface::Sidebar);
         controls::set_subtle(self.help_btn);
-        self.promo_btn = controls::create(hwnd, id::SETTINGS, Kind::Text, "開啟設定", Surface::Peach, false);
+        self.promo_btn = controls::create(hwnd, id::SETTINGS, Kind::Text, tr!("開啟設定", "Open Settings"), Surface::Peach, false);
         controls::set_primary(self.promo_btn);
         self.tree = self.create_tree();
         self.lists = [self.create_list(id::LIST_LEFT, Side::Left), self.create_list(id::LIST_RIGHT, Side::Right)];
@@ -1399,23 +1454,23 @@ impl App {
     fn title_texts(&self) -> (String, String) {
         let Some(t) = self.active_tab() else { return ("Stillfeather".into(), String::new()) };
         if t.search_mode {
-            let title = if t.search_global { format!("在整台電腦搜尋「{}」", t.query.trim()) } else { format!("搜尋「{}」", t.query.trim()) };
+            let title = if t.search_global { trf!("在整台電腦搜尋「{}」", "Searching the whole PC for “{}”", t.query.trim()) } else { trf!("搜尋「{}」", "Search “{}”", t.query.trim()) };
             return (title, t.status.clone());
         }
         let title = paths::tab_title(&t.display_path());
-        if t.loading || t.status.starts_with("無法") || t.status.starts_with("已取消") {
+        if t.loading || t.status.starts_with(tr!("無法", "Couldn't")) || t.status.starts_with(tr!("已取消", "Cancelled")) {
             return (title, t.status.clone());
         }
         let s = &t.summary;
-        let mut parts = vec![format!("{} 個資料夾", group_digits(s.folders as u64)), format!("{} 個檔案", group_digits(s.files as u64))];
+        let mut parts = vec![trn!(s.folders; "{} 個資料夾", "{} folder", "{} folders", group_digits(s.folders as u64)), trn!(s.files; "{} 個檔案", "{} file", "{} files", group_digits(s.files as u64))];
         if s.files > 0 {
             parts.push(format_size(Some(s.bytes)));
         }
         if t.filter != Category::All {
-            parts.push(format!("顯示{} {} 項", t.filter.label(), group_digits(t.row_count() as u64)));
+            parts.push(trf!("顯示{} {} 項", "{0}: showing {1}", t.filter.label(), group_digits(t.row_count() as u64)));
         } else if t.pick.as_ref().is_some_and(|p| !p.is_all()) {
             // 選擇器的檔案類型藏起了一些檔案
-            parts.push(format!("顯示 {} 項", group_digits(t.row_count() as u64)));
+            parts.push(trf!("顯示 {} 項", "Showing {}", group_digits(t.row_count() as u64)));
         }
         (title, parts.join(" · "))
     }
@@ -1497,9 +1552,9 @@ impl App {
                         let g = RECT { top: promo.top + s(12), bottom: promo.top + s(40), ..promo };
                         theme::draw_text(dc, &glyph::PALETTE.to_string(), &g, f.icon, anim::mix(fill, p.accent, a), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                         let t1 = RECT { top: g.bottom, bottom: g.bottom + s(22), ..promo };
-                        theme::draw_text(dc, "個人化", &t1, f.ui_bold, anim::mix(fill, p.ink, a), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                        theme::draw_text(dc, tr!("個人化", "Personalize"), &t1, f.ui_bold, anim::mix(fill, p.ink, a), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                         let t2 = RECT { left: promo.left + s(10), right: promo.right - s(10), top: t1.bottom, bottom: t1.bottom + s(20) };
-                        theme::draw_text(dc, "主題、配色與快速預覽", &t2, f.small, anim::mix(fill, p.muted, a), DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                        theme::draw_text(dc, tr!("主題、配色與快速預覽", "Theme, colors and quick preview"), &t2, f.small, anim::mix(fill, p.muted, a), DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                         // 右上角的收合鈕
                         if let Some(t) = l.promo_toggle {
                             if hv > 0.001 {
@@ -1515,7 +1570,7 @@ impl App {
                         let g = RECT { left: row.left + s(10), right: row.left + s(40), ..row };
                         theme::draw_text(dc, &glyph::PALETTE.to_string(), &g, f.icon, anim::mix(fill, p.accent, b), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                         let t = RECT { left: g.right + s(4), right: row.right - s(36), ..row };
-                        theme::draw_text(dc, "個人化", &t, f.ui_bold, anim::mix(fill, p.ink, b), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                        theme::draw_text(dc, tr!("個人化", "Personalize"), &t, f.ui_bold, anim::mix(fill, p.ink, b), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                         let c = RECT { left: row.right - s(36), right: row.right - s(8), ..row };
                         theme::draw_text(dc, &glyph::SORT_UP.to_string(), &c, f.icon_small, anim::mix(fill, anim::mix(p.muted, p.ink, hv), b), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                     }
@@ -1642,13 +1697,13 @@ impl App {
         controls::set_checked(self.dual_btn, self.ws.dual);
         if !self.op_busy && !self.footer_sticky {
             let where_ = if !self.ws.dual {
-                "單欄"
+                tr!("單欄", "Single pane")
             } else if side == Side::Left {
-                "左欄"
+                tr!("左欄", "Left pane")
             } else {
-                "右欄"
+                tr!("右欄", "Right pane")
             };
-            self.footer = format!("{} 個分頁 · {}", self.ws.tab_count(), where_);
+            self.footer = trn!(self.ws.tab_count(); "{} 個分頁 · {}", "{} tab · {}", "{} tabs · {}", self.ws.tab_count(), where_);
         }
         let info = self.compute_footer_info(side);
         if info.title != self.footer_info.title || info.detail != self.footer_info.detail {
@@ -1680,7 +1735,7 @@ impl App {
         let count = self.selected_count(side);
         let tab_title = self.active_tab().map(|t| paths::tab_title(&t.display_path())).unwrap_or_default();
         if count == 0 {
-            let detail = self.active_tab().map(|t| format!("{} 個項目", group_digits(t.row_count() as u64))).unwrap_or_default();
+            let detail = self.active_tab().map(|t| trn!(t.row_count(); "{} 個項目", "{} item", "{} items", group_digits(t.row_count() as u64))).unwrap_or_default();
             let icon = self.icons.folder_index();
             return FooterInfo { icon, title: tab_title, detail };
         }
@@ -1702,11 +1757,11 @@ impl App {
             let entries = self.selected_entries(side);
             let bytes: u64 = entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
             let folders = entries.iter().filter(|e| e.is_dir).count();
-            format!("{} 個資料夾 · {} 個檔案 · {}", folders, entries.len() - folders, format_size(Some(bytes)))
+            trf!("{} 個資料夾 · {} 個檔案 · {}", "{} folders · {} files · {}", folders, entries.len() - folders, format_size(Some(bytes)))
         } else {
-            "大小未計算（選取項目過多）".to_string()
+            tr!("大小未計算（選取項目過多）", "Size not calculated (too many items selected)").to_string()
         };
-        FooterInfo { icon: -1, title: format!("已選取 {} 個項目", group_digits(count as u64)), detail }
+        FooterInfo { icon: -1, title: trn!(count; "已選取 {} 個項目", "{} item selected", "{} items selected", group_digits(count as u64)), detail }
     }
 
     pub(super) fn activate(&mut self, side: Side) {
@@ -1750,7 +1805,7 @@ impl App {
         let collapsed = !self.settings.personalize_collapsed;
         self.settings.personalize_collapsed = collapsed;
         if let Err(e) = write_settings(&self.settings) {
-            self.set_footer(format!("無法儲存設定：{e}"));
+            self.set_footer(trf!("無法儲存設定：{e}", "Couldn't save settings: {e}"));
         }
         anim::to(&mut self.promo_fx, if collapsed { 0.0 } else { 1.0 }, anim::SLIDE_MS);
         if anim::running(&self.promo_fx) {
@@ -1839,7 +1894,7 @@ impl App {
             Ok(p) => p,
             Err(e) => {
                 if let Some(t) = self.tabs.get_mut(&tab_id) {
-                    t.status = format!("無法完成：{e}");
+                    t.status = trf!("無法完成：{e}", "Couldn't complete: {e}");
                 }
                 self.update_chrome();
                 return;
@@ -1855,11 +1910,12 @@ impl App {
         if tab.path.is_empty() {
             tab.requested = path.clone();
         }
-        tab.status = "正在讀取資料夾…".into();
+        tab.status = tr!("正在讀取資料夾…", "Reading folder…").into();
         let (sort_col, desc) = (tab.sort_col, tab.desc);
+        let folders_on_top = self.settings.folders_on_top;
         let p = path.clone();
         std::thread::spawn(move || {
-            let result = fs::read_dir(&p, show_hidden, sort_col, desc, &cancel);
+            let result = fs::read_dir(&p, show_hidden, sort_col, desc, folders_on_top, &cancel);
             post(WorkerMsg::Dir { tab: tab_id, generation, path: p, kind, result });
         });
         if self.ws.side_of(tab_id).is_some_and(|s| self.bound[s.index()] == Some(tab_id)) {
@@ -1927,6 +1983,9 @@ impl App {
                 tab.path = path.clone();
                 tab.requested = path;
                 tab.entries = listing.entries;
+                if folder_changed {
+                    tab.media = feather_core::thumbs::media_folder(&tab.entries);
+                }
                 tab.refilter();
                 tab.resummarize();
                 tab.search_mode = false;
@@ -1937,12 +1996,12 @@ impl App {
                 }
             }
             Err(FsError::Cancelled) => {
-                tab.status = "已取消讀取".into();
+                tab.status = tr!("已取消讀取", "Cancelled reading").into();
                 tab.pending_select.clear();
                 tab.pending_rename = false;
             }
             Err(FsError::Message(e)) => {
-                tab.status = format!("無法完成：{e}");
+                tab.status = trf!("無法完成：{e}", "Couldn't complete: {e}");
                 tab.pending_select.clear();
                 tab.pending_rename = false;
             }
@@ -2023,7 +2082,7 @@ impl App {
             return;
         }
         if text.trim().is_empty() {
-            tab.status = "請輸入要搜尋的檔案名稱".into();
+            tab.status = tr!("請輸入要搜尋的檔案名稱", "Enter a file name to search for").into();
             unsafe {
                 SetFocus(self.query);
             }
@@ -2043,9 +2102,9 @@ impl App {
         tab.view = ViewState::default();
         let scope = if global { fs::SearchScope::Computer } else { fs::SearchScope::Folder(tab.path.clone()) };
         tab.status = if global {
-            format!("搜尋整台電腦（{}）· 只比對檔名，不讀取檔案內容", fs::computer_roots().iter().map(|r| r.trim_end_matches('\\')).collect::<Vec<_>>().join("、"))
+            trf!("搜尋整台電腦（{}）· 只比對檔名，不讀取檔案內容", "Searching the whole PC ({}) · file names only, file contents aren't read", fs::computer_roots().iter().map(|r| r.trim_end_matches('\\')).collect::<Vec<_>>().join(tr!("、", ", ")))
         } else {
-            "搜尋中 · 只比對檔名，不讀取檔案內容".into()
+            tr!("搜尋中 · 只比對檔名，不讀取檔案內容", "Searching · file names only, file contents aren't read").into()
         };
         std::thread::spawn(move || {
             let result = fs::search(&scope, &text, recursive, show_hidden, &cancel, |entries, scanned, skipped| {
@@ -2078,8 +2137,9 @@ impl App {
             }
         }
         tab.entries.append(&mut entries);
-        tab.status = format!(
-            "搜尋中 · {} 個結果 · 已檢查 {} 項 · 略過 {} 項",
+        tab.status = trn!(
+            tab.entries.len();
+            "搜尋中 · {} 個結果 · 已檢查 {} 項 · 略過 {} 項", "Searching · {} result · {} checked · {} skipped", "Searching · {} results · {} checked · {} skipped",
             group_digits(tab.entries.len() as u64),
             group_digits(scanned as u64),
             group_digits(skipped as u64)
@@ -2103,21 +2163,22 @@ impl App {
             super::crashlog::crumb_value("效能：搜尋結果數", tab.entries.len() as u64);
         }
         tab.status = match result {
-            Ok(s) => format!(
-                "{} · {} 個結果 · 已檢查 {} 項 · 略過 {} 項",
+            Ok(s) => trn!(
+                s.matched;
+                "{} · {} 個結果 · 已檢查 {} 項 · 略過 {} 項", "{} · {} result · {} checked · {} skipped", "{} · {} results · {} checked · {} skipped",
                 if s.truncated {
-                    "結果已達上限（未完整搜尋）"
+                    tr!("結果已達上限（未完整搜尋）", "Result limit reached (search incomplete)")
                 } else if s.skipped > 0 {
-                    "部分完成"
+                    tr!("部分完成", "Partly done")
                 } else {
-                    "搜尋完成"
+                    tr!("搜尋完成", "Search complete")
                 },
                 group_digits(s.matched as u64),
                 group_digits(s.scanned as u64),
                 group_digits(s.skipped as u64)
             ),
-            Err(FsError::Cancelled) => format!("已取消 · 保留 {} 個結果（未完整搜尋）", group_digits(tab.entries.len() as u64)),
-            Err(FsError::Message(e)) => format!("無法完成：{e}"),
+            Err(FsError::Cancelled) => trf!("已取消 · 保留 {} 個結果（未完整搜尋）", "Cancelled · kept {} results (search incomplete)", group_digits(tab.entries.len() as u64)),
+            Err(FsError::Message(e)) => trf!("無法完成：{e}", "Couldn't complete: {e}"),
         };
         if let Some(side) = self.ws.side_of(id) {
             if self.bound[side.index()] == Some(id) {
@@ -2133,7 +2194,7 @@ impl App {
         let Some(tab) = self.tabs.get_mut(&id) else { return };
         if tab.working() {
             tab.cancel.store(true, Ordering::Relaxed);
-            tab.status = "正在取消…".into();
+            tab.status = tr!("正在取消…", "Cancelling…").into();
             self.update_chrome();
         } else {
             tab.query.clear();
@@ -2314,13 +2375,13 @@ impl App {
         if valid {
             self.select_tab(side, index);
         }
-        let mut items: Vec<(u16, &str, bool)> = vec![(id::TAB_NEW, "新增分頁\tCtrl+T", true)];
+        let mut items: Vec<(u16, &str, bool)> = vec![(id::TAB_NEW, tr!("新增分頁\tCtrl+T", "New tab\tCtrl+T"), true)];
         if valid {
-            items.push((id::TAB_DUPLICATE, "複製分頁", true));
-            items.push((id::TAB_MOVE_LEFT, "向左移\tCtrl+Shift+PgUp", index > 0));
-            items.push((id::TAB_MOVE_RIGHT, "向右移\tCtrl+Shift+PgDn", index + 1 < count));
+            items.push((id::TAB_DUPLICATE, tr!("複製分頁", "Duplicate tab"), true));
+            items.push((id::TAB_MOVE_LEFT, tr!("向左移\tCtrl+Shift+PgUp", "Move left\tCtrl+Shift+PgUp"), index > 0));
+            items.push((id::TAB_MOVE_RIGHT, tr!("向右移\tCtrl+Shift+PgDn", "Move right\tCtrl+Shift+PgDn"), index + 1 < count));
             items.push((0, "", true));
-            items.push((id::TAB_CLOSE, "關閉分頁\tCtrl+W", true));
+            items.push((id::TAB_CLOSE, tr!("關閉分頁\tCtrl+W", "Close tab\tCtrl+W"), true));
         }
         let Some(cmd) = popup_menu(self.hwnd, &items, pt) else { return };
         match cmd {
@@ -2340,7 +2401,111 @@ impl App {
     // ------------------------------------------------------------ 外部開啟要求
 
     /// 與 C# 版相同：相同路徑字串的分頁直接聚焦；檔案路徑開啟父資料夾並選取。
-    pub(super) fn open_paths(&mut self, requested: Vec<String>, startup: bool) {
+    /// 切到這個分頁（在收起的右欄時先開雙欄）
+    fn show_tab(&mut self, id: TabId) {
+        if self.ws.side_of(id) == Some(Side::Right) && !self.ws.dual {
+            self.set_dual(true);
+        }
+        self.ws.activate_tab(id);
+        if let Some(side) = self.ws.side_of(id) {
+            self.bind(side);
+        }
+    }
+
+    // ------------------------------------------------------------ 還原上次的分頁（見 feather_core::session）
+
+    /// 還原的分頁第一次顯示：現在才讀取
+    pub(super) fn load_restored(&mut self, id: TabId) {
+        let Some(t) = self.tabs.get_mut(&id) else { return };
+        if !t.restored {
+            return;
+        }
+        t.restored = false;
+        let path = t.requested.clone();
+        self.navigate(id, &path, NavKind::NoHistory, vec![]);
+    }
+
+    /// 啟動時（設定「還原上次的分頁」開著）照上次關閉時的樣子開回分頁。只有顯示中的分頁馬上讀取，其他的切過去時才讀。
+    /// 回傳是否還原了。
+    fn restore_session(&mut self) -> bool {
+        if !self.settings.restore_tabs {
+            return false;
+        }
+        let Some(session) = take_session() else { return false };
+        // 左欄的第一個分頁沿用啟動時建立的那一個
+        let first = self.ws.current(Side::Left).unwrap_or(0);
+        for (side, saved) in [(Side::Left, &session.left), (Side::Right, &session.right)] {
+            for (i, path) in saved.tabs.iter().enumerate() {
+                let id = if side == Side::Left && i == 0 {
+                    first
+                } else {
+                    let id = self.ws.add_tab(side);
+                    self.tabs.insert(id, Tab::new());
+                    id
+                };
+                if let Some(t) = self.tabs.get_mut(&id) {
+                    t.requested = path.clone();
+                    t.status = tr!("切換到這個分頁時讀取", "Loads when you switch to this tab").into();
+                    t.restored = true;
+                }
+            }
+        }
+        if !session.right.tabs.is_empty() {
+            self.ws.select(Side::Right, session.right.selected);
+        }
+        self.ws.select(Side::Left, session.left.selected);
+        if session.dual {
+            // 還沒顯示視窗：直接開雙欄，不播放切換動畫
+            self.ws.set_dual(true);
+            if session.active == 1 {
+                self.ws.active = Side::Right;
+            }
+            self.relayout();
+        }
+        for side in [Side::Left, Side::Right] {
+            if side == Side::Left || self.ws.dual {
+                self.bind(side);
+                if let Some(id) = self.ws.current(side) {
+                    self.load_restored(id);
+                }
+            }
+        }
+        true
+    }
+
+    /// 主視窗關閉、Windows 登出或關機時：設定開著就記下分頁；關著就刪掉舊的記錄。選擇器不記。
+    pub(super) fn save_session(&self) {
+        if self.picker_mode() {
+            return;
+        }
+        let Ok(path) = session_path() else { return };
+        if !self.settings.restore_tabs {
+            let _ = std::fs::remove_file(&path);
+            return;
+        }
+        let side_tabs = |side: Side| {
+            let g = self.ws.group(side);
+            let mut saved = SideTabs::default();
+            for (i, id) in g.tabs.iter().enumerate() {
+                let Some(p) = self.tabs.get(id).map(Tab::display_path).filter(|p| !p.is_empty()) else { continue };
+                if i == g.selected {
+                    saved.selected = saved.tabs.len();
+                }
+                saved.tabs.push(p);
+            }
+            saved
+        };
+        let session = Session { dual: self.ws.dual, active: self.ws.active.index(), left: side_tabs(Side::Left), right: side_tabs(Side::Right) }.sanitize();
+        if session.is_empty() {
+            let _ = std::fs::remove_file(&path);
+        } else if write_atomic(&path, &session.to_json()).is_err() {
+            super::crashlog::crumb("分頁記錄寫入失敗");
+        }
+    }
+
+    /// 開啟要求的路徑（命令列、另一個 Stillfeather 轉過來的、Win+E）。`restored`：啟動時已經還原了上次的分頁，
+    /// 要求的路徑開在新分頁（已經開著同一個位置就切過去），沒有要求時就維持還原的分頁。
+    pub(super) fn open_paths(&mut self, requested: Vec<String>, startup: bool, restored: bool) {
         if !startup {
             unsafe {
                 if IsIconic(self.hwnd) != 0 {
@@ -2352,22 +2517,31 @@ impl App {
         // Win+E：啟動時開首頁；已經開著就在新分頁開首頁（像檔案總管每次開新視窗）
         let home = requested.iter().any(|p| p == feather_core::install::HOME_MARKER);
         let requested: Vec<String> = requested.into_iter().filter(|p| p != feather_core::install::HOME_MARKER).collect();
-        if home && !startup && requested.is_empty() {
-            let side = self.active_side();
+        if home && requested.is_empty() && (!startup || restored) {
             let path = self.default_path.clone();
+            // 剛還原了上次的分頁、其中已經有首頁：切過去就好，不再多開一個
+            if restored {
+                let home_tab = self.ws.all_tabs().find(|id| self.tabs.get(id).is_some_and(|t| paths::same_request_path(&t.display_path(), &path)));
+                if let Some(id) = home_tab {
+                    self.show_tab(id);
+                    self.update_chrome();
+                    return;
+                }
+            }
+            let side = self.active_side();
             self.new_tab(side, &path);
             self.update_chrome();
             return;
         }
         if requested.is_empty() {
-            if startup {
+            if startup && !restored {
                 let id = self.active_tab_id();
                 let path = self.default_path.clone();
                 self.navigate(id, &path, NavKind::NoHistory, vec![]);
             }
             return;
         }
-        let mut first = startup;
+        let mut first = startup && !restored;
         for raw in requested {
             let full = full_path(&raw).unwrap_or(raw);
             let (path, select) = if fs::is_file(&full) {
@@ -2377,13 +2551,7 @@ impl App {
             };
             let existing = self.ws.all_tabs().find(|id| self.tabs.get(id).is_some_and(|t| paths::same_request_path(&t.display_path(), &path)));
             if let Some(id) = existing {
-                if self.ws.side_of(id) == Some(Side::Right) && !self.ws.dual {
-                    self.set_dual(true);
-                }
-                self.ws.activate_tab(id);
-                if let Some(side) = self.ws.side_of(id) {
-                    self.bind(side);
-                }
+                self.show_tab(id);
                 if !select.is_empty() {
                     self.navigate(id, &path, NavKind::NoHistory, select);
                 }
@@ -2529,7 +2697,7 @@ impl App {
                 }
                 self.navigate(id, &dir, NavKind::NoHistory, vec![path]);
             }
-            Err(e) => self.show_error(&format!("無法新增資料夾：{e}")),
+            Err(e) => self.show_error(&trf!("無法新增資料夾：{e}", "Couldn't create the folder: {e}")),
         }
     }
 
@@ -2547,7 +2715,7 @@ impl App {
         match super::clipboard::set_files(self.hwnd, &files, cut) {
             Ok(()) => {
                 self.update_chrome();
-                self.set_footer(format!("已{} {} 個項目，請至目的地貼上", if cut { "剪下" } else { "複製" }, files.len()));
+                self.set_footer(trn!(files.len(); "已{} {} 個項目，請至目的地貼上", "{} {} item. Go to the destination and paste it.", "{} {} items. Go to the destination and paste them.", if cut { tr!("剪下", "Cut") } else { tr!("複製", "Copied") }, files.len()));
             }
             Err(e) => self.show_error(&e),
         }
@@ -2566,7 +2734,7 @@ impl App {
                 }
             }
             Ok(_) => {
-                self.set_footer("剪貼簿中沒有檔案".into());
+                self.set_footer(tr!("剪貼簿中沒有檔案", "There are no files on the clipboard").into());
             }
             Err(e) => self.show_error(&e),
         }
@@ -2579,12 +2747,12 @@ impl App {
         let side = self.active_side();
         let files = self.selected_paths(side);
         if files.is_empty() {
-            self.set_footer("請先選取要複製的檔案或資料夾".into());
+            self.set_footer(tr!("請先選取要複製的檔案或資料夾", "First select the files or folders to copy").into());
             return;
         }
         if !self.ws.dual {
             self.set_dual(true);
-            self.set_footer("已開啟雙欄；右欄讀取完成後請再按一次「複製到另一欄」".into());
+            self.set_footer(tr!("已開啟雙欄；右欄讀取完成後請再按一次「複製到另一欄」", "Dual pane is on. Once the right pane finishes loading, click “Copy to the other pane” again").into());
             return;
         }
         let other = side.other();
@@ -2620,12 +2788,12 @@ impl App {
         }
         let names: Vec<String> = files.iter().take(5).map(|f| paths::file_name(f).to_string()).collect();
         let (heading, body) = if files.len() == 1 {
-            (format!("要把「{}」移到資源回收筒嗎？", names[0]), "之後仍可從資源回收筒還原。".to_string())
+            (trf!("要把「{}」移到資源回收筒嗎？", "Move “{}” to the Recycle Bin?", names[0]), tr!("之後仍可從資源回收筒還原。", "You can still restore it from the Recycle Bin later.").to_string())
         } else {
-            let more = if files.len() > 5 { format!("\n…等 {} 個項目", files.len()) } else { String::new() };
-            (format!("要把 {} 個項目移到資源回收筒嗎？", files.len()), format!("{}{}\n\n之後仍可從資源回收筒還原。", names.join("\n"), more))
+            let more = if files.len() > 5 { trf!("\n…等 {} 個項目", "\n…and {} more", files.len()) } else { String::new() };
+            (trf!("要把 {} 個項目移到資源回收筒嗎？", "Move {} items to the Recycle Bin?", files.len()), trf!("{}{}\n\n之後仍可從資源回收筒還原。", "{}{}\n\nYou can still restore them from the Recycle Bin later.", names.join("\n"), more))
         };
-        if !dialog::confirm(self.hwnd, Icon::Delete, &heading, &body, "移到資源回收筒") {
+        if !dialog::confirm(self.hwnd, Icon::Delete, &heading, &body, tr!("移到資源回收筒", "Move to Recycle Bin")) {
             return false;
         }
         self.run_operation(OpKind::Delete, files, None);
@@ -2638,14 +2806,14 @@ impl App {
             return false;
         }
         if kind == OpKind::Move {
-            let heading = format!("要移動 {} 個項目嗎？", sources.len());
-            let body = format!("移動到：\n{}", dest.as_deref().unwrap_or(""));
-            if !dialog::confirm(self.hwnd, Icon::Question, &heading, &body, "移動") {
+            let heading = trn!(sources.len(); "要移動 {} 個項目嗎？", "Move {} item?", "Move {} items?", sources.len());
+            let body = trf!("移動到：\n{}", "Move to:\n{}", dest.as_deref().unwrap_or(""));
+            if !dialog::confirm(self.hwnd, Icon::Question, &heading, &body, tr!("移動", "Move")) {
                 return false;
             }
         }
         self.op_busy = true;
-        self.set_footer(format!("正在{} {} 個項目…", kind.verb(), sources.len()));
+        self.set_footer(trn!(sources.len(); "正在{} {} 個項目…", "Starting to {} {} item…", "Starting to {} {} items…", kind.verb(), sources.len()));
         self.prepare_undo(kind, &sources, dest.as_deref());
         if kind != OpKind::Copy {
             self.op_sources = sources.clone();
@@ -2721,32 +2889,32 @@ impl App {
         self.refresh_after_undo(&select);
         self.update_chrome();
         if report.undo {
-            self.set_footer(format!(
-                "已復原{} · 還原 {} 項{}",
+            self.set_footer(trf!(
+                "已復原{} · 還原 {} 項{}", "Undid {} · restored {}{}",
                 report.kind.verb(),
                 report.completed,
-                if report.skipped > 0 { format!(" · {} 項無法還原", report.skipped) } else { String::new() }
+                if report.skipped > 0 { trf!(" · {} 項無法還原", " · {} couldn't be restored", report.skipped) } else { String::new() }
             ));
         } else {
-            self.set_footer(format!(
-                "{}{} · 完成 {} 項 · 略過 {} 項 · 錯誤 {} 項{}",
+            self.set_footer(trf!(
+                "{}{} · 完成 {} 項 · 略過 {} 項 · 錯誤 {} 項{}", "{1} {0} · {2} done · {3} skipped · {4} errors{5}",
                 report.kind.verb(),
-                if report.cancelled { "已取消" } else { "結束" },
+                if report.cancelled { tr!("已取消", "Cancelled") } else { tr!("結束", "Finished") },
                 report.completed,
                 report.skipped,
                 report.errors.len(),
-                if report.completed > 0 && report.kind != OpKind::Copy { " · Ctrl+Z 可復原" } else { "" }
+                if report.completed > 0 && report.kind != OpKind::Copy { tr!(" · Ctrl+Z 可復原", " · Ctrl+Z to undo") } else { "" }
             ));
         }
         if !report.errors.is_empty() {
             let mut text: Vec<String> = report.errors.iter().take(8).cloned().collect();
             if report.errors.len() > 8 {
-                text.push(format!("…等 {} 項", report.errors.len()));
+                text.push(trf!("…等 {} 項", "…and {} more", report.errors.len()));
             }
             let heading = if report.undo {
-                format!("復原{}時有 {} 個項目沒有還原", report.kind.verb(), report.errors.len())
+                trn!(report.errors.len(); "復原{}時有 {} 個項目沒有還原", "Undo {0}: {1} item wasn't restored", "Undo {0}: {1} items weren't restored", report.kind.verb(), report.errors.len())
             } else {
-                format!("{}時有 {} 個項目沒有完成", report.kind.verb(), report.errors.len())
+                trn!(report.errors.len(); "{}時有 {} 個項目沒有完成", "{1} item didn't finish ({0})", "{1} items didn't finish ({0})", report.kind.verb(), report.errors.len())
             };
             dialog::Spec::new(Icon::Warning, &heading).body(&text.join("\n")).width(500).show(self.hwnd);
         }
@@ -2790,7 +2958,7 @@ impl App {
             Ok(()) => self.settings = new,
             Err(e) => {
                 self.settings.show_hidden = self.show_hidden;
-                self.set_footer(format!("隱藏項目已切換，但無法儲存設定：{e}"));
+                self.set_footer(trf!("隱藏項目已切換，但無法儲存設定：{e}", "Hidden items were toggled, but the settings couldn't be saved: {e}"));
             }
         }
         let visible: Vec<TabId> = self.ws.visible_sides().iter().filter_map(|s| self.ws.current(*s)).collect();
@@ -2834,7 +3002,7 @@ impl App {
         match super::clipboard::set_text(self.hwnd, &files.join("\r\n")) {
             Ok(()) => {
                 self.update_chrome();
-                self.set_footer("已複製路徑".into());
+                self.set_footer(tr!("已複製路徑", "Path copied").into());
             }
             Err(e) => self.show_error(&e),
         }
@@ -2875,7 +3043,7 @@ impl App {
             self.navigate(id, &entry.full_path(), NavKind::Normal, vec![]);
         } else if let Err(e) = fileops::shell_open(self.hwnd, &entry.full_path()) {
             if let Some(t) = self.ws.current(side).and_then(|id| self.tabs.get_mut(&id)) {
-                t.status = format!("無法完成：{e}");
+                t.status = trf!("無法完成：{e}", "Couldn't complete: {e}");
             }
             self.update_chrome();
         }
@@ -2886,16 +3054,16 @@ impl App {
     fn open_many(&mut self, side: Side, entries: Vec<Entry>) {
         const ASK_ABOVE: usize = 15;
         if entries.len() > ASK_ABOVE {
-            let heading = format!("要開啟 {} 個項目嗎？", entries.len());
-            let body = "每個檔案都會用預設程式開啟，資料夾會各開一個新分頁。";
-            if !dialog::confirm(self.hwnd, Icon::Question, &heading, body, "全部開啟") {
+            let heading = trf!("要開啟 {} 個項目嗎？", "Open {} items?", entries.len());
+            let body = tr!("每個檔案都會用預設程式開啟，資料夾會各開一個新分頁。", "Each file opens in its default app, and each folder opens in a new tab.");
+            if !dialog::confirm(self.hwnd, Icon::Question, &heading, body, tr!("全部開啟", "Open all")) {
                 return;
             }
         }
         let mut failed: Vec<String> = Vec::new();
         for e in entries.iter().filter(|e| !e.is_dir) {
             if let Err(err) = fileops::shell_open(self.hwnd, &e.full_path()) {
-                failed.push(format!("{}：{err}", e.name));
+                failed.push(trf!("{}：{err}", "{}: {err}", e.name));
             }
         }
         for e in entries.iter().filter(|e| e.is_dir) {
@@ -2904,9 +3072,9 @@ impl App {
         if !failed.is_empty() {
             let mut text: Vec<String> = failed.iter().take(8).cloned().collect();
             if failed.len() > 8 {
-                text.push(format!("…等 {} 項", failed.len()));
+                text.push(trf!("…等 {} 項", "…and {} more", failed.len()));
             }
-            dialog::Spec::new(Icon::Warning, &format!("有 {} 個項目無法開啟", failed.len())).body(&text.join("\n")).width(500).show(self.hwnd);
+            dialog::Spec::new(Icon::Warning, &trn!(failed.len(); "有 {} 個項目無法開啟", "{} item couldn't be opened", "{} items couldn't be opened", failed.len())).body(&text.join("\n")).width(500).show(self.hwnd);
         }
         self.update_chrome();
     }
@@ -2932,14 +3100,15 @@ impl App {
         }
         if added > 0 {
             if let Err(e) = write_settings(&self.settings) {
-                self.show_error(&format!("常用位置未儲存：{e}"));
+                self.show_error(&trf!("常用位置未儲存：{e}", "Favorites weren't saved: {e}"));
             }
             self.build_tree();
         }
         self.update_chrome();
-        self.set_footer(format!(
-            "已釘選 {added} 個資料夾到常用位置{}",
-            if ignored > 0 { format!("，{ignored} 個不是資料夾或已達上限") } else { String::new() }
+        self.set_footer(trn!(
+            added;
+            "已釘選 {added} 個資料夾到常用位置{}", "Pinned {added} folder to Favorites{}", "Pinned {added} folders to Favorites{}",
+            if ignored > 0 { trf!("，{ignored} 個不是資料夾或已達上限", "; {ignored} weren't folders or the limit was reached") } else { String::new() }
         ));
     }
 
@@ -2954,11 +3123,11 @@ impl App {
         let removed = before - self.settings.favorites.len();
         if removed > 0 {
             if let Err(e) = write_settings(&self.settings) {
-                self.show_error(&format!("常用位置未儲存：{e}"));
+                self.show_error(&trf!("常用位置未儲存：{e}", "Favorites weren't saved: {e}"));
             }
             self.build_tree();
             self.update_chrome();
-            self.set_footer(format!("已從常用位置取消釘選 {removed} 個資料夾（資料夾本身沒有刪除）"));
+            self.set_footer(trn!(removed; "已從常用位置取消釘選 {removed} 個資料夾（資料夾本身沒有刪除）", "Unpinned {removed} folder from Favorites (the folder itself wasn't deleted)", "Unpinned {removed} folders from Favorites (the folders themselves weren't deleted)"));
         }
     }
 
@@ -2974,7 +3143,7 @@ impl App {
         new.theme_mode = if self.theme.pal.dark { ThemeMode::Light } else { ThemeMode::Dark };
         match write_settings(&new) {
             Ok(()) => self.apply_settings(new),
-            Err(e) => self.show_error(&format!("設定未儲存：{e}")),
+            Err(e) => self.show_error(&trf!("設定未儲存：{e}", "Settings weren't saved: {e}")),
         }
     }
 
@@ -3032,24 +3201,31 @@ impl App {
         self.hide_preview();
         let current = self.settings.clone();
         let exe = current_exe_path();
-        // 「攔截 Win+E」與「其他程式開啟檔案時也用 Stillfeather」顯示使用者的選擇（沒選過時：攔截 Win+E 開啟、開檔視窗關閉）
+        // 「攔截 Win+E」與「其他程式開啟或儲存檔案時也用 Stillfeather」顯示使用者的選擇（沒選過時：攔截 Win+E 開啟、開檔視窗關閉）
         let was = settings_dialog::Integration {
             default_fm: exe.as_deref().is_some_and(shellreg::is_default_file_manager),
             win_e: shellreg::win_e_choice(),
             picker: shellreg::picker_choice(),
         };
         if let Some((new, want)) = settings_dialog::show(self.hwnd, &current, was) {
-            match write_settings(&new) {
-                Ok(()) => self.apply_settings(new),
-                Err(e) => self.show_error(&format!("設定未儲存，保留先前設定：{e}")),
-            }
+            let english = new.language.english(system_ui_chinese());
+            let saved = match write_settings(&new) {
+                Ok(()) => {
+                    self.apply_settings(new);
+                    true
+                }
+                Err(e) => {
+                    self.show_error(&trf!("設定未儲存，保留先前設定：{e}", "Settings weren't saved; the previous settings are kept: {e}"));
+                    false
+                }
+            };
             if want.win_e != was.win_e {
                 let _ = shellreg::set_win_e_choice(want.win_e);
             }
             if want.default_fm != was.default_fm {
                 self.set_default_file_manager(want.default_fm);
             } else if want.win_e != was.win_e && want.default_fm {
-                self.set_footer(if want.win_e { "Win+E 會開 Stillfeather（在背景攔截按鍵）".into() } else { "已停止攔截 Win+E".into() });
+                self.set_footer(if want.win_e { tr!("Win+E 會開 Stillfeather（在背景攔截按鍵）", "Win+E opens Stillfeather (the key is intercepted in the background)").into() } else { tr!("已停止攔截 Win+E", "Stopped intercepting Win+E").into() });
             }
             if want.default_fm != was.default_fm || want.win_e != was.win_e {
                 // 依「設為預設檔案總管」與「攔截 Win+E」啟動或停止背景攔截
@@ -3058,9 +3234,47 @@ impl App {
             if want.picker != was.picker {
                 self.set_picker_enabled(want.picker);
             }
+            // 換了語言：重新開啟才套用（畫面上的文字都是建立時就決定的）
+            if saved && english != feather_core::i18n::english() {
+                self.offer_language_restart(english);
+            }
         }
         // 在設定裡按「檢查更新」找到新版本：現在提醒
         self.after_settings_closed();
+    }
+
+    /// 問要不要現在重新開啟，套用新的語言。問題用新的語言寫（使用者剛選了它）。
+    fn offer_language_restart(&mut self, english: bool) {
+        let old = feather_core::i18n::english();
+        feather_core::i18n::set_english(english);
+        let body = if self.settings.restore_tabs {
+            tr!("新的語言會在重新開啟 Stillfeather 後套用。分頁會照現在的樣子開回來。", "The new language applies after Stillfeather restarts. Your tabs will be reopened as they are now.")
+        } else {
+            tr!("新的語言會在重新開啟 Stillfeather 後套用。", "The new language applies after Stillfeather restarts.")
+        };
+        let choice = dialog::Spec::new(Icon::Question, tr!("要現在重新開啟嗎？", "Restart now?"))
+            .body(body)
+            .buttons(vec![dialog::Button::primary(1, tr!("立即重新開啟", "Restart now")), dialog::Button::normal(0, tr!("稍後", "Later"))], 0)
+            .show(self.hwnd);
+        feather_core::i18n::set_english(old);
+        if choice == 1 {
+            self.restart();
+        } else {
+            self.set_footer(tr!("新的語言會在下次開啟 Stillfeather 時套用", "The new language applies the next time Stillfeather starts").into());
+        }
+    }
+
+    /// 重新開啟 Stillfeather：先啟動新的一份（等這一份結束才接手，見 win::entry 的 --wait-pid），再關閉這個視窗。
+    /// 關閉時照常記下分頁，新的一份照「還原上次的分頁」開回來。
+    fn restart(&mut self) {
+        let Some(exe) = current_exe_path() else { return };
+        let arg = format!("{}{}", super::WAIT_PID_ARG, unsafe { GetCurrentProcessId() });
+        match std::process::Command::new(&exe).arg(arg).spawn() {
+            Ok(_) => unsafe {
+                PostMessageW(self.hwnd, WM_CLOSE, 0, 0);
+            },
+            Err(e) => self.show_error(&trf!("無法重新開啟 Stillfeather：{e}", "Couldn't restart Stillfeather: {e}")),
+        }
     }
 
     /// 現在跳出更新提醒會不會打斷使用者：Stillfeather 要在前景，而且沒有對話方塊或選單開著、
@@ -3081,15 +3295,15 @@ impl App {
         let result = if on {
             match current_exe_path() {
                 Some(exe) => shellreg::set_default_file_manager(&exe),
-                None => Err("找不到 Stillfeather 程式的位置。".into()),
+                None => Err(tr!("找不到 Stillfeather 程式的位置。", "Can't find where the Stillfeather program is.").into()),
             }
         } else {
             shellreg::restore_default_file_manager()
         };
         match result {
-            Ok(()) if on => self.set_footer("已設為預設檔案總管：Win+E 與開啟資料夾都會使用 Stillfeather".into()),
-            Ok(()) => self.set_footer("已改回 Windows 檔案總管".into()),
-            Err(e) => self.show_error(&format!("無法變更預設檔案總管：{e}")),
+            Ok(()) if on => self.set_footer(tr!("已設為預設檔案總管：Win+E 與開啟資料夾都會使用 Stillfeather", "Set as the default file manager: Win+E and opening folders both use Stillfeather").into()),
+            Ok(()) => self.set_footer(tr!("已改回 Windows 檔案總管", "Switched back to File Explorer").into()),
+            Err(e) => self.show_error(&trf!("無法變更預設檔案總管：{e}", "Couldn't change the default file manager: {e}")),
         }
     }
 
@@ -3185,49 +3399,52 @@ impl App {
 
     fn show_help(&self) {
         let (hover_key, hover_text, space_key, space_text) = if self.settings.space_preview {
-            ("滑鼠停在項目上＋按住空白鍵", "快速預覽滑鼠下的項目，放開就關閉（設定：按空白鍵預覽）", "右鍵 › 快速預覽", "預覽選取的項目並維持開著")
+            (tr!("滑鼠停在項目上＋按住空白鍵", "Hover over an item + hold Space"), tr!("快速預覽滑鼠下的項目，放開就關閉（設定：按空白鍵預覽）", "Quick preview the item under the mouse; release to close (setting: Preview with Space)"), tr!("右鍵 › 快速預覽", "Right-click › Quick preview"), tr!("預覽選取的項目並維持開著", "Preview the selected item and keep it open"))
         } else {
-            ("滑鼠停在項目上", "快速預覽圖片、文字、程式碼、PDF 與影片，移開就關閉", "按住空白鍵", "放大預覽（懸停的項目或選取的項目），放開就關閉")
+            (tr!("滑鼠停在項目上", "Hover over an item"), tr!("快速預覽圖片、文字、程式碼、PDF 與影片，移開就關閉", "Quick preview images, text, code, PDFs and videos; move away to close"), tr!("按住空白鍵", "Hold Space"), tr!("放大預覽（懸停的項目或選取的項目），放開就關閉", "Enlarge the preview (the hovered or selected item); release to close"))
         };
         let rows: Vec<(String, String)> = [
-            ("Ctrl+T、Ctrl+N", "新分頁"),
-            ("Ctrl+W", "關閉分頁（分頁上按中鍵也可以）"),
-            ("Ctrl+Tab", "下一個分頁"),
-            ("Ctrl+Shift+PgUp／PgDn", "調整分頁順序"),
+            (tr!("Ctrl+T、Ctrl+N", "Ctrl+T, Ctrl+N"), tr!("新分頁", "New tab")),
+            ("Ctrl+W", tr!("關閉分頁（分頁上按中鍵也可以）", "Close tab (or middle-click the tab)")),
+            ("Ctrl+Tab", tr!("下一個分頁", "Next tab")),
+            (tr!("Ctrl+Shift+PgUp／PgDn", "Ctrl+Shift+PgUp/PgDn"), tr!("調整分頁順序", "Reorder tabs")),
             (hover_key, hover_text),
             (space_key, space_text),
-            ("Ctrl+Z", "復原重新命名、移動或刪除"),
-            ("Ctrl+Shift+D", "單欄／雙欄"),
-            ("Ctrl+Shift+1～8", "超大圖示、大圖示…詳細資料、並排、內容"),
-            ("Ctrl+L、Alt+D", "編輯路徑"),
-            ("Ctrl+F", "搜尋檔名"),
-            ("Alt+←／→／↑", "上一頁／下一頁／上一層"),
-            ("F5", "重新整理"),
-            ("F2", "重新命名"),
-            ("Delete、Ctrl+D", "刪除到資源回收筒"),
-            ("Ctrl+C／X／V", "複製／剪下／貼上"),
-            ("Alt+Enter", "內容"),
-            ("F12、Ctrl+,", "設定"),
+            ("Ctrl+Z", tr!("復原重新命名、移動或刪除", "Undo rename, move or delete")),
+            ("Ctrl+Shift+D", tr!("單欄／雙欄", "Single/dual pane")),
+            (tr!("Ctrl+Shift+1～8", "Ctrl+Shift+1–8"), tr!("超大圖示、大圖示…詳細資料、並排、內容", "Extra large icons, large icons… details, tiles, content")),
+            (tr!("Ctrl+L、Alt+D", "Ctrl+L, Alt+D"), tr!("編輯路徑", "Edit path")),
+            ("Ctrl+F", tr!("搜尋檔名", "Search file names")),
+            (tr!("Alt+←／→／↑", "Alt+←/→/↑"), tr!("上一頁／下一頁／上一層", "Back/forward/up")),
+            ("F5", tr!("重新整理", "Refresh")),
+            ("F2", tr!("重新命名", "Rename")),
+            (tr!("Delete、Ctrl+D", "Delete, Ctrl+D"), tr!("刪除到資源回收筒", "Delete to Recycle Bin")),
+            (tr!("Ctrl+C／X／V", "Ctrl+C/X/V"), tr!("複製／剪下／貼上", "Copy/cut/paste")),
+            ("Alt+Enter", tr!("內容", "Properties")),
+            (tr!("F12、Ctrl+,", "F12, Ctrl+,"), tr!("設定", "Settings")),
         ]
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
         dialog::Spec::new(Icon::Info, "Stillfeather")
-            .body("Rust／原生 Win32 版 · 常用快捷鍵")
+            .body(tr!("Rust／原生 Win32 版 · 常用快捷鍵", "Rust / native Win32 · Keyboard shortcuts"))
             .rows(rows)
             .footnote(
-                "在清單直接打字可以跳到開頭相符的項目。搜尋只比對檔名，不讀取內容；勾選搜尋框裡的「全域搜尋」會搜尋整台電腦的所有本機與卸除式磁碟。目錄連結不會遞迴搜尋，最多顯示 50,000 個結果。\n\
+                tr!("在清單直接打字可以跳到開頭相符的項目。搜尋只比對檔名，不讀取內容；勾選搜尋框裡的「全域搜尋」會搜尋整台電腦的所有本機與卸除式磁碟。目錄連結不會遞迴搜尋，最多顯示 50,000 個結果。\n\
 標題右側的「排序」「檢視」可以換排序方式與檢視模式；檢視模式會記在各個資料夾（「檢視 › 套用到所有資料夾」可統一）。顯示隱藏項目、副檔名與精簡檢視在「檢視 › 顯示」，是整體設定，會一直記住。\n\
 檔案與資料夾可以直接拖曳：放到資料夾、另一欄、側欄的資料夾或磁碟就會移動或複製（同一磁碟移動、不同磁碟複製；Ctrl 複製、Shift 移動、右鍵拖曳有選單）。把資料夾拖到側欄的「常用位置」標題就會釘選。滑鼠停在項目上就會快速預覽；設定中開啟「按空白鍵預覽」則改成按住空白鍵才預覽。\n\
-尚未提供：索引搜尋、工作階段還原、系統預設資料夾接管。",
+尚未提供：索引搜尋。", "Type in the list to jump to an item that starts with what you type. Search matches file names only and doesn't read contents; check “Whole PC” in the search box to search every local and removable drive. Directory links aren't searched recursively, and up to 50,000 results are shown.\n\
+Use “Sort” and “View” to the right of the title to change the sort order and view. Each folder remembers its view (“View › Apply to all folders” makes them all the same). Hidden items, file extensions and compact view are under “View › Show”; they apply everywhere and are always remembered.\n\
+Drag files and folders to move or copy them: drop them on a folder, the other pane, or a folder or drive in the sidebar (same drive moves, another drive copies; hold Ctrl to copy, Shift to move, or drag with the right button for a menu). Drag a folder onto the sidebar's “Favorites” heading to pin it. Hover over an item to quick preview it; turn on “Preview with Space” in Settings to preview only while holding Space.\n\
+Not available yet: indexed search."),
             )
             .width(540)
             .show(self.hwnd);
     }
 
     pub(super) fn show_error(&mut self, text: &str) {
-        self.set_footer("無法完成操作".into());
-        dialog::error(self.hwnd, "無法完成操作", text);
+        self.set_footer(tr!("無法完成操作", "Couldn't complete the operation").into());
+        dialog::error(self.hwnd, tr!("無法完成操作", "Couldn't complete the operation"), text);
     }
 
     fn restore_focus(&self) {
@@ -3285,7 +3502,7 @@ impl App {
     fn end_drag(&mut self) {
         if self.drag.take().is_some() {
             if let Err(e) = write_settings(&self.settings) {
-                self.set_footer(format!("布局未儲存：{e}"));
+                self.set_footer(trf!("布局未儲存：{e}", "The layout wasn't saved: {e}"));
             }
         }
     }
@@ -3547,10 +3764,10 @@ impl App {
                         if let Err(e) = super::clipboard::set_text(self.hwnd, &path) {
                             self.show_error(&e);
                         } else {
-                            self.set_footer("已複製路徑".into());
+                            self.set_footer(tr!("已複製路徑", "Path copied").into());
                         }
                     } else if cut && paths::parent(&path).is_none() {
-                        self.set_footer("磁碟根目錄不能剪下".into());
+                        self.set_footer(tr!("磁碟根目錄不能剪下", "A drive's root folder can't be cut").into());
                     } else {
                         self.clipboard_paths(vec![path], cut);
                     }
@@ -3930,7 +4147,15 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 a.on_watch_timer();
             } else if wparam == super::picker::TIMER_HOST {
                 a.picker_host_timer();
+            } else if wparam == super::thumbs::TIMER_REDRAW {
+                a.thumbs.redraw_due(hwnd);
+                a.redraw_thumbnails();
             }
+            return 0;
+        }
+        super::thumbs::WM_APP_THUMB => {
+            let done = Box::from_raw(lparam as *mut super::thumbs::Done);
+            a.thumbs.on_result(hwnd, *done);
             return 0;
         }
         super::watch::WM_APP_WATCH => {
@@ -3956,7 +4181,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
         }
         WM_APP_OPEN => {
             let paths = Box::from_raw(lparam as *mut Vec<String>);
-            a.open_paths(*paths, false);
+            a.open_paths(*paths, false, false);
             return 0;
         }
         WM_APP_TREE_RESET => {
@@ -4044,7 +4269,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
         WM_CLOSE => {
             super::crashlog::crumb("主視窗：WM_CLOSE");
             if a.op_busy {
-                dialog::info(hwnd, "檔案作業還在進行", "請等它完成，或在 Windows 的進度視窗按取消後再關閉 Stillfeather。");
+                dialog::info(hwnd, tr!("檔案作業還在進行", "A file operation is still running"), tr!("請等它完成，或在 Windows 的進度視窗按取消後再關閉 Stillfeather。", "Wait for it to finish, or click Cancel in the Windows progress window, then close Stillfeather."));
                 return 0;
             }
             if a.picker_mode() {
@@ -4052,7 +4277,16 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 return 0;
             }
             a.hide_preview();
+            // 「還原上次的分頁」：記下現在的分頁
+            a.save_session();
             DestroyWindow(hwnd);
+            return 0;
+        }
+        WM_ENDSESSION => {
+            // Windows 登出、關機或重新啟動：不會收到 WM_CLOSE，在這裡記下分頁
+            if wparam != 0 {
+                a.save_session();
+            }
             return 0;
         }
         WM_DESTROY => {

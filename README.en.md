@@ -44,7 +44,8 @@ It's written in Rust on native Win32, with no web engine, no .NET and no third-p
 
 ## Highlights
 
-- **Tabs and dual panes**: each pane has its own tabs, and you can drag files straight between them.
+- **Tabs and dual panes**: each pane has its own tabs, and you can drag files straight between them. Your tabs come back the next time you open it.
+- **Photo thumbnails**: photo folders open in large icons with thumbnails, and videos and PDFs get them too.
 - **Quick preview**: images, video, PDF, code, plus Word, Excel and PowerPoint, with no Office required.
 - **Ctrl+Z undo**: your last 30 renames, moves and deletes can be reversed.
 - **Whole-PC search**: multi-threaded, with results appearing as they're found.
@@ -59,7 +60,7 @@ It's written in Rust on native Win32, with no web engine, no .NET and no third-p
 2. Run it and choose an install location. The default is `%LOCALAPPDATA%\Programs\Stillfeather`, for the current user only, with no administrator rights needed. If you pick a protected location such as `C:\Program Files`, Windows will ask for permission.
 3. Choose your options:
    - **Set as default file manager** (checked by default; see [Windows integration](#windows-integration))
-   - **Use Stillfeather when other programs open files** (unchecked by default; you can also turn it on later in Settings)
+   - **Use Stillfeather for other programs' Open and Save dialogs** (unchecked by default; you can also turn it on later in Settings)
    - Create a desktop shortcut
    - Add to the Start menu
 4. Click Install (安裝).
@@ -93,8 +94,10 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 ### Familiar, but smoother
 
 - **Tabs and dual panes**: the left and right panes each have their own tabs and back/forward history. Ctrl+Shift+D toggles single/dual pane. Drag files between panes, or use "Copy to other pane".
+- **Restore your tabs**: next time you open Stillfeather, both panes' tabs, the selected tabs, and dual-pane mode come back as you left them. The visible tabs load right away; the others load when you switch to them. When you open it with Win+E or by double-clicking a folder, that location opens in a new tab (or switches to it if it's already open). To turn this off, untick "還原上次的分頁" (restore tabs) in Settings.
 - **Breadcrumb path bar**: click any level to jump there. Press Ctrl+L to switch to a text box and type a full path, a relative path (`..`, a subfolder name), or a file path (opens its folder with the file selected).
 - **Per-folder views**: eight views, from extra-large icons to details. Switch one folder to large icons and the others stay as they were.
+- **Thumbnails**: the icon views (extra-large, large and medium icons, tiles, and content) show thumbnails for pictures and videos, and for PDFs, PSDs and more when a thumbnail handler is installed, just like File Explorer. Folders that are at least half pictures and videos open in large icons unless you've picked a view for them; to turn that off, untick "相片資料夾用大圖示" (large icons for photo folders) under View › Show. Thumbnails are made in a separate process, so a faulty thumbnail handler can't crash Stillfeather.
 - **Filter chips**: show only folders, images, documents, media or archives in one click, with a count for each.
 - **Pinned locations**: drag a folder onto the sidebar to pin it, or pin and unpin from the right-click menu.
 - **The full right-click menu**: alongside Stillfeather's own commands, you get the entries installed programs add (Open in Terminal, 7-Zip, Git, Send to…), with no "Show more options" step.
@@ -103,7 +106,7 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 
 ### Quick preview
 
-Hover over a file and a preview appears beside it. Hold Space to enlarge it in the middle of the window, release to close, and use the arrow keys while holding to move to the next item. If you'd rather not have previews pop up on hover, turn on **Space-only preview** (`按空白鍵預覽`) in Settings.
+Hover over a file and a preview appears beside it. Hold Space to enlarge it in the middle of the window, release to close, and use the arrow keys while holding to move to the next item. If you'd rather not have previews pop up on hover, turn on **Preview with Space** (`按空白鍵預覽`) in Settings.
 
 | Type | Preview |
 |---|---|
@@ -129,6 +132,7 @@ Ctrl+Z reverses your last 30 renames, moves and deletes. Deleted files always go
 - Confirmations and errors use Stillfeather's own dialogs, with no Windows "ding".
 - Changing folders, switching tabs, selecting and hovering all fade smoothly. If you turn off "Animation effects" in Windows, everything switches instantly.
 - High-DPI aware, and it readjusts when you move between monitors with different scaling.
+- The interface is in English or Traditional Chinese. It follows your Windows display language (Chinese gets Traditional Chinese, everything else English), and you can pick one under **Language** in Settings; it applies after Stillfeather restarts, and Stillfeather offers to restart right away with your tabs kept.
 
 ## Windows integration
 
@@ -151,15 +155,16 @@ Windows 11 updates rolling out since October 2026 make Win+E open File Explorer 
 - When a window running as administrator is in front, Win+E still opens File Explorer.
 - Some antivirus software may treat the key interception as suspicious.
 
-### Choosing files to open or upload
+### Choosing files to open, upload or save
 
-**Use Stillfeather when other programs open files** (`其他程式開啟檔案時也用 Stillfeather`) is off by default; check it in Settings to turn it on. Once it's on, uploading a file on a web page, and other programs' Open and Select Folder dialogs, show a compact Stillfeather picker:
+**Use Stillfeather for other programs' Open and Save dialogs** (`其他程式開啟或儲存檔案時也用 Stillfeather`) is off by default; check it in Settings to turn it on. Once it's on, uploading a file on a web page, and other programs' Open, Save As and Select Folder dialogs, show a compact Stillfeather picker:
 
 - It keeps only what you need to pick a file: back/forward/up, the path bar, refresh, search, new folder, sort and view, the folder tree, the file list, and the file name box, file type and OK/Cancel at the bottom. Hover preview, drag and drop and the right-click menu all still work.
 - Double-click a folder to open it, and double-click a file (or select it and click Open) to hand it to the program. Programs that allow multiple files let you pick several. The file name box accepts a name, a path, or a filter like `*.png`.
+- When saving, the name (without its extension) is already selected in the file name box, so you can just type over it. The extension is added for you and follows the file type you pick, and you're asked before an existing file is replaced. Put the name in quotes (`"README"`) or end it with a dot (`README.`) to save it without an extension.
 - Each program remembers the last folder you used.
 - **Use Windows dialog** (`使用 Windows 視窗`) in the top-right corner switches back to the standard Windows dialog at any time. Programs running as administrator, 32-bit programs, and cases where Stillfeather can't be found always get the Windows dialog, so you can always pick a file.
-- When a program adds its own options to the dialog (an encoding drop-down, "Open as read-only" and so on), it gets the Windows dialog as usual, so those options don't disappear.
+- When a program adds its own options to the dialog (an encoding drop-down, "Open as read-only" and so on), or asks for file details such as authors and tags when saving, it gets the Windows dialog as usual, so those options don't disappear.
 - This feature loads a Stillfeather component into other programs. If a program misbehaves when opening files, uncheck it to switch back, and please report which program it was.
 - Programs that are already open may need to be restarted before the change applies.
 
@@ -201,7 +206,7 @@ Stillfeather checks for new versions in the background (at most once every 20 ho
 - The release info (`update.json`) is only accepted if it carries Stillfeather's signature. The signing key is kept offline, not on GitHub, so even if the GitHub account were compromised, nobody could publish a fake update that Stillfeather would install.
 - A downloaded installer only runs if its size and SHA-256 exactly match the published release. If your current version is code-signed, the new one must have a valid signature too.
 - Updating keeps your shortcuts and default file manager setting, and reopens Stillfeather when done.
-- To stop the reminders, check **Don't enable update reminders** (`不要啟用更新提醒`) in Settings. **Check for updates** (`檢查更新`) next to it checks manually at any time. When it finds a new version, the button becomes **Update now** (`立即更新`); click it to start.
+- To stop the reminders, check **No update reminders** (`不要啟用更新提醒`) in Settings. **Check for updates** (`檢查更新`) next to it checks manually at any time. When it finds a new version, the button becomes **Update now** (`立即更新`); click it to start.
 
 ## Uninstall
 

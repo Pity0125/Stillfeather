@@ -74,12 +74,16 @@ pub fn rescue_if_crash_loop(targets: &[String]) -> bool {
     let logs = super::crashlog::log_dir().unwrap_or_else(|| "%LOCALAPPDATA%\\Stillfeather\\logs".into());
     message_box(
         0,
-        &format!(
+        &trf!(
             "Stillfeather 剛才連續 {} 次沒能正常開啟。為了讓你照常開資料夾，已經先改回 Windows：\n\n\
              •  預設檔案總管與 Win+E：Windows 檔案總管\n\
              •  其他程式的開啟檔案視窗：Windows 原本的視窗\n\n\
              這次要開的位置已經用 Windows 檔案總管開啟。問題排除後（例如更新 Stillfeather），可以在 Stillfeather 的設定（F12）重新勾選。\n\n\
-             歡迎回報問題，請附上這個資料夾裡的 crash-before-rescue.log 與 trace-before-rescue.log（可能含有資料夾路徑）：\n{logs}",
+             歡迎回報問題，請附上這個資料夾裡的 crash-before-rescue.log 與 trace-before-rescue.log（可能含有資料夾路徑）：\n{logs}", "Stillfeather failed to start {} times in a row. So you can keep opening folders, Windows has been restored for now:\n\n\
+             •  Default file manager and Win+E: File Explorer\n\
+             •  Other programs' file dialogs: the standard Windows dialogs\n\n\
+             The location you wanted was opened in File Explorer. Once the problem is fixed (for example, by updating Stillfeather), turn the options back on in Stillfeather's Settings (F12).\n\n\
+             Please report the problem and attach crash-before-rescue.log and trace-before-rescue.log from this folder (they may contain folder paths):\n{logs}",
             crashguard::LIMIT
         ),
         MB_OK | MB_ICONWARNING,

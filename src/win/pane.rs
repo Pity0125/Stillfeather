@@ -21,13 +21,19 @@ use feather_core::typeahead;
 use feather_core::view::{self, ViewMode};
 use feather_core::workspace::{Side, TabId};
 
-const COLUMNS: [(&str, i32, i32); 5] = [
-    ("名稱", 270, LVCFMT_LEFT),
-    ("大小", 90, LVCFMT_RIGHT),
-    ("類型", 90, LVCFMT_LEFT),
-    ("修改日期", 145, LVCFMT_LEFT),
-    ("所在位置", 260, LVCFMT_LEFT),
+/// 清單的欄位：（中文標題, 英文標題, 寬度, 對齊）
+const COLUMNS: [(&str, &str, i32, i32); 5] = [
+    ("名稱", "Name", 270, LVCFMT_LEFT),
+    ("大小", "Size", 90, LVCFMT_RIGHT),
+    ("類型", "Type", 90, LVCFMT_LEFT),
+    ("修改日期", "Date modified", 145, LVCFMT_LEFT),
+    ("所在位置", "Location", 260, LVCFMT_LEFT),
 ];
+
+/// 欄位標題（依介面語言）
+fn column_title(c: &(&'static str, &'static str, i32, i32)) -> &'static str {
+    tr!(c.0, c.1)
+}
 
 /// 並排與內容檢視在名稱下方顯示的欄位（欄位索引同 COLUMNS）。
 fn tile_columns(mode: ViewMode, is_dir: bool) -> &'static [u32] {
@@ -58,7 +64,7 @@ fn header_of(list: HWND) -> HWND {
 impl App {
     pub(super) fn create_list(&mut self, cid: u16, side: Side) -> HWND {
         let class = wide("SysListView32");
-        let name = wide(if side == Side::Left { "左欄檔案清單" } else { "右欄檔案清單" });
+        let name = wide(if side == Side::Left { tr!("左欄檔案清單", "Left pane file list") } else { tr!("右欄檔案清單", "Right pane file list") });
         let list = unsafe {
             CreateWindowExW(
                 0,
@@ -77,8 +83,9 @@ impl App {
         };
         let ex = LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP;
         send(list, LVM_SETEXTENDEDLISTVIEWSTYLE, ex as usize, ex as LPARAM);
-        for (i, (title, width, fmt)) in COLUMNS.iter().enumerate() {
-            let mut text = wide(title);
+        for (i, c) in COLUMNS.iter().enumerate() {
+            let (width, fmt) = (&c.2, &c.3);
+            let mut text = wide(column_title(c));
             let col = LVCOLUMNW {
                 mask: LVCF_FMT | LVCF_WIDTH | LVCF_TEXT | LVCF_SUBITEM,
                 fmt: *fmt,
@@ -108,12 +115,37 @@ impl App {
         }
     }
 
-    /// 這一欄的資料夾該用的檢視：有記錄就用記錄，否則用預設（搜尋結果另外記一份）。
+    /// 這一欄的資料夾該用的檢視：有記錄就用記錄，否則用這個資料夾的預設（搜尋結果另外記一份）。
     pub(super) fn desired_view(&self, side: Side) -> ViewMode {
         let default = self.settings.view_mode;
         let Some(tab) = self.bound[side.index()].and_then(|id| self.tabs.get(&id)) else { return default };
         let key = if tab.search_mode { folderviews::SEARCH_KEY } else { tab.path.as_str() };
-        self.views.get(key).unwrap_or(default)
+        self.views.get(key).unwrap_or_else(|| self.folder_default_view(tab))
+    }
+
+    /// 資料夾沒記住檢視時用的：相片資料夾用大圖示顯示縮圖（和檔案總管相同），除非預設的檢視本來就有縮圖，
+    /// 或使用者在「檢視 › 顯示」關掉了；其餘用預設的檢視。
+    pub(super) fn folder_default_view(&self, tab: &app::Tab) -> ViewMode {
+        let default = self.settings.view_mode;
+        if self.settings.media_folder_icons && tab.media && !tab.search_mode && !default.shows_thumbnails() {
+            ViewMode::Large
+        } else {
+            default
+        }
+    }
+
+    /// 這一欄顯示縮圖時的方格邊長（目前的檢視不顯示縮圖時是 None）
+    pub(super) fn thumb_edge(&self, side: Side) -> Option<i32> {
+        self.view[side.index()].big_icon_px().map(|base| view::scaled_icon_px(base, self.theme.dpi))
+    }
+
+    /// 收到縮圖後（已合併）：重畫顯示縮圖的清單
+    pub(super) fn redraw_thumbnails(&self) {
+        for side in [Side::Left, Side::Right] {
+            if self.thumb_edge(side).is_some() && (side == Side::Left || self.ws.dual) {
+                invalidate(self.lists[side.index()]);
+            }
+        }
     }
 
     /// 換了資料夾（或分頁、開始搜尋）時，切成這個資料夾記住的檢視。
@@ -132,6 +164,8 @@ impl App {
         }
         let slot = side.index();
         let mode = self.view[slot];
+        // 縮圖大小跟著檢視：還沒做的要求作廢，畫面上的項目重畫時再要求
+        self.thumbs.forget_queue();
         let old_big = mode.big_icon_px().and_then(|base| self.icons.ensure_big(slot, view::scaled_icon_px(base, self.theme.dpi)));
         let lv = match mode {
             ViewMode::ExtraLarge | ViewMode::Large | ViewMode::Medium => LV_VIEW_ICON,
@@ -230,6 +264,8 @@ impl App {
         self.refresh_list(side, true);
         // 背景分頁不掃描：設定變更或檔案作業後標記為過期，切回時才重新讀取。
         if let Some(id) = new_id {
+            // 還原的分頁：第一次顯示時才讀取
+            self.load_restored(id);
             if self.tabs.get(&id).is_some_and(|t| t.stale && !t.working() && !t.search_mode) {
                 self.refresh_tab(id);
             }
@@ -247,6 +283,13 @@ impl App {
         };
         // 每個資料夾記住自己的檢視
         self.sync_view(side);
+        if reset {
+            // 內容換了：還沒做的縮圖要求作廢，另一欄畫面上的項目重畫時再要求
+            self.thumbs.forget_queue();
+            if self.thumb_edge(side.other()).is_some() {
+                invalidate(self.lists[side.other().index()]);
+            }
+        }
         let Some(tab) = self.tabs.get_mut(&id) else { return };
         let n = tab.row_count();
         if !reset {
@@ -508,7 +551,7 @@ impl App {
         let sel = self.list_selected_indices(list);
         if sel.len() != 1 {
             self.update_chrome();
-            self.show_footer("請選取一個項目再重新命名");
+            self.show_footer(tr!("請選取一個項目再重新命名", "Select one item to rename"));
             return;
         }
         unsafe {
@@ -535,7 +578,7 @@ impl App {
             return;
         }
         if !paths::valid_name(&new_name) || paths::is_reserved_device_name(&new_name) {
-            self.show_error("請輸入有效名稱，且不要在結尾使用空白或句點，也不要使用 \\ / : * ? \" < > | 等字元或 CON、NUL 等保留名稱。");
+            self.show_error(tr!("請輸入有效名稱，且不要在結尾使用空白或句點，也不要使用 \\ / : * ? \" < > | 等字元或 CON、NUL 等保留名稱。", "Enter a valid name. Don't end it with a space or period, and don't use characters such as \\ / : * ? \" < > | or reserved names such as CON and NUL."));
             return;
         }
         let Some(dir) = paths::parent(old) else { return };
@@ -562,7 +605,7 @@ impl App {
                     self.navigate(tab, &dir, NavKind::NoHistory, vec![target]);
                 }
             }
-            Err(e) => self.show_error(&format!("無法重新命名：{e}")),
+            Err(e) => self.show_error(&trf!("無法重新命名：{e}", "Couldn't rename: {e}")),
         }
     }
 
@@ -582,13 +625,14 @@ impl App {
             _ => anim::Crossfade::none(),
         };
         let selected = self.selected_paths(side);
+        let folders_on_top = self.settings.folders_on_top;
         let Some(tab) = self.tabs.get_mut(&id) else { return };
         if tab.working() {
             return;
         }
         tab.desc = desc;
         tab.sort_col = col;
-        sorting::sort_entries(&mut tab.entries, col, tab.desc);
+        sorting::sort_entries(&mut tab.entries, col, tab.desc, folders_on_top);
         tab.refilter();
         tab.pending_select = selected;
         tab.view = Default::default();
@@ -620,7 +664,9 @@ impl App {
                         copy_to_buffer(&text, info.item.pszText, info.item.cchTextMax);
                     }
                     if info.item.mask & LVIF_IMAGE != 0 && info.item.iSubItem == 0 {
-                        info.item.iImage = self.icons.index_for(e);
+                        // 已經有縮圖：圖示用透明的那一格，縮圖在自繪的最後畫上去
+                        let thumb = self.thumb_edge(side).is_some_and(|edge| self.thumbs.has(e, edge));
+                        info.item.iImage = if thumb { self.icons.blank_index() } else { self.icons.index_for(e) };
                     }
                     if info.item.mask & LVIF_COLUMNS != 0 && !info.item.puColumns.is_null() {
                         // 並排／內容檢視：名稱下方顯示的欄位（資料夾不顯示大小）
@@ -770,6 +816,33 @@ impl App {
                 cd.nmcd.uItemState &= !(CDIS_SELECTED | CDIS_HOT | CDIS_FOCUS);
                 cd.clrText = p.ink;
                 cd.clrTextBk = CLR_NONE;
+                // 圖示類的檢視：有縮圖就在最後畫上去，還沒有就排進佇列
+                let mut result = CDRF_DODEFAULT;
+                if let Some(edge) = self.thumb_edge(side) {
+                    let owner = self.hwnd;
+                    let thumbs = &mut self.thumbs;
+                    if let Some(e) = self.bound[si].and_then(|id| self.tabs.get(&id)).and_then(|t| t.row(index)) {
+                        if thumbs.get_or_request(owner, e, edge).is_some() {
+                            result = CDRF_NOTIFYPOSTPAINT;
+                        }
+                    }
+                }
+                result
+            }
+            CDDS_ITEMPOSTPAINT => {
+                let index = cd.nmcd.dwItemSpec;
+                if let Some(edge) = self.thumb_edge(side) {
+                    let thumbs = &mut self.thumbs;
+                    let bmp = self.bound[si].and_then(|id| self.tabs.get(&id)).and_then(|t| t.row(index)).and_then(|e| thumbs.cached(e, edge));
+                    let mut r = RECT { left: LVIR_ICON, ..Default::default() };
+                    if let Some(bmp) = bmp {
+                        if send(list, LVM_GETITEMRECT, index, &mut r as *mut RECT as LPARAM) != 0 {
+                            // 圖示檢視貼齊方格底部（靠近名稱）；並排、內容檢視垂直置中
+                            let bottom = matches!(self.view[si], ViewMode::ExtraLarge | ViewMode::Large | ViewMode::Medium);
+                            super::thumbs::draw(cd.nmcd.hdc, &bmp, r, edge, bottom);
+                        }
+                    }
+                }
                 CDRF_DODEFAULT
             }
             CDDS_POSTPAINT => {
@@ -841,9 +914,9 @@ impl App {
         let undo_text = self.undo_label().map(|l| format!("{l}\tCtrl+Z"));
         let mut organize: Vec<Cmd> = Vec::new();
         let (pin_text, unpin_text) = if entries.is_empty() {
-            ("釘選這個資料夾到常用位置", "從常用位置取消釘選這個資料夾")
+            (tr!("釘選這個資料夾到常用位置", "Pin this folder to Favorites"), tr!("從常用位置取消釘選這個資料夾", "Unpin this folder from Favorites"))
         } else {
-            ("釘選到常用位置", "從常用位置取消釘選")
+            (tr!("釘選到常用位置", "Pin to Favorites"), tr!("從常用位置取消釘選", "Unpin from Favorites"))
         };
         if !unpinned.is_empty() {
             organize.push(Cmd::new(id::ADD_FAVORITE, pin_text, glyph::PIN));
@@ -854,39 +927,39 @@ impl App {
         // 版面：Stillfeather 的命令分成「開啟／編輯／整理」三段放在上面，
         // 接著是 Windows 與已安裝程式的項目，最後是「內容」。
         let (parts, shell, hide): ([Part; 5], _, &[&str]) = if !entries.is_empty() {
-            let mut open = vec![Cmd::new(id::OPEN, "開啟\tEnter", glyph::OPEN), Cmd::new(id::QUICKLOOK, "快速預覽\t空白鍵", glyph::PREVIEW)];
+            let mut open = vec![Cmd::new(id::OPEN, tr!("開啟\tEnter", "Open\tEnter"), glyph::OPEN), Cmd::new(id::QUICKLOOK, tr!("快速預覽\t空白鍵", "Quick preview\tSpace"), glyph::PREVIEW)];
             if !dirs.is_empty() {
-                open.push(Cmd::new(id::OPEN_NEW_TAB, "在新分頁開啟", glyph::OPEN_NEW_TAB));
+                open.push(Cmd::new(id::OPEN_NEW_TAB, tr!("在新分頁開啟", "Open in new tab"), glyph::OPEN_NEW_TAB));
             }
             if tab_search {
-                open.push(Cmd::new(id::OPEN_LOCATION, "開啟所在位置", glyph::FOLDER));
+                open.push(Cmd::new(id::OPEN_LOCATION, tr!("開啟所在位置", "Open file location"), glyph::FOLDER));
             }
             let edit = vec![
-                Cmd::new(id::CUT, "剪下\tCtrl+X", glyph::CUT),
-                Cmd::new(id::COPY, "複製\tCtrl+C", glyph::COPY),
-                Cmd::new(id::PASTE, "貼上\tCtrl+V", glyph::PASTE).enabled(can_paste),
-                Cmd::new(id::RENAME, "重新命名\tF2", glyph::RENAME).enabled(entries.len() == 1),
-                Cmd::new(id::DELETE, "刪除\tDelete", glyph::DELETE),
+                Cmd::new(id::CUT, tr!("剪下\tCtrl+X", "Cut\tCtrl+X"), glyph::CUT),
+                Cmd::new(id::COPY, tr!("複製\tCtrl+C", "Copy\tCtrl+C"), glyph::COPY),
+                Cmd::new(id::PASTE, tr!("貼上\tCtrl+V", "Paste\tCtrl+V"), glyph::PASTE).enabled(can_paste),
+                Cmd::new(id::RENAME, tr!("重新命名\tF2", "Rename\tF2"), glyph::RENAME).enabled(entries.len() == 1),
+                Cmd::new(id::DELETE, tr!("刪除\tDelete", "Delete\tDelete"), glyph::DELETE),
             ];
-            organize.push(Cmd::new(id::COPY_PATH, "複製路徑\tCtrl+Shift+C", glyph::LINK));
+            organize.push(Cmd::new(id::COPY_PATH, tr!("複製路徑\tCtrl+Shift+C", "Copy path\tCtrl+Shift+C"), glyph::LINK));
             let paths: Vec<String> = entries.iter().map(Entry::full_path).collect();
             let shell = shellmenu::ShellMenu::for_items(self.hwnd, &paths);
-            let last = vec![Cmd::new(id::PROPERTIES, "內容\tAlt+Enter", glyph::PROPERTIES)];
+            let last = vec![Cmd::new(id::PROPERTIES, tr!("內容\tAlt+Enter", "Properties\tAlt+Enter"), glyph::PROPERTIES)];
             ([Part::Ours(open), Part::Ours(edit), Part::Ours(organize), Part::Shell, Part::Ours(last)], shell, ITEM_HIDDEN_VERBS)
         } else {
             let mut view = Vec::new();
             if let Some(text) = undo_text.as_deref() {
                 view.push(Cmd::new(id::UNDO, text, glyph::UNDO));
             }
-            view.push(Cmd::new(id::REFRESH, "重新整理\tF5", glyph::REFRESH));
-            view.push(Cmd::new(id::SELECT_ALL, "全選\tCtrl+A", glyph::SELECT_ALL));
+            view.push(Cmd::new(id::REFRESH, tr!("重新整理\tF5", "Refresh\tF5"), glyph::REFRESH));
+            view.push(Cmd::new(id::SELECT_ALL, tr!("全選\tCtrl+A", "Select all\tCtrl+A"), glyph::SELECT_ALL));
             let edit = vec![
-                Cmd::new(id::PASTE, "貼上\tCtrl+V", glyph::PASTE).enabled(can_paste),
-                Cmd::new(id::NEW_FOLDER, "新增資料夾", glyph::NEW_FOLDER).enabled(!tab_search),
+                Cmd::new(id::PASTE, tr!("貼上\tCtrl+V", "Paste\tCtrl+V"), glyph::PASTE).enabled(can_paste),
+                Cmd::new(id::NEW_FOLDER, tr!("新增資料夾", "New folder"), glyph::NEW_FOLDER).enabled(!tab_search),
             ];
-            organize.push(Cmd::new(id::COPY_PATH, "複製目前資料夾路徑", glyph::LINK));
+            organize.push(Cmd::new(id::COPY_PATH, tr!("複製目前資料夾路徑", "Copy current folder path"), glyph::LINK));
             let shell = (!tab_search && !folder.is_empty()).then(|| shellmenu::ShellMenu::for_background(self.hwnd, &folder)).flatten();
-            let last = vec![Cmd::new(id::PROPERTIES, "內容", glyph::PROPERTIES)];
+            let last = vec![Cmd::new(id::PROPERTIES, tr!("內容", "Properties"), glyph::PROPERTIES)];
             ([Part::Ours(view), Part::Ours(edit), Part::Ours(organize), Part::Shell, Part::Ours(last)], shell, BACKGROUND_HIDDEN_VERBS)
         };
         let default = (!entries.is_empty()).then_some(id::OPEN);
@@ -928,7 +1001,7 @@ impl App {
             meta.push(format_size(e.size()));
         }
         if e.modified != 0 {
-            meta.push(format!("修改於 {}", format_filetime(e.modified)));
+            meta.push(trf!("修改於 {}", "Modified {}", format_filetime(e.modified)));
         }
         if tab.search_mode {
             meta.push(e.dir.to_string());
@@ -951,7 +1024,7 @@ impl App {
     /// 開啟選取項目的快速預覽；`hold` 表示按住空白鍵開啟（放開就關閉），否則（右鍵選單）維持開著。
     pub(super) fn open_quicklook(&mut self, side: Side, hold: bool) {
         let Some(target) = self.quicklook_target(side) else {
-            self.set_footer("先選取一個項目，或把滑鼠停在項目上預覽".into());
+            self.set_footer(tr!("先選取一個項目，或把滑鼠停在項目上預覽", "Select an item first, or hover over an item to preview it").into());
             return;
         };
         let opts = self.preview_opts();
@@ -1272,7 +1345,7 @@ impl App {
             let id = self.active_tab_id();
             self.navigate(id, path, NavKind::Normal, vec![]);
         } else if let Err(e) = super::fileops::shell_open(self.hwnd, path) {
-            self.set_footer(format!("無法開啟：{e}"));
+            self.set_footer(trf!("無法開啟：{e}", "Couldn't open: {e}"));
         }
     }
 }
@@ -1296,8 +1369,8 @@ impl App {
                         .and_then(|id| self.tabs.get(&id))
                         .map(|t| (t.sort_col == col && !t.searching, t.desc))
                         .unwrap_or((false, false));
-                    let title = COLUMNS.get(col).map(|c| c.0).unwrap_or("");
-                    let right_align = COLUMNS.get(col).is_some_and(|c| c.2 == LVCFMT_RIGHT);
+                    let title = COLUMNS.get(col).map(column_title).unwrap_or("");
+                    let right_align = COLUMNS.get(col).is_some_and(|c| c.3 == LVCFMT_RIGHT);
                     let mut tr = RECT { left: r.left + self.s(12), right: r.right - self.s(10), ..r };
                     if sorted {
                         let g = if desc { glyph::SORT_DOWN } else { glyph::SORT_UP };

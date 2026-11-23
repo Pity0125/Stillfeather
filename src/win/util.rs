@@ -99,7 +99,7 @@ pub fn error_text(code: u32) -> String {
     };
     let text = from_wide(&buf[..n as usize]).trim().to_string();
     if text.is_empty() {
-        format!("Windows 錯誤 {code}")
+        trf!("Windows 錯誤 {code}", "Windows error {code}")
     } else {
         text
     }
@@ -245,7 +245,7 @@ pub fn full_path(input: &str) -> Result<String, String> {
 pub fn full_path_in(input: &str, base: Option<&str>) -> Result<String, String> {
     let trimmed = input.trim().trim_matches('"');
     if trimmed.is_empty() {
-        return Err("路徑為空白。".into());
+        return Err(tr!("路徑為空白。", "The path is blank.").into());
     }
     // 只輸入「C:」時前往磁碟根目錄，而不是該磁碟的目前工作目錄。
     let drive_only;

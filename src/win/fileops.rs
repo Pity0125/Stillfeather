@@ -45,22 +45,22 @@ pub fn start(kind: OpKind, sources: Vec<String>, destination: Option<String>, ow
 
 fn shell_error(code: i32) -> String {
     let text = match code {
-        0x71 => "來源與目的地是同一個檔案。",
-        0x72 | 0x7A => "來源與目的地數量不相符。",
-        0x73 => "來源與目的地不在同一個資料夾。",
-        0x74 => "不能對根目錄執行這個操作。",
-        0x75 => "操作已取消。",
-        0x76 | 0x7D => "目的地位於來源資料夾之內。",
-        0x78 => "無法存取來源，可能沒有權限。",
-        0x79 => "路徑過深。",
-        0x7C => "來源或目的地路徑無效。",
-        0x7E => "目的地是檔案而不是資料夾。",
-        0x80 => "目的地已有同名資料夾。",
-        0x81 => "檔名或路徑過長。",
-        0x82..=0x84 => "目的地是唯讀的光碟媒體。",
-        0x85 => "檔案大小超過目的地檔案系統的上限。",
-        0x86..=0x88 => "來源是唯讀的光碟媒體。",
-        0x10000 => "目的地發生錯誤。",
+        0x71 => tr!("來源與目的地是同一個檔案。", "The source and destination are the same file."),
+        0x72 | 0x7A => tr!("來源與目的地數量不相符。", "The number of sources and destinations doesn't match."),
+        0x73 => tr!("來源與目的地不在同一個資料夾。", "The source and destination aren't in the same folder."),
+        0x74 => tr!("不能對根目錄執行這個操作。", "This operation can't be done on a root folder."),
+        0x75 => tr!("操作已取消。", "The operation was cancelled."),
+        0x76 | 0x7D => tr!("目的地位於來源資料夾之內。", "The destination is inside the source folder."),
+        0x78 => tr!("無法存取來源，可能沒有權限。", "Can't access the source; you may not have permission."),
+        0x79 => tr!("路徑過深。", "The path is too deep."),
+        0x7C => tr!("來源或目的地路徑無效。", "The source or destination path is invalid."),
+        0x7E => tr!("目的地是檔案而不是資料夾。", "The destination is a file, not a folder."),
+        0x80 => tr!("目的地已有同名資料夾。", "A folder with the same name already exists at the destination."),
+        0x81 => tr!("檔名或路徑過長。", "The file name or path is too long."),
+        0x82..=0x84 => tr!("目的地是唯讀的光碟媒體。", "The destination is read-only disc media."),
+        0x85 => tr!("檔案大小超過目的地檔案系統的上限。", "The file is larger than the destination file system allows."),
+        0x86..=0x88 => tr!("來源是唯讀的光碟媒體。", "The source is read-only disc media."),
+        0x10000 => tr!("目的地發生錯誤。", "An error occurred at the destination."),
         _ => "",
     };
     if !text.is_empty() {
@@ -69,7 +69,7 @@ fn shell_error(code: i32) -> String {
     if (1..0x70).contains(&code) {
         return error_text(code as u32);
     }
-    format!("Windows Shell 錯誤 0x{code:X}")
+    trf!("Windows Shell 錯誤 0x{code:X}", "Windows Shell error 0x{code:X}")
 }
 
 fn multi_sz(items: &[&str]) -> Vec<u16> {
@@ -124,13 +124,13 @@ fn execute(kind: OpKind, sources: &[String], destination: Option<&str>, owner: H
     };
     if let Some(dest) = destination {
         if !fs::is_dir(dest) {
-            return OpReport::rejected(kind, sources.len(), "目的地無法使用：目的地必須是已存在的資料夾。".into());
+            return OpReport::rejected(kind, sources.len(), tr!("目的地無法使用：目的地必須是已存在的資料夾。", "The destination can't be used: it must be an existing folder.").into());
         }
         match fs::reparse_in_ancestors(dest, false) {
             Ok(Some(p)) => {
-                return OpReport::rejected(kind, sources.len(), format!("目的地無法使用：此版本不處理連結（junction、符號連結）或透過連結的路徑：{p}"))
+                return OpReport::rejected(kind, sources.len(), trf!("目的地無法使用：此版本不處理連結（junction、符號連結）或透過連結的路徑：{p}", "The destination can't be used: this version doesn't handle links (junctions, symbolic links) or paths through them: {p}"))
             }
-            Err(e) => return OpReport::rejected(kind, sources.len(), format!("目的地無法使用：{e}")),
+            Err(e) => return OpReport::rejected(kind, sources.len(), trf!("目的地無法使用：{e}", "The destination can't be used: {e}")),
             Ok(None) => {}
         }
     }
@@ -142,13 +142,13 @@ fn execute(kind: OpKind, sources: &[String], destination: Option<&str>, owner: H
         match item {
             Err(r) => {
                 skipped += 1;
-                errors.push(format!("{}：{}", r.label, r.reason));
+                errors.push(trf!("{}：{}", "{}: {}", r.label, r.reason));
             }
             Ok(p) => match check(kind, &p) {
                 Ok(()) => accepted.push(p),
                 Err(e) => {
                     skipped += 1;
-                    errors.push(format!("{}：{}", p.source, e));
+                    errors.push(trf!("{}：{}", "{}: {}", p.source, e));
                 }
             },
         }
@@ -164,8 +164,8 @@ fn execute(kind: OpKind, sources: &[String], destination: Option<&str>, owner: H
         let srcs: Vec<&str> = batch.iter().map(|p| p.source.as_str()).collect();
         let (aborted, rc) = shell_operation(kind, &srcs, destination, rename, owner);
         if aborted {
-            errors.push(format!(
-                "Windows 已取消或中止{}；可能已有部分內容完成，未自動復原。後續項目未執行。",
+            errors.push(trf!(
+                "Windows 已取消或中止{}；可能已有部分內容完成，未自動復原。後續項目未執行。", "Windows cancelled or stopped the {}; some of it may already be done and wasn't undone automatically. The remaining items weren't processed.",
                 kind.verb()
             ));
             let remaining = accepted.len() - completed;
@@ -173,7 +173,7 @@ fn execute(kind: OpKind, sources: &[String], destination: Option<&str>, owner: H
         }
         if rc != 0 {
             skipped += batch.len();
-            errors.push(format!("{} 個項目：{} 可能已有部分內容完成，未自動復原。", batch.len(), shell_error(rc)));
+            errors.push(trn!(batch.len(); "{} 個項目：{} 可能已有部分內容完成，未自動復原。", "{} item: {} Some of it may already be done and wasn't undone automatically.", "{} items: {} Some of it may already be done and wasn't undone automatically.", batch.len(), shell_error(rc)));
         } else {
             completed += batch.len();
         }
@@ -207,7 +207,7 @@ fn exists(path: &str) -> bool {
 
 fn ensure_parent(path: &str) -> Result<(), String> {
     match paths::parent(path) {
-        Some(dir) if !fs::is_dir(&dir) => std::fs::create_dir_all(paths::to_long_path(&dir)).map_err(|e| format!("無法建立原本的資料夾：{e}")),
+        Some(dir) if !fs::is_dir(&dir) => std::fs::create_dir_all(paths::to_long_path(&dir)).map_err(|e| trf!("無法建立原本的資料夾：{e}", "Couldn't create the original folder: {e}")),
         _ => Ok(()),
     }
 }
@@ -223,10 +223,10 @@ fn move_back(from: &str, to: &str, owner: HWND) -> Result<(), String> {
     if code != ERROR_NOT_SAME_DEVICE {
         return Err(error_text(code));
     }
-    let Some(dir) = paths::parent(to) else { return Err("找不到原本的資料夾。".into()) };
+    let Some(dir) = paths::parent(to) else { return Err(tr!("找不到原本的資料夾。", "Can't find the original folder.").into()) };
     let (aborted, rc) = shell_operation(OpKind::Move, &[from], Some(&dir), false, owner);
     if aborted {
-        Err("已取消。".into())
+        Err(tr!("已取消。", "Cancelled.").into())
     } else if rc != 0 {
         Err(shell_error(rc))
     } else {
@@ -239,9 +239,9 @@ fn undo_moves(items: &[(String, String)], owner: HWND) -> OpReport {
     for (original, moved) in items {
         let name = paths::file_name(original);
         let result = if !exists(moved) {
-            Err("找不到移動後的項目，可能已被移動、重新命名或刪除。".to_string())
+            Err(tr!("找不到移動後的項目，可能已被移動、重新命名或刪除。", "Can't find the moved item; it may have been moved, renamed or deleted.").to_string())
         } else if exists(original) {
-            Err("原位置已有同名項目，沒有覆蓋。".to_string())
+            Err(tr!("原位置已有同名項目，沒有覆蓋。", "An item with the same name is already at the original location; it wasn't overwritten.").to_string())
         } else {
             ensure_parent(original).and_then(|()| move_back(moved, original, owner))
         };
@@ -249,7 +249,7 @@ fn undo_moves(items: &[(String, String)], owner: HWND) -> OpReport {
             Ok(()) => report.completed += 1,
             Err(e) => {
                 report.skipped += 1;
-                report.errors.push(format!("{name}：{e}"));
+                report.errors.push(trf!("{name}：{e}", "{name}: {e}"));
             }
         }
     }
@@ -292,21 +292,21 @@ fn undo_recycle(items: &[String], since: u64, until: u64) -> OpReport {
             let root_len = paths::root_len(original);
             let root = original.get(..root_len).unwrap_or("");
             if root.is_empty() {
-                return Err("路徑無效。".into());
+                return Err(tr!("路徑無效。", "Invalid path.").into());
             }
             if root.starts_with(r"\") && !root.starts_with(r"\?") {
-                return Err("網路位置刪除的項目不會進資源回收筒，無法復原。".into());
+                return Err(tr!("網路位置刪除的項目不會進資源回收筒，無法復原。", "Items deleted from network locations don't go to the Recycle Bin, so this can't be undone.").into());
             }
             if exists(original) {
-                return Err("原位置已有同名項目，沒有覆蓋。".into());
+                return Err(tr!("原位置已有同名項目，沒有覆蓋。", "An item with the same name is already at the original location; it wasn't overwritten.").into());
             }
             let records = bins.entry(root.to_lowercase()).or_insert_with(|| scan_bin(root));
             let infos: Vec<RecycleInfo> = records.iter().map(|r| r.2.clone()).collect();
             let Some(i) = undo::pick_restore(&infos, original, since, until) else {
-                return Err("在資源回收筒找不到，可能已永久刪除或資源回收筒已清空。".into());
+                return Err(tr!("在資源回收筒找不到，可能已永久刪除或資源回收筒已清空。", "It's not in the Recycle Bin; it may have been permanently deleted or the Recycle Bin was emptied.").into());
             };
             let (dir, info_name, _) = records.remove(i);
-            let data_name = undo::data_name_for(&info_name).ok_or("資源回收筒的紀錄格式不符。")?;
+            let data_name = undo::data_name_for(&info_name).ok_or(tr!("資源回收筒的紀錄格式不符。", "The Recycle Bin record has an unexpected format."))?;
             let data = dir.join(&data_name).to_string_lossy().into_owned();
             ensure_parent(original)?;
             super::fileops::rename(&data, original)?;
@@ -321,7 +321,7 @@ fn undo_recycle(items: &[String], since: u64, until: u64) -> OpReport {
             Ok(()) => report.completed += 1,
             Err(e) => {
                 report.skipped += 1;
-                report.errors.push(format!("{name}：{e}"));
+                report.errors.push(trf!("{name}：{e}", "{name}: {e}"));
             }
         }
     }
@@ -340,18 +340,18 @@ fn undo_recycle(items: &[String], since: u64, until: u64) -> OpReport {
 /// 需要讀檔案系統的檢查（移植自 C#）。
 fn check(kind: OpKind, p: &Planned) -> Result<(), String> {
     let Some(attrs) = fs::attributes(&p.source) else {
-        return Err(format!("找不到或無法讀取來源（{}）", last_error_text()));
+        return Err(trf!("找不到或無法讀取來源（{}）", "Can't find or read the source ({})", last_error_text()));
     };
     if kind == OpKind::Delete {
         return Ok(());
     }
     if let Some(link) = fs::reparse_in_ancestors(&p.source, false)? {
-        return Err(format!("此版本不處理連結（junction、符號連結）或透過連結的路徑：{link}"));
+        return Err(trf!("此版本不處理連結（junction、符號連結）或透過連結的路徑：{link}", "This version doesn't handle links (junctions, symbolic links) or paths through them: {link}"));
     }
     let is_dir = attrs & FILE_ATTRIBUTE_DIRECTORY != 0;
     if is_dir {
         if let Some(link) = fs::reparse_in_tree(&p.source)? {
-            return Err(format!("資料夾內含連結（junction、符號連結），未開始操作：{link}"));
+            return Err(trf!("資料夾內含連結（junction、符號連結），未開始操作：{link}", "The folder contains links (junctions, symbolic links), so the operation wasn't started: {link}"));
         }
     }
     if let Some(target) = &p.target {
@@ -359,16 +359,16 @@ fn check(kind: OpKind, p: &Planned) -> Result<(), String> {
             return Ok(());
         }
         if let Some(link) = fs::reparse_in_ancestors(target, true)? {
-            return Err(format!("此版本不處理連結（junction、符號連結）或透過連結的路徑：{link}"));
+            return Err(trf!("此版本不處理連結（junction、符號連結）或透過連結的路徑：{link}", "This version doesn't handle links (junctions, symbolic links) or paths through them: {link}"));
         }
         if let Some(ta) = fs::attributes(target) {
             let target_dir = ta & FILE_ATTRIBUTE_DIRECTORY != 0;
             if target_dir != is_dir {
-                return Err("目的地已有不同類型的同名項目，已略過。".into());
+                return Err(tr!("目的地已有不同類型的同名項目，已略過。", "An item of a different type with the same name is already at the destination; skipped.").into());
             }
             if target_dir {
                 if let Some(link) = fs::reparse_in_tree(target)? {
-                    return Err(format!("目的資料夾內含連結（junction、符號連結），未開始操作：{link}"));
+                    return Err(trf!("目的資料夾內含連結（junction、符號連結），未開始操作：{link}", "The destination folder contains links (junctions, symbolic links), so the operation wasn't started: {link}"));
                 }
             }
         }
@@ -379,7 +379,7 @@ fn check(kind: OpKind, p: &Planned) -> Result<(), String> {
 /// 在指定資料夾建立「新增資料夾」，名稱重複時加上 (2)、(3)…
 pub fn create_new_folder(dir: &str) -> Result<String, String> {
     for i in 1..1000 {
-        let name = if i == 1 { "新增資料夾".to_string() } else { format!("新增資料夾 ({i})") };
+        let name = if i == 1 { tr!("新增資料夾", "New folder").to_string() } else { trf!("新增資料夾 ({i})", "New folder ({i})") };
         let path = feather_core::paths::join(dir, &name);
         if fs::attributes(&path).is_some() {
             continue;
@@ -393,7 +393,7 @@ pub fn create_new_folder(dir: &str) -> Result<String, String> {
             return Err(error_text(code));
         }
     }
-    Err("無法決定新資料夾名稱。".into())
+    Err(tr!("無法決定新資料夾名稱。", "Couldn't pick a name for the new folder.").into())
 }
 
 pub fn rename(from: &str, to: &str) -> Result<(), String> {
@@ -404,7 +404,7 @@ pub fn rename(from: &str, to: &str) -> Result<(), String> {
     } else {
         let code = unsafe { GetLastError() };
         Err(if code == ERROR_ALREADY_EXISTS || code == ERROR_ALREADY_EXISTS_FILE {
-            "相同名稱已存在。".to_string()
+            tr!("相同名稱已存在。", "An item with that name already exists.").to_string()
         } else {
             error_text(code)
         })
@@ -429,9 +429,9 @@ pub fn shell_open(owner: HWND, path: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(match rc {
-            2 | 3 => "找不到檔案。".to_string(),
-            5 => "拒絕存取。".to_string(),
-            31 => "沒有可開啟這種檔案的應用程式。".to_string(),
+            2 | 3 => tr!("找不到檔案。", "File not found.").to_string(),
+            5 => tr!("拒絕存取。", "Access denied.").to_string(),
+            31 => tr!("沒有可開啟這種檔案的應用程式。", "No app is associated with this type of file.").to_string(),
             _ => last_error_text(),
         })
     }

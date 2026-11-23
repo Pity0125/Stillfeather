@@ -36,7 +36,7 @@ pub fn parse(text: &str) -> Result<Value, String> {
     let v = p.value(0)?;
     p.ws();
     if p.i != p.s.len() {
-        return Err(format!("JSON 第 {} 個位元組之後有多餘內容", p.i));
+        return Err(trf!("JSON 第 {} 個位元組之後有多餘內容", "Unexpected content after byte {} of the JSON", p.i));
     }
     Ok(v)
 }
@@ -55,15 +55,15 @@ impl<'a> Parser<'a> {
     }
 
     fn err<T>(&self, what: &str) -> Result<T, String> {
-        Err(format!("JSON 格式錯誤（位置 {}）：{}", self.i, what))
+        Err(trf!("JSON 格式錯誤（位置 {}）：{}", "Invalid JSON (position {}): {}", self.i, what))
     }
 
     fn value(&mut self, depth: usize) -> Result<Value, String> {
         if depth > MAX_DEPTH {
-            return self.err("巢狀層數過深");
+            return self.err(tr!("巢狀層數過深", "nesting too deep"));
         }
         match self.s.get(self.i) {
-            None => self.err("內容意外結束"),
+            None => self.err(tr!("內容意外結束", "unexpected end of content")),
             Some(b'{') => self.object(depth),
             Some(b'[') => self.array(depth),
             Some(b'"') => Ok(Value::Str(self.string()?)),
@@ -71,7 +71,7 @@ impl<'a> Parser<'a> {
             Some(b'f') => self.literal("false", Value::Bool(false)),
             Some(b'n') => self.literal("null", Value::Null),
             Some(c) if *c == b'-' || c.is_ascii_digit() => self.number(),
-            Some(_) => self.err("無法辨識的值"),
+            Some(_) => self.err(tr!("無法辨識的值", "unrecognized value")),
         }
     }
 
@@ -80,7 +80,7 @@ impl<'a> Parser<'a> {
             self.i += word.len();
             Ok(v)
         } else {
-            self.err("無法辨識的常值")
+            self.err(tr!("無法辨識的常值", "unrecognized literal"))
         }
     }
 
@@ -95,17 +95,17 @@ impl<'a> Parser<'a> {
             self.i += 1;
         }
         let slice = &self.text[start..self.i];
-        slice.parse::<f64>().map(Value::Num).or_else(|_| self.err("數字格式錯誤"))
+        slice.parse::<f64>().map(Value::Num).or_else(|_| self.err(tr!("數字格式錯誤", "invalid number")))
     }
 
     fn hex4(&mut self) -> Result<u32, String> {
         let Some(digits) = self.s.get(self.i..self.i + 4) else {
-            return self.err("\\u 跳脫不完整");
+            return self.err(tr!("\\u 跳脫不完整", "incomplete \\u escape"));
         };
         // 逐位元組檢查：`\u` 後面若接中文等多位元組字元，直接切字串會落在字元中間而閃退。
         let mut v = 0u32;
         for &b in digits {
-            let Some(d) = (b as char).to_digit(16) else { return self.err("\\u 跳脫不是十六進位") };
+            let Some(d) = (b as char).to_digit(16) else { return self.err(tr!("\\u 跳脫不是十六進位", "\\u escape isn't hexadecimal")) };
             v = v * 16 + d;
         }
         self.i += 4;
@@ -116,7 +116,7 @@ impl<'a> Parser<'a> {
         self.i += 1; // opening quote
         let mut out = String::new();
         loop {
-            let Some(&c) = self.s.get(self.i) else { return self.err("字串未結束") };
+            let Some(&c) = self.s.get(self.i) else { return self.err(tr!("字串未結束", "unterminated string")) };
             match c {
                 b'"' => {
                     self.i += 1;
@@ -124,7 +124,7 @@ impl<'a> Parser<'a> {
                 }
                 b'\\' => {
                     self.i += 1;
-                    let Some(&e) = self.s.get(self.i) else { return self.err("跳脫序列不完整") };
+                    let Some(&e) = self.s.get(self.i) else { return self.err(tr!("跳脫序列不完整", "incomplete escape sequence")) };
                     self.i += 1;
                     match e {
                         b'"' => out.push('"'),
@@ -142,24 +142,24 @@ impl<'a> Parser<'a> {
                                     self.i += 2;
                                     let lo = self.hex4()?;
                                     if !(0xDC00..0xE000).contains(&lo) {
-                                        return self.err("代理對不完整");
+                                        return self.err(tr!("代理對不完整", "incomplete surrogate pair"));
                                     }
                                     0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00)
                                 } else {
-                                    return self.err("代理對不完整");
+                                    return self.err(tr!("代理對不完整", "incomplete surrogate pair"));
                                 }
                             } else {
                                 hi
                             };
                             match char::from_u32(code) {
                                 Some(ch) => out.push(ch),
-                                None => return self.err("無效的 Unicode 字元"),
+                                None => return self.err(tr!("無效的 Unicode 字元", "invalid Unicode character")),
                             }
                         }
-                        _ => return self.err("未知的跳脫字元"),
+                        _ => return self.err(tr!("未知的跳脫字元", "unknown escape character")),
                     }
                 }
-                c if c < 0x20 => return self.err("字串內含控制字元"),
+                c if c < 0x20 => return self.err(tr!("字串內含控制字元", "control character in string")),
                 _ => {
                     // 複製一段連續的一般 UTF-8 位元組
                     let start = self.i;
@@ -190,7 +190,7 @@ impl<'a> Parser<'a> {
                     self.i += 1;
                     return Ok(Value::Arr(items));
                 }
-                _ => return self.err("陣列缺少 , 或 ]"),
+                _ => return self.err(tr!("陣列缺少 , 或 ]", "array is missing , or ]")),
             }
         }
     }
@@ -206,12 +206,12 @@ impl<'a> Parser<'a> {
         loop {
             self.ws();
             if self.s.get(self.i) != Some(&b'"') {
-                return self.err("物件鍵必須是字串");
+                return self.err(tr!("物件鍵必須是字串", "object keys must be strings"));
             }
             let key = self.string()?;
             self.ws();
             if self.s.get(self.i) != Some(&b':') {
-                return self.err("物件缺少 :");
+                return self.err(tr!("物件缺少 :", "object is missing :"));
             }
             self.i += 1;
             self.ws();
@@ -224,7 +224,7 @@ impl<'a> Parser<'a> {
                     self.i += 1;
                     return Ok(Value::Obj(items));
                 }
-                _ => return self.err("物件缺少 , 或 }"),
+                _ => return self.err(tr!("物件缺少 , 或 }", "object is missing , or }")),
             }
         }
     }

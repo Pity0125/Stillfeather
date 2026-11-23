@@ -24,7 +24,7 @@ const DRIVES_KEY: &str = "::drives";
 impl App {
     pub(super) fn create_tree(&mut self) -> HWND {
         let class = wide("SysTreeView32");
-        let name = wide("資料夾樹狀導覽");
+        let name = wide(tr!("資料夾樹狀導覽", "Folder tree"));
         let tree = unsafe {
             CreateWindowExW(
                 0,
@@ -148,18 +148,18 @@ impl App {
         self.tree_fx.clear();
         self.tree_top = 0;
         let folder = self.icons.tree_blank;
-        let fav = self.insert_node(TVI_ROOT, "常用位置", folder, true, true, Node {
+        let fav = self.insert_node(TVI_ROOT, tr!("常用位置", "Favorites"), folder, true, true, Node {
             path: FAVORITES_KEY.into(),
             kind: NodeKind::Header,
             loaded: true,
             token: 0,
         });
         let known = [
-            ("使用者", Some(fs::profile_dir())),
-            ("桌面", fs::known_folder(&fs::FOLDERID_DESKTOP)),
-            ("文件", fs::known_folder(&fs::FOLDERID_DOCUMENTS)),
-            ("下載", fs::known_folder(&fs::FOLDERID_DOWNLOADS)),
-            ("圖片", fs::known_folder(&fs::FOLDERID_PICTURES)),
+            (tr!("使用者", "User"), Some(fs::profile_dir())),
+            (tr!("桌面", "Desktop"), fs::known_folder(&fs::FOLDERID_DESKTOP)),
+            (tr!("文件", "Documents"), fs::known_folder(&fs::FOLDERID_DOCUMENTS)),
+            (tr!("下載", "Downloads"), fs::known_folder(&fs::FOLDERID_DOWNLOADS)),
+            (tr!("圖片", "Pictures"), fs::known_folder(&fs::FOLDERID_PICTURES)),
         ];
         for (label, path) in known {
             if let Some(p) = path {
@@ -170,7 +170,7 @@ impl App {
             let label = paths::tab_title(&p);
             self.insert_node(fav, &label, folder, true, false, Node { path: p, kind: NodeKind::Favorite { custom: true }, loaded: false, token: 0 });
         }
-        let drives = self.insert_node(TVI_ROOT, "磁碟", folder, true, true, Node {
+        let drives = self.insert_node(TVI_ROOT, tr!("磁碟", "Drives"), folder, true, true, Node {
             path: DRIVES_KEY.into(),
             kind: NodeKind::Header,
             loaded: true,
@@ -299,7 +299,7 @@ impl App {
         node.loaded = true;
         node.token = token;
         let path = node.path.clone();
-        self.info_node(item, "讀取中…");
+        self.info_node(item, tr!("讀取中…", "Loading…"));
         std::thread::spawn(move || {
             let cancel = AtomicBool::new(false);
             let result = fs::child_folders(&path, show_hidden, &cancel);
@@ -322,11 +322,11 @@ impl App {
                     self.insert_node(item, &f.name, folder, !f.is_link, false, Node { path: f.path, kind: NodeKind::Folder, loaded: false, token: 0 });
                 }
                 if listing.truncated {
-                    self.info_node(item, &format!("僅顯示前 {} 個資料夾", feather_core::format::group_digits(fs::TREE_MAX_CHILDREN as u64)));
+                    self.info_node(item, &trf!("僅顯示前 {} 個資料夾", "Only the first {} folders are shown", feather_core::format::group_digits(fs::TREE_MAX_CHILDREN as u64)));
                 }
             }
             Err(FsError::Cancelled) => {}
-            Err(FsError::Message(e)) => self.info_node(item, &format!("無法讀取：{e}")),
+            Err(FsError::Message(e)) => self.info_node(item, &trf!("無法讀取：{e}", "Couldn't read: {e}")),
         }
     }
 
@@ -437,7 +437,7 @@ impl App {
                 // 拖曳資料夾到這裡：標題變成重點色並提示放開即可釘選
                 let pill = RECT { left: row.left + self.s(4), top: row.top + self.s(4), right: row.right - self.s(4), bottom: row.bottom };
                 theme::round_rect(hdc, &pill, self.s(12), Some(theme::blend(p.accent, p.sidebar, 0.14)), Some(p.accent));
-                theme::draw_text(hdc, "放開即可釘選到常用位置", &tr, f.small_bold, p.accent, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                theme::draw_text(hdc, tr!("放開即可釘選到常用位置", "Release to pin to Favorites"), &tr, f.small_bold, p.accent, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                 return;
             }
             theme::draw_text(hdc, &label, &tr, f.small_bold, p.sidebar_muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -589,20 +589,20 @@ impl App {
         let pinned = self.is_pinned(&path);
         let is_root = paths::parent(&path).is_none();
         // 版面同清單的右鍵選單：開啟／編輯／整理，接著是 Windows 與已安裝程式的項目，最後是內容
-        let open = vec![Cmd::new(id::OPEN, "開啟", glyph::OPEN), Cmd::new(id::OPEN_NEW_TAB, "在新分頁開啟", glyph::OPEN_NEW_TAB)];
+        let open = vec![Cmd::new(id::OPEN, tr!("開啟", "Open"), glyph::OPEN), Cmd::new(id::OPEN_NEW_TAB, tr!("在新分頁開啟", "Open in new tab"), glyph::OPEN_NEW_TAB)];
         let edit = vec![
-            Cmd::new(id::CUT, "剪下", glyph::CUT).enabled(!is_root),
-            Cmd::new(id::COPY, "複製", glyph::COPY),
-            Cmd::new(id::DELETE, "刪除", glyph::DELETE).enabled(!is_root),
+            Cmd::new(id::CUT, tr!("剪下", "Cut"), glyph::CUT).enabled(!is_root),
+            Cmd::new(id::COPY, tr!("複製", "Copy"), glyph::COPY),
+            Cmd::new(id::DELETE, tr!("刪除", "Delete"), glyph::DELETE).enabled(!is_root),
         ];
         let mut organize = Vec::new();
         if pinned {
-            organize.push(Cmd::new(id::REMOVE_FAVORITE, "從常用位置取消釘選", glyph::UNPIN));
+            organize.push(Cmd::new(id::REMOVE_FAVORITE, tr!("從常用位置取消釘選", "Unpin from Favorites"), glyph::UNPIN));
         } else if !builtin {
-            organize.push(Cmd::new(id::ADD_FAVORITE, "釘選到常用位置", glyph::PIN));
+            organize.push(Cmd::new(id::ADD_FAVORITE, tr!("釘選到常用位置", "Pin to Favorites"), glyph::PIN));
         }
-        organize.push(Cmd::new(id::COPY_PATH, "複製路徑", glyph::LINK));
-        let last = vec![Cmd::new(id::PROPERTIES, "內容", glyph::PROPERTIES)];
+        organize.push(Cmd::new(id::COPY_PATH, tr!("複製路徑", "Copy path"), glyph::LINK));
+        let last = vec![Cmd::new(id::PROPERTIES, tr!("內容", "Properties"), glyph::PROPERTIES)];
         let shell = shellmenu::ShellMenu::for_items(self.hwnd, std::slice::from_ref(&path));
         let parts = [Part::Ours(open), Part::Ours(edit), Part::Ours(organize), Part::Shell, Part::Ours(last)];
         let look = self.menu_look();

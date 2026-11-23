@@ -31,6 +31,44 @@ impl ThemeMode {
     }
 }
 
+/// 介面語言
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Language {
+    /// 跟隨 Windows 的顯示語言：中文（繁體、簡體）用繁體中文，其他用英文
+    #[default]
+    System,
+    Chinese,
+    English,
+}
+
+impl Language {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Language::System => "System",
+            Language::Chinese => "zh-TW",
+            Language::English => "en",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Language> {
+        match s {
+            "System" => Some(Language::System),
+            "zh-TW" | "zh" => Some(Language::Chinese),
+            "en" | "en-US" => Some(Language::English),
+            _ => None,
+        }
+    }
+
+    /// 要不要用英文：`system_chinese` 是 Windows 的顯示語言是不是中文
+    pub fn english(self, system_chinese: bool) -> bool {
+        match self {
+            Language::System => !system_chinese,
+            Language::Chinese => false,
+            Language::English => true,
+        }
+    }
+}
+
 pub const SIDEBAR_MIN: i32 = 130;
 pub const SIDEBAR_MAX: i32 = 500;
 pub const SPLIT_MIN: i32 = 25;
@@ -60,6 +98,15 @@ pub struct Settings {
     pub view_mode: ViewMode,
     /// 有新版本時提醒（Rust 版專用）；設定裡的「不要啟用更新提醒」就是把它關掉
     pub update_reminders: bool,
+    /// 啟動時還原上次的分頁（Rust 版專用，見 session.rs）
+    pub restore_tabs: bool,
+    /// 相片資料夾（圖片與影片佔一半以上）沒記住檢視時用大圖示顯示縮圖，和檔案總管相同（Rust 版專用）。
+    /// 「套用到所有資料夾」時關掉：之後所有資料夾都用同一個檢視。
+    pub media_folder_icons: bool,
+    /// 介面語言（Rust 版專用；改了要重新開啟才套用）
+    pub language: Language,
+    /// 排序時資料夾一律在最前面（Rust 版專用）。關著時和檔案總管相同：遞增在前、遞減在後。
+    pub folders_on_top: bool,
 }
 
 impl Default for Settings {
@@ -80,6 +127,10 @@ impl Default for Settings {
             personalize_collapsed: false,
             view_mode: ViewMode::Details,
             update_reminders: true,
+            restore_tabs: true,
+            media_folder_icons: true,
+            language: Language::System,
+            folders_on_top: false,
         }
     }
 }
@@ -102,21 +153,21 @@ impl Settings {
     /// 與 C# `SettingsService.Validate` 相同的規則；常用位置會去除重複（不分大小寫）。
     pub fn validate(&mut self) -> Result<(), String> {
         if !(SIDEBAR_MIN..=SIDEBAR_MAX).contains(&self.sidebar_width) {
-            return Err(format!("側欄寬度需介於 {SIDEBAR_MIN} 與 {SIDEBAR_MAX}。"));
+            return Err(trf!("側欄寬度需介於 {SIDEBAR_MIN} 與 {SIDEBAR_MAX}。", "The sidebar width must be between {SIDEBAR_MIN} and {SIDEBAR_MAX}."));
         }
         if !(SPLIT_MIN..=SPLIT_MAX).contains(&self.split_percent) {
-            return Err(format!("左欄比例需介於 {SPLIT_MIN}% 與 {SPLIT_MAX}%。"));
+            return Err(trf!("左欄比例需介於 {SPLIT_MIN}% 與 {SPLIT_MAX}%。", "The left pane ratio must be between {SPLIT_MIN}% and {SPLIT_MAX}%."));
         }
         for c in [&self.accent_color, &self.background_color].into_iter().flatten() {
             if parse_color(c).is_none() {
-                return Err("自訂顏色必須是 #RRGGBB，或留白使用預設。".to_string());
+                return Err(tr!("自訂顏色必須是 #RRGGBB，或留白使用預設。", "Custom colors must be #RRGGBB, or leave them blank to use the default.").to_string());
             }
         }
         if self.favorites.len() > MAX_FAVORITES {
-            return Err(format!("常用位置最多 {MAX_FAVORITES} 個。"));
+            return Err(trf!("常用位置最多 {MAX_FAVORITES} 個。", "Up to {MAX_FAVORITES} favorites are allowed."));
         }
         if self.favorites.iter().any(|p| p.trim().is_empty() || !paths::is_fully_qualified(p)) {
-            return Err("常用位置必須是完整資料夾路徑。".to_string());
+            return Err(tr!("常用位置必須是完整資料夾路徑。", "Favorites must be full folder paths.").to_string());
         }
         let mut unique: Vec<String> = Vec::with_capacity(self.favorites.len());
         for f in self.favorites.drain(..) {
@@ -130,20 +181,20 @@ impl Settings {
 
     pub fn from_json(text: &str) -> Result<Settings, String> {
         if text.len() as u64 > MAX_FILE_BYTES {
-            return Err("設定檔超過大小限制。".to_string());
+            return Err(tr!("設定檔超過大小限制。", "The settings file is larger than the size limit.").to_string());
         }
         let root = json::parse(text)?;
         if !matches!(root, Value::Obj(_)) {
-            return Err("設定檔內容必須是 JSON 物件。".to_string());
+            return Err(tr!("設定檔內容必須是 JSON 物件。", "The settings file must contain a JSON object.").to_string());
         }
         let mut s = Settings::default();
         if let Some(v) = root.get("ThemeMode") {
             match v {
                 Value::Str(m) => {
-                    s.theme_mode = ThemeMode::parse(m).ok_or("主題模式必須為跟隨系統、淺色或深色。")?;
+                    s.theme_mode = ThemeMode::parse(m).ok_or(tr!("主題模式必須為跟隨系統、淺色或深色。", "The theme must be System, Light or Dark."))?;
                 }
                 Value::Null => {}
-                _ => return Err("ThemeMode 必須是字串。".into()),
+                _ => return Err(tr!("ThemeMode 必須是字串。", "ThemeMode must be a string.").into()),
             }
         }
         s.accent_color = opt_string(&root, "AccentColor")?;
@@ -163,17 +214,26 @@ impl Settings {
             ("SpacePreview", &mut s.space_preview),
             ("PersonalizeCollapsed", &mut s.personalize_collapsed),
             ("UpdateReminders", &mut s.update_reminders),
+            ("RestoreTabs", &mut s.restore_tabs),
+            ("MediaFolderIcons", &mut s.media_folder_icons),
+            ("FoldersOnTop", &mut s.folders_on_top),
         ] {
             match root.get(key) {
                 None | Some(Value::Null) => {}
                 Some(Value::Bool(b)) => *slot = *b,
-                Some(_) => return Err(format!("{key} 必須是 true 或 false。")),
+                Some(_) => return Err(trf!("{key} 必須是 true 或 false。", "{key} must be true or false.")),
             }
+        }
+        match root.get("Language") {
+            None | Some(Value::Null) => {}
+            // 不認得的語言（例如更新的版本加的）當成跟隨系統，不讓整個設定檔讀不進來
+            Some(Value::Str(l)) => s.language = Language::parse(l).unwrap_or_default(),
+            Some(_) => return Err(tr!("Language 必須是字串。", "Language must be a string.").into()),
         }
         match root.get("ViewMode") {
             None | Some(Value::Null) => {}
-            Some(Value::Str(m)) => s.view_mode = ViewMode::parse(m).ok_or("ViewMode 不是可用的檢視模式。")?,
-            Some(_) => return Err("ViewMode 必須是字串。".into()),
+            Some(Value::Str(m)) => s.view_mode = ViewMode::parse(m).ok_or(tr!("ViewMode 不是可用的檢視模式。", "ViewMode isn't an available view."))?,
+            Some(_) => return Err(tr!("ViewMode 必須是字串。", "ViewMode must be a string.").into()),
         }
         match root.get("Favorites") {
             None | Some(Value::Null) => {}
@@ -181,11 +241,11 @@ impl Settings {
                 for item in items {
                     match item {
                         Value::Str(p) => s.favorites.push(p.clone()),
-                        _ => return Err("常用位置必須是字串陣列。".into()),
+                        _ => return Err(tr!("常用位置必須是字串陣列。", "Favorites must be an array of strings.").into()),
                     }
                 }
             }
-            Some(_) => return Err("常用位置必須是字串陣列。".into()),
+            Some(_) => return Err(tr!("常用位置必須是字串陣列。", "Favorites must be an array of strings.").into()),
         }
         s.validate()?;
         Ok(s)
@@ -200,7 +260,7 @@ impl Settings {
             format!("[\n{}\n  ]", items.join(",\n"))
         };
         format!(
-            "{{\n  \"ThemeMode\": {},\n  \"AccentColor\": {},\n  \"BackgroundColor\": {},\n  \"SidebarWidth\": {},\n  \"SplitPercent\": {},\n  \"CompactRows\": {},\n  \"ShowExtensions\": {},\n  \"ShowHidden\": {},\n  \"ImagePreview\": {},\n  \"PdfPreview\": {},\n  \"SpacePreview\": {},\n  \"PersonalizeCollapsed\": {},\n  \"ViewMode\": {},\n  \"UpdateReminders\": {},\n  \"Favorites\": {}\n}}",
+            "{{\n  \"ThemeMode\": {},\n  \"AccentColor\": {},\n  \"BackgroundColor\": {},\n  \"SidebarWidth\": {},\n  \"SplitPercent\": {},\n  \"CompactRows\": {},\n  \"ShowExtensions\": {},\n  \"ShowHidden\": {},\n  \"ImagePreview\": {},\n  \"PdfPreview\": {},\n  \"SpacePreview\": {},\n  \"PersonalizeCollapsed\": {},\n  \"ViewMode\": {},\n  \"UpdateReminders\": {},\n  \"RestoreTabs\": {},\n  \"MediaFolderIcons\": {},\n  \"Language\": {},\n  \"FoldersOnTop\": {},\n  \"Favorites\": {}\n}}",
             json::quote(self.theme_mode.as_str()),
             opt(&self.accent_color),
             opt(&self.background_color),
@@ -215,6 +275,10 @@ impl Settings {
             self.personalize_collapsed,
             json::quote(self.view_mode.as_str()),
             self.update_reminders,
+            self.restore_tabs,
+            self.media_folder_icons,
+            json::quote(self.language.as_str()),
+            self.folders_on_top,
             favorites
         )
     }
@@ -225,7 +289,7 @@ fn opt_string(root: &Value, key: &str) -> Result<Option<String>, String> {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Str(s)) if s.trim().is_empty() => Ok(None),
         Some(Value::Str(s)) => Ok(Some(s.clone())),
-        Some(_) => Err(format!("{key} 必須是字串或 null。")),
+        Some(_) => Err(trf!("{key} 必須是字串或 null。", "{key} must be a string or null.")),
     }
 }
 
@@ -233,7 +297,7 @@ fn opt_int(root: &Value, key: &str) -> Result<Option<i32>, String> {
     match root.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Num(n)) if n.fract() == 0.0 && n.abs() < 1e9 => Ok(Some(*n as i32)),
-        Some(_) => Err(format!("{key} 必須是整數。")),
+        Some(_) => Err(trf!("{key} 必須是整數。", "{key} must be an integer.")),
     }
 }
 
@@ -266,6 +330,10 @@ mod tests {
             personalize_collapsed: true,
             view_mode: ViewMode::Tiles,
             update_reminders: false,
+            restore_tabs: false,
+            media_folder_icons: false,
+            language: Language::English,
+            folders_on_top: true,
         };
         let text = s.to_json();
         assert!(text.contains("專案"));
@@ -278,6 +346,24 @@ mod tests {
         let s = Settings::from_json(text).unwrap();
         assert_eq!(s.theme_mode, ThemeMode::Light);
         assert_eq!(s.favorites, vec!["C:\\Users\\pity0\\Desktop\\win11".to_string(), "C:\\資料".to_string()]);
+        // 舊的設定檔沒有這兩個欄位：用預設值（還原分頁、相片資料夾用大圖示都開著）
+        assert!(s.restore_tabs && s.media_folder_icons);
+        assert_eq!(s.language, Language::System);
+        // 舊的設定檔沒有 FoldersOnTop：和檔案總管相同（遞減時資料夾在後面）
+        assert!(!s.folders_on_top);
+    }
+
+    #[test]
+    fn languages() {
+        assert_eq!(Settings::from_json("{\"Language\":\"en\"}").unwrap().language, Language::English);
+        assert_eq!(Settings::from_json("{\"Language\":\"zh-TW\"}").unwrap().language, Language::Chinese);
+        // 不認得的語言：跟隨系統，設定檔其他部分照常讀
+        assert_eq!(Settings::from_json("{\"Language\":\"fr\",\"CompactRows\":true}").unwrap().language, Language::System);
+        assert!(Settings::from_json("{\"Language\":1}").is_err());
+        assert!(Language::System.english(false));
+        assert!(!Language::System.english(true));
+        assert!(!Language::Chinese.english(false));
+        assert!(Language::English.english(true));
     }
 
     #[test]

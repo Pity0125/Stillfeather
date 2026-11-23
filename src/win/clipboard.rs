@@ -15,7 +15,7 @@ impl Clipboard {
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        Err("剪貼簿正被其他程式使用，請稍後再試。".into())
+        Err(tr!("剪貼簿正被其他程式使用，請稍後再試。", "The clipboard is being used by another program. Try again later.").into())
     }
 }
 
@@ -30,12 +30,12 @@ impl Drop for Clipboard {
 unsafe fn global_from_bytes(bytes: &[u8]) -> Result<HGLOBAL, String> {
     let h = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes.len().max(1));
     if h == 0 {
-        return Err("記憶體不足。".into());
+        return Err(tr!("記憶體不足。", "Out of memory.").into());
     }
     let p = GlobalLock(h) as *mut u8;
     if p.is_null() {
         GlobalFree(h);
-        return Err("記憶體不足。".into());
+        return Err(tr!("記憶體不足。", "Out of memory.").into());
     }
     std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
     GlobalUnlock(h);

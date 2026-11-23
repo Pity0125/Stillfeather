@@ -47,14 +47,14 @@ impl ViewMode {
     /// 選單上的名稱
     pub fn label(self) -> &'static str {
         match self {
-            ViewMode::ExtraLarge => "超大圖示",
-            ViewMode::Large => "大圖示",
-            ViewMode::Medium => "中圖示",
-            ViewMode::Small => "小圖示",
-            ViewMode::List => "清單",
-            ViewMode::Details => "詳細資料",
-            ViewMode::Tiles => "並排",
-            ViewMode::Content => "內容",
+            ViewMode::ExtraLarge => tr!("超大圖示", "Extra large icons"),
+            ViewMode::Large => tr!("大圖示", "Large icons"),
+            ViewMode::Medium => tr!("中圖示", "Medium icons"),
+            ViewMode::Small => tr!("小圖示", "Small icons"),
+            ViewMode::List => tr!("清單", "List"),
+            ViewMode::Details => tr!("詳細資料", "Details"),
+            ViewMode::Tiles => tr!("並排", "Tiles"),
+            ViewMode::Content => tr!("內容", "Content"),
         }
     }
 
@@ -67,6 +67,11 @@ impl ViewMode {
             ViewMode::Content => Some(32),
             ViewMode::Small | ViewMode::List | ViewMode::Details => None,
         }
+    }
+
+    /// 這個檢視會不會顯示縮圖（圖示類的檢視，和檔案總管相同）
+    pub fn shows_thumbnails(self) -> bool {
+        self.big_icon_px().is_some()
     }
 
     /// Ctrl+Shift+數字 的數字（1～8）

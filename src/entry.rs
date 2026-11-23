@@ -52,15 +52,15 @@ impl Entry {
     /// 類型欄：「連結」、「資料夾」、「PNG 檔案」、「檔案」。
     pub fn type_label(&self) -> String {
         if self.is_link {
-            "連結".to_string()
+            tr!("連結", "Link").to_string()
         } else if self.is_dir {
-            "資料夾".to_string()
+            tr!("資料夾", "Folder").to_string()
         } else {
             let ext = self.extension();
             if ext.is_empty() {
-                "檔案".to_string()
+                tr!("檔案", "File").to_string()
             } else {
-                format!("{} 檔案", ext.to_uppercase())
+                trf!("{} 檔案", "{} File", ext.to_uppercase())
             }
         }
     }

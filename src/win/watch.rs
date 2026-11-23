@@ -403,12 +403,13 @@ impl App {
     /// 使用者在讀完前自己導覽、搜尋或按 F5 時，這次結果會因世代不同而被忽略。
     fn start_auto_read(&mut self, id: TabId) -> Option<u64> {
         let show_hidden = self.show_hidden;
+        let folders_on_top = self.settings.folders_on_top;
         let tab = self.tabs.get_mut(&id)?;
         let (generation, cancel) = tab.begin_work();
         let (sort_col, desc) = (tab.sort_col, tab.desc);
         let path = tab.path.clone();
         std::thread::spawn(move || {
-            let result = fs::read_dir(&path, show_hidden, sort_col, desc, &cancel);
+            let result = fs::read_dir(&path, show_hidden, sort_col, desc, folders_on_top, &cancel);
             // 讀不到時順便確認資料夾還在不在：網路位置斷線時這要等很久，不能在介面執行緒上做
             let gone_to = match &result {
                 Err(FsError::Message(_)) if !fs::is_dir(&path) => watch::nearest_existing(&path, fs::is_dir),
@@ -442,7 +443,7 @@ impl App {
             }
         };
         // 讀取期間換了排序方式：依目前的排序排好再比較
-        sorting::sort_entries(&mut listing.entries, sort_col, desc);
+        sorting::sort_entries(&mut listing.entries, sort_col, desc, self.settings.folders_on_top);
         let Some(tab) = self.tabs.get(&id) else { return };
         let same_dir = tab.entries.first().is_none_or(|e| &*e.dir == path.as_str());
         if same_dir && watch::same_entries(&tab.entries, &listing.entries) {
@@ -474,7 +475,7 @@ impl App {
     fn folder_gone(&mut self, id: TabId, path: &str, target: &str) {
         super::crashlog::crumb("自動重新整理：顯示中的資料夾已不在，改顯示上一層");
         if id == self.active_tab_id() {
-            self.set_footer(format!("「{}」已被移走或刪除，改為顯示「{}」", paths::tab_title(path), paths::tab_title(target)));
+            self.set_footer(trf!("「{}」已被移走或刪除，改為顯示「{}」", "“{}” was moved or deleted, so “{}” is shown instead", paths::tab_title(path), paths::tab_title(target)));
         }
         self.navigate(id, target, NavKind::NoHistory, vec![]);
     }

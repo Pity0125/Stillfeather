@@ -53,27 +53,27 @@ impl<'a> Zip<'a> {
             }
             i -= 1;
         }
-        let e = eocd.ok_or("不是 ZIP 格式（找不到中央目錄）。")?;
-        let count = u16_at(data, e + 10).ok_or("ZIP 中央目錄損壞。")? as usize;
-        let cd_offset = u32_at(data, e + 16).ok_or("ZIP 中央目錄損壞。")? as usize;
+        let e = eocd.ok_or(tr!("不是 ZIP 格式（找不到中央目錄）。", "Not a ZIP file (no central directory found)."))?;
+        let count = u16_at(data, e + 10).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))? as usize;
+        let cd_offset = u32_at(data, e + 16).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))? as usize;
         if count == 0xFFFF || cd_offset == 0xFFFF_FFFF {
-            return Err("不支援 ZIP64 格式的大型檔案。".into());
+            return Err(tr!("不支援 ZIP64 格式的大型檔案。", "Large ZIP64 files aren't supported.").into());
         }
         let mut entries = Vec::with_capacity(count.min(10_000));
         let mut p = cd_offset;
         for _ in 0..count.min(100_000) {
             if u32_at(data, p) != Some(CENTRAL) {
-                return Err("ZIP 中央目錄損壞。".into());
+                return Err(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged.").into());
             }
-            let flags = u16_at(data, p + 8).ok_or("ZIP 中央目錄損壞。")?;
-            let method = u16_at(data, p + 10).ok_or("ZIP 中央目錄損壞。")?;
-            let compressed = u32_at(data, p + 20).ok_or("ZIP 中央目錄損壞。")? as usize;
-            let size = u32_at(data, p + 24).ok_or("ZIP 中央目錄損壞。")? as usize;
-            let name_len = u16_at(data, p + 28).ok_or("ZIP 中央目錄損壞。")? as usize;
-            let extra_len = u16_at(data, p + 30).ok_or("ZIP 中央目錄損壞。")? as usize;
-            let comment_len = u16_at(data, p + 32).ok_or("ZIP 中央目錄損壞。")? as usize;
-            let offset = u32_at(data, p + 42).ok_or("ZIP 中央目錄損壞。")? as usize;
-            let name = data.get(p + 46..p + 46 + name_len).ok_or("ZIP 中央目錄損壞。")?;
+            let flags = u16_at(data, p + 8).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))?;
+            let method = u16_at(data, p + 10).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))?;
+            let compressed = u32_at(data, p + 20).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))? as usize;
+            let size = u32_at(data, p + 24).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))? as usize;
+            let name_len = u16_at(data, p + 28).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))? as usize;
+            let extra_len = u16_at(data, p + 30).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))? as usize;
+            let comment_len = u16_at(data, p + 32).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))? as usize;
+            let offset = u32_at(data, p + 42).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))? as usize;
+            let name = data.get(p + 46..p + 46 + name_len).ok_or(tr!("ZIP 中央目錄損壞。", "The ZIP central directory is damaged."))?;
             entries.push(Entry { name: String::from_utf8_lossy(name).replace('\\', "/"), method, flags, compressed, size, offset });
             p += 46 + name_len + extra_len + comment_len;
         }
@@ -98,12 +98,12 @@ impl<'a> Zip<'a> {
     pub fn read(&self, name: &str, limit: usize) -> Result<Vec<u8>, String> {
         let (e, raw) = self.raw(name)?;
         if e.size > limit {
-            return Err("文件內容過大。".into());
+            return Err(tr!("文件內容過大。", "The document is too large.").into());
         }
         match e.method {
             0 => Ok(raw.to_vec()),
             8 => inflate::inflate_with_hint(raw, limit, e.size),
-            m => Err(format!("不支援的壓縮方式（{m}）。")),
+            m => Err(trf!("不支援的壓縮方式（{m}）。", "Unsupported compression method ({m}).")),
         }
     }
 
@@ -120,25 +120,25 @@ impl<'a> Zip<'a> {
         let (bytes, complete) = match e.method {
             0 => (raw[..raw.len().min(max)].to_vec(), raw.len() <= max),
             8 => inflate::inflate_prefix(raw, max, e.size)?,
-            m => return Err(format!("不支援的壓縮方式（{m}）。")),
+            m => return Err(trf!("不支援的壓縮方式（{m}）。", "Unsupported compression method ({m}).")),
         };
         Ok((to_text(bytes), complete))
     }
 
     /// 項目與它的原始（壓縮過的）資料
     fn raw(&self, name: &str) -> Result<(&Entry, &'a [u8]), String> {
-        let e = self.find(name).ok_or_else(|| format!("文件裡缺少 {name}。"))?;
+        let e = self.find(name).ok_or_else(|| trf!("文件裡缺少 {name}。", "{name} is missing from the document."))?;
         if e.flags & 1 != 0 {
-            return Err("文件已加密。".into());
+            return Err(tr!("文件已加密。", "The document is encrypted.").into());
         }
         let d = self.data;
         if u32_at(d, e.offset) != Some(LOCAL) {
-            return Err("ZIP 檔案資料損壞。".into());
+            return Err(tr!("ZIP 檔案資料損壞。", "The ZIP file data is damaged.").into());
         }
-        let name_len = u16_at(d, e.offset + 26).ok_or("ZIP 檔案資料損壞。")? as usize;
-        let extra_len = u16_at(d, e.offset + 28).ok_or("ZIP 檔案資料損壞。")? as usize;
+        let name_len = u16_at(d, e.offset + 26).ok_or(tr!("ZIP 檔案資料損壞。", "The ZIP file data is damaged."))? as usize;
+        let extra_len = u16_at(d, e.offset + 28).ok_or(tr!("ZIP 檔案資料損壞。", "The ZIP file data is damaged."))? as usize;
         let start = e.offset + 30 + name_len + extra_len;
-        let raw = d.get(start..start.checked_add(e.compressed).ok_or("ZIP 檔案資料損壞。")?).ok_or("ZIP 檔案資料損壞。")?;
+        let raw = d.get(start..start.checked_add(e.compressed).ok_or(tr!("ZIP 檔案資料損壞。", "The ZIP file data is damaged."))?).ok_or(tr!("ZIP 檔案資料損壞。", "The ZIP file data is damaged."))?;
         Ok((e, raw))
     }
 }

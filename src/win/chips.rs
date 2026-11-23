@@ -31,8 +31,8 @@ impl Sort {
     pub fn label(self) -> &'static str {
         match self {
             Sort::Name => "A–Z",
-            Sort::Newest => "最新",
-            Sort::Largest => "大小",
+            Sort::Newest => tr!("最新", "Newest"),
+            Sort::Largest => tr!("大小", "Size"),
         }
     }
 
@@ -129,7 +129,7 @@ pub fn create(parent: HWND) -> HWND {
         rec_hover: Tween::new(0.0),
     });
     let class = wide(CHIPS_CLASS);
-    let name = wide("類型篩選與排序");
+    let name = wide(tr!("類型篩選與排序", "Type filters and sorting"));
     unsafe {
         let hwnd = CreateWindowExW(
             0,
@@ -173,7 +173,7 @@ fn layout(hwnd: HWND, model: &Model, hdc: HDC) -> Layout {
         sorts.push((*s, RECT { left: x, top: y + t.s(3), right: x + w, bottom: y + h - t.s(3) }));
         x += w;
     }
-    let rec_w = theme::text_width(hdc, "搜尋含子資料夾", t.fonts.ui) + t.s(44);
+    let rec_w = theme::text_width(hdc, tr!("搜尋含子資料夾", "Include subfolders"), t.fonts.ui) + t.s(44);
     let recursive = RECT { left: sort_box.left - t.s(12) - rec_w, top: y, right: sort_box.left - t.s(12), bottom: y + h };
     // 左側：類型篩選籤
     let mut filters = Vec::new();
@@ -365,7 +365,7 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
             theme::draw_text(dc, &glyph::CHECKBOX_CHECKED.to_string(), &gr, t.fonts.icon, anim::mix(p.background, p.accent, ck), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         let tr = RECT { left: gr.right + t.s(2), ..rr };
-        theme::draw_text(dc, "搜尋含子資料夾", &tr, t.fonts.ui, p.muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        theme::draw_text(dc, tr!("搜尋含子資料夾", "Include subfolders"), &tr, t.fonts.ui, p.muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         // 排序分段：選取的選項是浮起的白色膠囊，切換時滑過去
         let selected = model.sort.map(|s| s.index());

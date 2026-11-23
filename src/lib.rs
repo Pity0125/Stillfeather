@@ -4,6 +4,9 @@
 //! 不呼叫任何 Win32 API，因此可以在任何平台執行 `cargo test --lib`。
 //! 視窗與檔案系統呼叫位於 `src/win/`，只在 Windows 上建置。
 
+// 第一個宣告：tr!／trf! 在之後的每個模組都能直接用
+#[macro_use]
+pub mod i18n;
 pub mod base64;
 pub mod anim;
 pub mod category;
@@ -22,8 +25,10 @@ pub mod paths;
 pub mod picker;
 pub mod plan;
 pub mod quicklook;
+pub mod session;
 pub mod settings;
 pub mod sorting;
+pub mod thumbs;
 pub mod typeahead;
 pub mod undo;
 pub mod update;

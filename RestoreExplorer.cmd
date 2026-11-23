@@ -53,6 +53,7 @@ $wineClsid = 'Software\Classes\CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}'
 $wineKey   = "$wineClsid\shell\opennewwindow\command"
 $folderKeys = @('Software\Classes\Directory\shell', 'Software\Classes\Drive\shell')
 $pickerKey = 'Software\Classes\CLSID\{DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7}'
+$saveKey   = 'Software\Classes\CLSID\{C0B4E2F3-BA21-4773-8DBA-335EC946EB8B}'
 $runKey    = 'Software\Microsoft\Windows\CurrentVersion\Run'
 $uninstKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Stillfeather'
 
@@ -102,7 +103,7 @@ foreach ($k in @($wineKey, "$wineClsid\shell\opennewwindow", "$wineClsid\shell",
 Remove-Tree $backupKey
 if ($changed) { Write-Host '開啟資料夾、磁碟與 Win+E 已改回 Windows 檔案總管。' } else { Write-Host '開啟資料夾與 Win+E 原本就不是 Stillfeather。' }
 
-# 4. 其他程式的「開啟檔案」視窗
+# 4. 其他程式的「開啟檔案」與「另存新檔」視窗
 $dll = Get-Val "$pickerKey\InprocServer32" ''
 if (($null -ne $dll) -and ([string]$dll -match '(?i)StillfeatherPicker\.dll')) {
     Remove-Tree "$pickerKey\InprocServer32"
@@ -110,6 +111,12 @@ if (($null -ne $dll) -and ([string]$dll -match '(?i)StillfeatherPicker\.dll')) {
     Write-Host '其他程式的開啟檔案視窗已改回 Windows 原本的（已經開著的程式要重新開啟才會套用）。'
 } else {
     Write-Host '其他程式的開啟檔案視窗原本就是 Windows 的。'
+}
+$dll = Get-Val "$saveKey\InprocServer32" ''
+if (($null -ne $dll) -and ([string]$dll -match '(?i)Stillfeather(Save)?Picker\.dll')) {
+    Remove-Tree "$saveKey\InprocServer32"
+    Remove-IfEmpty $saveKey
+    Write-Host '其他程式的另存新檔視窗已改回 Windows 原本的。'
 }
 
 # 記下「關」：Stillfeather 下次啟動不會自己又設回去（之後可以在它的設定重新勾選）

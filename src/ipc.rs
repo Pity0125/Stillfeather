@@ -11,11 +11,11 @@ pub const COPYDATA_TAG: usize = 0x4646_5231;
 
 pub fn validate(paths: &[String]) -> Result<(), String> {
     if paths.len() > MAX_PATHS {
-        return Err(format!("一次最多只能傳送 {MAX_PATHS} 個路徑。"));
+        return Err(trf!("一次最多只能傳送 {MAX_PATHS} 個路徑。", "Up to {MAX_PATHS} paths can be sent at once."));
     }
     for p in paths {
         if p.trim().is_empty() || p.contains('\0') || p.encode_utf16().count() > MAX_PATH_CHARS {
-            return Err("路徑為空、過長或含有 NUL 字元。".to_string());
+            return Err(tr!("路徑為空、過長或含有 NUL 字元。", "A path is empty, too long or contains a NUL character.").to_string());
         }
     }
     Ok(())
@@ -29,28 +29,28 @@ pub fn encode(paths: &[String]) -> Result<Vec<u16>, String> {
         out.push(0);
     }
     if out.len() * 2 > MAX_BYTES {
-        return Err("開啟要求超過 256 KiB。".to_string());
+        return Err(tr!("開啟要求超過 256 KiB。", "The open request is larger than 256 KiB.").to_string());
     }
     Ok(out)
 }
 
 pub fn decode(data: &[u16]) -> Result<Vec<String>, String> {
     if data.len() * 2 > MAX_BYTES || data.len() < 2 {
-        return Err("開啟要求大小不正確。".to_string());
+        return Err(tr!("開啟要求大小不正確。", "The open request has the wrong size.").to_string());
     }
     if data[0] != VERSION {
-        return Err("開啟要求版本不相符。".to_string());
+        return Err(tr!("開啟要求版本不相符。", "The open request version doesn't match.").to_string());
     }
     let count = data[1] as usize;
     let mut paths = Vec::with_capacity(count);
     let mut rest = &data[2..];
     for _ in 0..count {
-        let end = rest.iter().position(|u| *u == 0).ok_or("開啟要求缺少結尾。")?;
-        paths.push(String::from_utf16(&rest[..end]).map_err(|_| "開啟要求含無效字元。")?);
+        let end = rest.iter().position(|u| *u == 0).ok_or(tr!("開啟要求缺少結尾。", "The open request has no terminator."))?;
+        paths.push(String::from_utf16(&rest[..end]).map_err(|_| tr!("開啟要求含無效字元。", "The open request contains invalid characters."))?);
         rest = &rest[end + 1..];
     }
     if !rest.is_empty() {
-        return Err("開啟要求含多餘資料。".to_string());
+        return Err(tr!("開啟要求含多餘資料。", "The open request contains extra data.").to_string());
     }
     validate(&paths)?;
     Ok(paths)

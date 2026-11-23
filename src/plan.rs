@@ -13,9 +13,9 @@ pub enum OpKind {
 impl OpKind {
     pub fn verb(self) -> &'static str {
         match self {
-            OpKind::Copy => "複製",
-            OpKind::Move => "移動",
-            OpKind::Delete => "刪除",
+            OpKind::Copy => tr!("複製", "copy"),
+            OpKind::Move => tr!("移動", "move"),
+            OpKind::Delete => tr!("刪除", "delete"),
         }
     }
 }
@@ -41,16 +41,16 @@ pub type PlanItem = Result<Planned, Rejected>;
 pub fn normalize(path: &str) -> Result<String, String> {
     let p = paths::normalize_separators(path.trim());
     if p.is_empty() {
-        return Err("路徑為空白。".into());
+        return Err(tr!("路徑為空白。", "The path is blank.").into());
     }
     if paths::is_extended(&p) {
-        return Err("目前的 Windows Shell 操作不支援裝置或延伸路徑格式。".into());
+        return Err(tr!("目前的 Windows Shell 操作不支援裝置或延伸路徑格式。", "Windows Shell operations don't support device or extended path formats.").into());
     }
     if !paths::is_fully_qualified(&p) {
-        return Err("請使用完整磁碟或 UNC 路徑。".into());
+        return Err(tr!("請使用完整磁碟或 UNC 路徑。", "Use a full drive or UNC path.").into());
     }
     if !paths::components_valid(&p) {
-        return Err("路徑含有 Windows Shell 不支援或會自動正規化的名稱。".into());
+        return Err(tr!("路徑含有 Windows Shell 不支援或會自動正規化的名稱。", "The path contains a name that Windows Shell doesn't support or would normalize.").into());
     }
     Ok(paths::trim_end_sep(&p).to_string())
 }
@@ -61,15 +61,15 @@ pub fn plan(kind: OpKind, sources: &[String], destination: Option<&str>, protect
     let dest = match kind {
         OpKind::Delete => None,
         _ => {
-            let d = destination.ok_or("缺少目的地資料夾。")?;
-            Some(normalize(d).map_err(|e| format!("目的地無法使用：{e}"))?)
+            let d = destination.ok_or(tr!("缺少目的地資料夾。", "No destination folder."))?;
+            Some(normalize(d).map_err(|e| trf!("目的地無法使用：{e}", "The destination can't be used: {e}"))?)
         }
     };
     let normalized: Vec<Option<String>> = sources.iter().map(|s| normalize(s).ok()).collect();
     let mut seen: Vec<String> = Vec::new();
     let mut out = Vec::with_capacity(sources.len());
     for (index, raw) in sources.iter().enumerate() {
-        let label = if raw.trim().is_empty() { "（空白路徑）".to_string() } else { raw.clone() };
+        let label = if raw.trim().is_empty() { tr!("（空白路徑）", "(blank path)").to_string() } else { raw.clone() };
         let reject = |reason: &str| Err(Rejected { label: label.clone(), reason: reason.to_string() });
         let source = match normalize(raw) {
             Ok(s) => s,
@@ -79,16 +79,16 @@ pub fn plan(kind: OpKind, sources: &[String], destination: Option<&str>, protect
             }
         };
         if seen.iter().any(|s| paths::same_path(s, &source)) {
-            out.push(reject("同一個來源重複出現，已略過重複項目。"));
+            out.push(reject(tr!("同一個來源重複出現，已略過重複項目。", "The same source appears more than once; the duplicates were skipped.")));
             continue;
         }
         seen.push(source.clone());
         if paths::is_root(&source) {
-            out.push(reject("不能把整個磁碟或網路共用根目錄當作操作來源。"));
+            out.push(reject(tr!("不能把整個磁碟或網路共用根目錄當作操作來源。", "A whole drive or network share root can't be used as a source.")));
             continue;
         }
         if protected.iter().any(|p| !p.is_empty() && paths::same_path(p, &source)) {
-            out.push(reject("目前版本不允許直接操作整個系統或使用者設定檔根目錄。"));
+            out.push(reject(tr!("目前版本不允許直接操作整個系統或使用者設定檔根目錄。", "This version doesn't work directly on the system or user profile root folders.")));
             continue;
         }
         let nested = normalized.iter().enumerate().any(|(j, other)| {
@@ -98,7 +98,7 @@ pub fn plan(kind: OpKind, sources: &[String], destination: Option<&str>, protect
                     .is_some_and(|o| !paths::same_path(o, &source) && paths::is_same_or_descendant(o, &source))
         });
         if nested {
-            out.push(reject("來源也位於另一個已選來源內，為避免重複處理已略過。"));
+            out.push(reject(tr!("來源也位於另一個已選來源內，為避免重複處理已略過。", "This source is inside another selected source, so it was skipped to avoid handling it twice.")));
             continue;
         }
         let Some(dest) = dest.as_deref() else {
@@ -113,18 +113,18 @@ pub fn plan(kind: OpKind, sources: &[String], destination: Option<&str>, protect
             continue;
         }
         if same {
-            out.push(reject("來源與目的地相同，不需要移動。"));
+            out.push(reject(tr!("來源與目的地相同，不需要移動。", "The source and destination are the same, so there's nothing to move.")));
             continue;
         }
         if paths::is_same_or_descendant(&source, &target) {
-            out.push(reject("不能將來源複製或移動至自身或其子目錄。"));
+            out.push(reject(tr!("不能將來源複製或移動至自身或其子目錄。", "Can't copy or move a folder into itself or one of its subfolders.")));
             continue;
         }
         let covers_other = normalized.iter().enumerate().any(|(j, other)| {
             j != index && other.as_deref().is_some_and(|o| paths::is_same_or_descendant(&target, o))
         });
         if covers_other {
-            out.push(reject("目的項目會覆蓋或包含另一個已選來源，已拒絕此操作。"));
+            out.push(reject(tr!("目的項目會覆蓋或包含另一個已選來源，已拒絕此操作。", "The destination item would overwrite or contain another selected source, so this operation was refused.")));
             continue;
         }
         out.push(Ok(Planned { source, target: Some(target), rename_on_collision: false }));

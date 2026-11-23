@@ -216,32 +216,32 @@ pub struct Manifest {
 /// 解析並檢查 update.json：
 /// `{"version":"0.2.0","url":"https://…/StillfeatherSetup.exe","sha256":"<64 個十六進位字元>","size":1773056,"notes":"…"}`
 pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
-    let bad = |what: &str| format!("更新資訊格式不正確：{what}。");
+    let bad = |what: &str| trf!("更新資訊格式不正確：{what}。", "The update information is invalid: {what}.");
     if text.len() as u64 > MAX_MANIFEST_BYTES {
-        return Err(bad("檔案太大"));
+        return Err(bad(tr!("檔案太大", "the file is too large")));
     }
-    let root = json::parse(text.trim_start_matches('\u{FEFF}')).map_err(|_| bad("不是有效的 JSON"))?;
+    let root = json::parse(text.trim_start_matches('\u{FEFF}')).map_err(|_| bad(tr!("不是有效的 JSON", "it isn't valid JSON")))?;
     let string = |key: &str| match root.get(key) {
         Some(Value::Str(s)) => Ok(s.trim().to_string()),
-        _ => Err(bad(&format!("缺少 {key}"))),
+        _ => Err(bad(&trf!("缺少 {key}", "{key} is missing"))),
     };
     let version = string("version")?;
     if Version::parse(&version).is_none() {
-        return Err(bad("version 不是有效的版本號"));
+        return Err(bad(tr!("version 不是有效的版本號", "version isn't a valid version number")));
     }
     let url = string("url")?;
     if split_https_url(&url).is_none() {
-        return Err(bad("url 必須是 https 網址"));
+        return Err(bad(tr!("url 必須是 https 網址", "url must be an https address")));
     }
-    let sha256 = parse_hex32(&string("sha256")?).ok_or_else(|| bad("sha256 必須是 64 個十六進位字元"))?;
+    let sha256 = parse_hex32(&string("sha256")?).ok_or_else(|| bad(tr!("sha256 必須是 64 個十六進位字元", "sha256 must be 64 hexadecimal characters")))?;
     let size = match root.get("size") {
         Some(Value::Num(n)) if n.fract() == 0.0 && *n >= 1.0 && *n <= MAX_SETUP_BYTES as f64 => *n as u64,
-        _ => return Err(bad("size 必須是安裝程式的位元組數")),
+        _ => return Err(bad(tr!("size 必須是安裝程式的位元組數", "size must be the installer's size in bytes"))),
     };
     let notes = match root.get("notes") {
         None | Some(Value::Null) => String::new(),
         Some(Value::Str(s)) => clean_notes(s),
-        Some(_) => return Err(bad("notes 必須是文字")),
+        Some(_) => return Err(bad(tr!("notes 必須是文字", "notes must be text"))),
     };
     Ok(Manifest { version, url, sha256, size, notes })
 }

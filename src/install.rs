@@ -48,7 +48,9 @@ pub fn is_inside(path: &str, dir: &str) -> bool {
 }
 /// 資料夾右鍵選單的動詞名稱與文字
 pub const VERB: &str = "Stillfeather";
-pub const VERB_TEXT: &str = "以 Stillfeather 開啟";
+pub fn verb_text() -> &'static str {
+    tr!("以 Stillfeather 開啟", "Open with Stillfeather")
+}
 /// 「本機」：Win+E 開啟的位置
 pub const WIN_E_CLSID: &str = "{52205fd8-5dfb-447d-801a-d0b52f2e83e1}";
 /// Win+E 傳給 Stillfeather 的參數：在新分頁開啟首頁
@@ -89,7 +91,7 @@ pub fn default_fm_on_start(choice: Option<&str>, registered: Option<bool>) -> De
     }
 }
 
-/// 「其他程式開啟檔案時也用 Stillfeather」：取代元件啟動哪一個 Stillfeather（[`APP_KEY`] 底下的值）
+/// 「其他程式開啟或儲存檔案時也用 Stillfeather」：取代元件啟動哪一個 Stillfeather（[`APP_KEY`] 底下的值）
 pub const PICKER_EXE_VALUE: &str = "PickerExe";
 /// 使用者的選擇（[`APP_KEY`] 底下的值）："1" 開、"0" 關；沒有這個值表示沒選過，預設關閉
 pub const PICKER_CHOICE_VALUE: &str = "FilePicker";
@@ -112,9 +114,23 @@ pub fn picker_server_key() -> String {
     format!(r"{}\InprocServer32", picker_clsid_key())
 }
 
+/// 目前使用者的「另存新檔」視窗元件登記。
+///
+/// 登記的是另一個檔名的同一份元件（[`crate::picker::SAVE_DLL_NAME`]）：已經開著的程式可能載入了只會「開啟」的舊版元件，
+/// Windows 以完整路徑判斷 DLL 是否已經載入，同一個路徑會直接拿那個舊版來用，舊版不認得另存新檔，程式就開不了存檔視窗。
+/// 換一個檔名，載入的一定是會另存新檔的這一版。
+pub fn picker_save_clsid_key() -> String {
+    format!(r"Software\Classes\CLSID\{}", crate::picker::CLSID_FILE_SAVE_DIALOG)
+}
+
+pub fn picker_save_server_key() -> String {
+    format!(r"{}\InprocServer32", picker_save_clsid_key())
+}
+
 /// 登記的元件是不是 Stillfeather 的（不論放在哪裡）
 pub fn is_picker_dll(path: &str) -> bool {
-    paths::file_name(path).eq_ignore_ascii_case(crate::picker::DLL_NAME)
+    let name = paths::file_name(path);
+    name.eq_ignore_ascii_case(crate::picker::DLL_NAME) || name.eq_ignore_ascii_case(crate::picker::SAVE_DLL_NAME)
 }
 
 /// 要寫入的字串登錄值（`name` 為空字串表示機碼的預設值）
@@ -153,7 +169,7 @@ pub fn default_fm_values(exe: &str) -> Vec<RegValue> {
     let mut v = Vec::new();
     for class in FOLDER_CLASSES {
         let verb = format!(r"{class}\{VERB}");
-        v.push(value(&verb, "", VERB_TEXT.to_string()));
+        v.push(value(&verb, "", verb_text().to_string()));
         v.push(value(&verb, "Icon", format!("{exe},0")));
         v.push(value(&format!(r"{verb}\command"), "", folder_command(exe)));
     }
@@ -244,26 +260,26 @@ pub fn with_app_folder(picked: &str) -> String {
 pub fn normalize_install_dir(input: &str, protected: &[&str]) -> Result<String, String> {
     let p = input.trim().trim_matches('"').trim();
     if p.is_empty() {
-        return Err("請輸入安裝位置。".into());
+        return Err(tr!("請輸入安裝位置。", "Enter an install location.").into());
     }
     if !paths::is_fully_qualified(p) {
-        return Err("安裝位置必須是完整路徑，例如 C:\\Users\\你的名字\\AppData\\Local\\Programs\\Stillfeather。".into());
+        return Err(tr!("安裝位置必須是完整路徑，例如 C:\\Users\\你的名字\\AppData\\Local\\Programs\\Stillfeather。", "The install location must be a full path, for example C:\\Users\\YourName\\AppData\\Local\\Programs\\Stillfeather.").into());
     }
     if p.chars().enumerate().any(|(i, c)| matches!(c, '<' | '>' | '"' | '|' | '?' | '*') || (c == ':' && i != 1) || (c as u32) < 32) {
-        return Err("安裝位置含有不能用在資料夾名稱的字元（< > : \" | ? *）。".into());
+        return Err(tr!("安裝位置含有不能用在資料夾名稱的字元（< > : \" | ? *）。", "The install location contains characters that can't be used in folder names (< > : \" | ? *).").into());
     }
     let p = paths::trim_end_sep(&paths::normalize_separators(p)).to_string();
     if paths::is_root(&p) {
-        return Err("請選擇一個資料夾，不要直接安裝到磁碟根目錄。".into());
+        return Err(tr!("請選擇一個資料夾，不要直接安裝到磁碟根目錄。", "Choose a folder. Don't install directly to the root of a drive.").into());
     }
     if p.split('\\').any(|part| part.ends_with('.') || part.ends_with(' ')) {
-        return Err("資料夾名稱不能以句點或空白結尾。".into());
+        return Err(tr!("資料夾名稱不能以句點或空白結尾。", "Folder names can't end with a period or a space.").into());
     }
     let lower = p.to_lowercase();
     for dir in protected.iter().filter(|d| !d.trim().is_empty()) {
         let d = paths::trim_end_sep(&paths::normalize_separators(dir)).to_lowercase();
         if lower == d || lower.starts_with(&format!("{d}\\")) {
-            return Err(format!("不能安裝到系統資料夾（{dir}）。"));
+            return Err(trf!("不能安裝到系統資料夾（{dir}）。", "Can't install to a system folder ({dir})."));
         }
     }
     Ok(p)
@@ -312,7 +328,7 @@ pub struct SetupArgs {
     pub silent: bool,
     pub dir: Option<String>,
     pub default_fm: Option<bool>,
-    /// 其他程式開啟檔案時也用 Stillfeather（None：沒有指定，維持使用者原本的選擇；沒選過就是關閉）
+    /// 其他程式開啟或儲存檔案時也用 Stillfeather（None：沒有指定，維持使用者原本的選擇；沒選過就是關閉）
     pub file_picker: Option<bool>,
     pub desktop: Option<bool>,
     pub start_menu: Option<bool>,
@@ -360,7 +376,7 @@ pub fn parse_setup_args(args: &[String]) -> Result<SetupArgs, String> {
             "/s" | "/silent" | "/verysilent" | "/quiet" | "/q" | "--silent" | "--quiet" => a.silent = true,
             "--dir" | "/dir" => {
                 i += 1;
-                a.dir = Some(args.get(i).ok_or("--dir 後面需要安裝位置。")?.clone());
+                a.dir = Some(args.get(i).ok_or(tr!("--dir 後面需要安裝位置。", "--dir must be followed by an install location."))?.clone());
             }
             "--default-explorer" => a.default_fm = Some(true),
             "--no-default-explorer" => a.default_fm = Some(false),
@@ -375,7 +391,7 @@ pub fn parse_setup_args(args: &[String]) -> Result<SetupArgs, String> {
             "--uninstall" | "/uninstall" => a.mode = SetupMode::Uninstall,
             "--elevated" => a.elevated = true,
             "--update" => a.update = true,
-            _ => return Err(format!("不認得的參數：{raw}")),
+            _ => return Err(trf!("不認得的參數：{raw}", "Unknown option: {raw}")),
         }
         i += 1;
     }
@@ -610,6 +626,8 @@ mod tests {
         assert!(is_picker_dll(r"C:\Users\me\AppData\Local\FeatherFiles\Picker\stillfeatherpicker.dll"));
         assert!(is_picker_dll(r"C:\Users\me\AppData\Local\Stillfeather\Picker\StillfeatherPicker.dll"));
         assert!(!is_picker_dll(r"%SystemRoot%\System32\comdlg32.dll"));
+        assert!(is_picker_dll(r"C:\Users\me\AppData\Local\Stillfeather\Picker\StillfeatherSavePicker.dll"));
+        assert_eq!(picker_save_server_key(), r"Software\Classes\CLSID\{C0B4E2F3-BA21-4773-8DBA-335EC946EB8B}\InprocServer32");
         assert!(GENERATED_FILES.contains(&"picker-trace.log"));
     }
 

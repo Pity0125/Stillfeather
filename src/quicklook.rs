@@ -57,9 +57,9 @@ pub enum Lang {
 impl Lang {
     pub fn label(self) -> &'static str {
         match self {
-            Lang::Plain => "純文字",
+            Lang::Plain => tr!("純文字", "Plain text"),
             Lang::Rust => "Rust",
-            Lang::C => "C／C++",
+            Lang::C => tr!("C／C++", "C/C++"),
             Lang::CSharp => "C#",
             Lang::Java => "Java",
             Lang::JavaScript => "JavaScript",
@@ -73,7 +73,7 @@ impl Lang {
             Lang::Ruby => "Ruby",
             Lang::Shell => "Shell",
             Lang::PowerShell => "PowerShell",
-            Lang::Batch => "批次檔",
+            Lang::Batch => tr!("批次檔", "Batch file"),
             Lang::Sql => "SQL",
             Lang::Lua => "Lua",
             Lang::Html => "HTML",
@@ -81,7 +81,7 @@ impl Lang {
             Lang::Json => "JSON",
             Lang::Yaml => "YAML",
             Lang::Toml => "TOML",
-            Lang::Ini => "設定檔",
+            Lang::Ini => tr!("設定檔", "Settings file"),
             Lang::Markdown => "Markdown",
         }
     }

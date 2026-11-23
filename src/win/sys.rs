@@ -1106,7 +1106,10 @@ pub const COINIT_DISABLE_OLE1DDE: u32 = 0x4;
 
 pub const SIIGBF_RESIZETOFIT: u32 = 0x0;
 pub const SIIGBF_THUMBNAILONLY: u32 = 0x8;
+/// 只用系統縮圖快取裡已有的（雲端尚未下載的檔案用它，不觸發下載）
+pub const SIIGBF_INCACHEONLY: u32 = 0x10;
 
+pub const HKEY_CLASSES_ROOT: HKEY = 0x8000_0000u32 as i32 as isize;
 pub const HKEY_CURRENT_USER: HKEY = 0x8000_0001u32 as i32 as isize;
 pub const RRF_RT_REG_DWORD: u32 = 0x0000_0010;
 pub const RRF_RT_REG_SZ: u32 = 0x0000_0002;
@@ -1123,6 +1126,21 @@ pub const SHCNF_IDLIST: u32 = 0;
 pub const DIB_RGB_COLORS: u32 = 0;
 pub const BI_RGB: u32 = 0;
 pub const SRCCOPY: u32 = 0x00CC_0020;
+pub const AC_SRC_OVER: u8 = 0;
+pub const AC_SRC_ALPHA: u8 = 1;
+pub const WM_QUERYENDSESSION: u32 = 0x0011;
+pub const WM_ENDSESSION: u32 = 0x0016;
+pub const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x4000;
+
+/// AlphaBlend 的混合方式（以值傳遞的 4 位元組結構）
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BLENDFUNCTION {
+    pub BlendOp: u8,
+    pub BlendFlags: u8,
+    pub SourceConstantAlpha: u8,
+    pub AlphaFormat: u8,
+}
 pub const TRANSPARENT: i32 = 1;
 pub const NULL_BRUSH: i32 = 5;
 pub const NULL_PEN: i32 = 8;
@@ -1245,6 +1263,7 @@ pub const LVFI_STRING: u32 = 0x2;
 pub const LVFI_PARTIAL: u32 = 0x8;
 pub const LVFI_WRAP: u32 = 0x20;
 pub const LVIR_BOUNDS: i32 = 0;
+pub const LVIR_ICON: i32 = 1;
 
 pub const HDM_GETITEMW: u32 = 0x120B;
 pub const HDM_SETITEMW: u32 = 0x120C;
@@ -1284,6 +1303,7 @@ pub const CDDS_PREPAINT: u32 = 0x1;
 pub const CDDS_POSTPAINT: u32 = 0x2;
 pub const CDDS_ITEM: u32 = 0x1_0000;
 pub const CDDS_ITEMPREPAINT: u32 = CDDS_ITEM | CDDS_PREPAINT;
+pub const CDDS_ITEMPOSTPAINT: u32 = CDDS_ITEM | CDDS_POSTPAINT;
 pub const CDRF_DODEFAULT: LRESULT = 0x0;
 pub const CDRF_NEWFONT: LRESULT = 0x2;
 pub const CDRF_SKIPDEFAULT: LRESULT = 0x4;
@@ -1371,6 +1391,7 @@ pub const DBT_DEVICEREMOVECOMPLETE: usize = 0x8004;
 
 #[cfg_attr(windows, link(name = "kernel32", kind = "raw-dylib"))]
 extern "system" {
+    pub fn GetUserDefaultUILanguage() -> u16;
     pub fn GetModuleHandleW(name: *const u16) -> HMODULE;
     pub fn LoadLibraryW(name: *const u16) -> HMODULE;
     pub fn GetProcAddress(module: HMODULE, name: *const u8) -> *const c_void;
@@ -1405,6 +1426,7 @@ extern "system" {
     pub fn GetCurrentProcessId() -> u32;
     pub fn ProcessIdToSessionId(pid: u32, session: *mut u32) -> BOOL;
     pub fn GetTickCount64() -> u64;
+    pub fn SetPriorityClass(process: HANDLE, class: u32) -> BOOL;
     pub fn SetUnhandledExceptionFilter(filter: Option<unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32>) -> *const c_void;
     pub fn CreateFileW(name: *const u16, access: u32, share: u32, security: *const c_void, disposition: u32, flags: u32, template: HANDLE) -> HANDLE;
     pub fn WriteFile(file: HANDLE, buf: *const u8, len: u32, written: *mut u32, overlapped: *mut c_void) -> BOOL;
@@ -1593,6 +1615,8 @@ extern "system" {
     pub fn CreateCompatibleBitmap(hdc: HDC, w: i32, h: i32) -> HBITMAP;
     pub fn CreateBitmap(w: i32, h: i32, planes: u32, bits: u32, data: *const c_void) -> HBITMAP;
     pub fn BitBlt(hdc: HDC, x: i32, y: i32, w: i32, h: i32, src: HDC, sx: i32, sy: i32, rop: u32) -> BOOL;
+    /// msimg32 的 AlphaBlend 就是轉呼叫這個
+    pub fn GdiAlphaBlend(dst: HDC, x: i32, y: i32, w: i32, h: i32, src: HDC, sx: i32, sy: i32, sw: i32, sh: i32, blend: BLENDFUNCTION) -> BOOL;
     pub fn StretchBlt(hdc: HDC, x: i32, y: i32, w: i32, h: i32, src: HDC, sx: i32, sy: i32, sw: i32, sh: i32, rop: u32) -> BOOL;
     pub fn SetStretchBltMode(hdc: HDC, mode: i32) -> i32;
     pub fn SetBrushOrgEx(hdc: HDC, x: i32, y: i32, old: *mut POINT) -> BOOL;
@@ -1698,6 +1722,11 @@ pub struct ComCtl {
 
 static COMCTL: std::sync::OnceLock<ComCtl> = std::sync::OnceLock::new();
 
+/// Windows 的顯示語言是中文（繁體或簡體）嗎：語言設成「跟隨系統」時用中文介面
+pub fn system_ui_chinese() -> bool {
+    feather_core::i18n::is_chinese_langid(unsafe { GetUserDefaultUILanguage() })
+}
+
 pub fn comctl() -> &'static ComCtl {
     COMCTL.get().expect("comctl32 尚未載入")
 }
@@ -1718,13 +1747,13 @@ pub unsafe fn load_comctl() -> Result<(), String> {
     let name: Vec<u16> = "comctl32.dll\0".encode_utf16().collect();
     let module = LoadLibraryW(name.as_ptr());
     if module == 0 {
-        return Err("無法載入 comctl32.dll".into());
+        return Err(tr!("無法載入 comctl32.dll", "Couldn't load comctl32.dll").into());
     }
     macro_rules! load {
         ($name:expr, $ord:expr) => {{
             let p = proc_address(module, $name, $ord);
             if p.is_null() {
-                return Err(format!("comctl32.dll 缺少 {}", $name));
+                return Err(trf!("comctl32.dll 缺少 {}", "comctl32.dll is missing {}", $name));
             }
             std::mem::transmute::<*const c_void, _>(p)
         }};
@@ -1794,6 +1823,7 @@ mod layout_tests {
         assert_eq!(size_of::<WNDCLASSEXW>(), 80);
         assert_eq!(size_of::<MSG>(), 48);
         assert_eq!(size_of::<KBDLLHOOKSTRUCT>(), 24);
+        assert_eq!(size_of::<BLENDFUNCTION>(), 4);
         assert_eq!(size_of::<KEYBOARD_INPUT>(), 40);
         assert_eq!(std::mem::offset_of!(KEYBOARD_INPUT, ki), 8);
         assert_eq!(size_of::<PAINTSTRUCT>(), 72);

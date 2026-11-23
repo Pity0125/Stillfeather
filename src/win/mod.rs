@@ -30,6 +30,7 @@ pub mod undo;
 pub mod update;
 pub mod util;
 pub mod viewmenu;
+pub mod thumbs;
 pub mod watch;
 pub mod wine;
 
@@ -111,7 +112,7 @@ fn install_panic_hook() {
         let first: String = text.lines().take(6).collect::<Vec<_>>().join("\n");
         message_box(
             0,
-            &format!("Stillfeather 發生未預期的錯誤，即將關閉。\n\n{first}\n\n詳細內容已寫入 %LOCALAPPDATA%\\Stillfeather\\rust-crash.log"),
+            &trf!("Stillfeather 發生未預期的錯誤，即將關閉。\n\n{first}\n\n詳細內容已寫入 %LOCALAPPDATA%\\Stillfeather\\rust-crash.log", "Stillfeather ran into an unexpected error and will close.\n\n{first}\n\nDetails were written to %LOCALAPPDATA%\\Stillfeather\\rust-crash.log"),
             MB_OK | MB_ICONERROR,
         );
     }));
@@ -125,9 +126,23 @@ pub fn since_start_ms() -> u64 {
     STARTED.get().map(|t| t.elapsed().as_millis() as u64).unwrap_or(0)
 }
 
+/// 重新開啟時要等的程序：`--wait-pid=<pid>`
+pub const WAIT_PID_ARG: &str = "--wait-pid=";
+
+fn args_wait_pid() -> Option<u32> {
+    std::env::args().skip(1).find_map(|a| a.strip_prefix(WAIT_PID_ARG).and_then(|p| p.parse().ok()))
+}
+
 pub fn entry() -> i32 {
     STARTED.get_or_init(std::time::Instant::now);
     let args: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
+    // 介面語言（設定的語言，或跟隨 Windows 的顯示語言）：之後的文字都照它。
+    // 工作程序也要：它們的錯誤訊息會顯示在預覽裡
+    app::apply_language();
+    // 清單縮圖的工作程序（見 thumbs.rs）：沒有視窗，從標準輸入讀要求
+    if args.first().map(String::as_str) == Some(feather_core::thumbs::WORKER_ARG) {
+        return thumbs::worker_main();
+    }
     if args.first().map(String::as_str) == Some("--preview-worker") {
         return match args.len() {
             2 => preview::worker_main(&args[1], None),
@@ -155,7 +170,7 @@ pub fn entry() -> i32 {
     rescue::migrate_data_dir();
     activate_visual_styles();
     if let Err(e) = unsafe { load_comctl() } {
-        message_box(0, &format!("無法初始化 Windows 通用控制項：{e}"), MB_OK | MB_ICONERROR);
+        message_box(0, &trf!("無法初始化 Windows 通用控制項：{e}", "Couldn't initialize the Windows common controls: {e}"), MB_OK | MB_ICONERROR);
         return 1;
     }
     let icc = INITCOMMONCONTROLSEX {
@@ -182,6 +197,16 @@ pub fn entry() -> i32 {
     if open_home && paths.is_empty() {
         paths.push(feather_core::install::HOME_MARKER.to_string());
     }
+    // 換了語言後重新開啟（見 App::restart）：等原本的 Stillfeather 關閉再接手，不要把位置交給正在關閉的它
+    if let Some(pid) = args_wait_pid() {
+        unsafe {
+            let h = OpenProcess(SYNCHRONIZE, 0, pid);
+            if h != 0 {
+                WaitForSingleObject(h, 15_000);
+                CloseHandle(h);
+            }
+        }
+    }
     // 前面一分鐘內連續三次沒能正常啟動：改回 Windows 檔案總管並用它開這次的位置（見 rescue.rs）
     if rescue::rescue_if_crash_loop(&paths) {
         return 0;
@@ -192,7 +217,7 @@ pub fn entry() -> i32 {
     if !instance.primary {
         let full: Vec<String> = paths.iter().map(|p| if p == feather_core::install::HOME_MARKER { p.clone() } else { full_path(p).unwrap_or_else(|_| p.clone()) }).collect();
         if !instance.send_to_primary(&full) {
-            message_box(0, "無法連線至已開啟的 Stillfeather。請稍後重試。", MB_OK | MB_ICONINFORMATION);
+            message_box(0, tr!("無法連線至已開啟的 Stillfeather。請稍後重試。", "Couldn't connect to the Stillfeather that's already open. Try again later."), MB_OK | MB_ICONINFORMATION);
         }
         return 0;
     }

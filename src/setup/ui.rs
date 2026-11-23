@@ -148,7 +148,7 @@ struct Wizard {
     args: SetupArgs,
     dir: String,
     default_fm: bool,
-    /// 其他程式開啟檔案時也用 Stillfeather（預設不勾；已經選過的照原本的選擇）
+    /// 其他程式開啟或儲存檔案時也用 Stillfeather（預設不勾；已經選過的照原本的選擇）
     picker: bool,
     desktop: bool,
     start_menu: bool,
@@ -217,9 +217,9 @@ fn run(flow: Flow, args: SetupArgs, dir: String, default_fm: bool, desktop: bool
         };
         RegisterClassExW(&wc);
         let title = ops::w(match flow {
-            Flow::Install => "Stillfeather 安裝程式",
-            Flow::Update => "更新 Stillfeather",
-            Flow::Uninstall => "解除安裝 Stillfeather",
+            Flow::Install => tr!("Stillfeather 安裝程式", "Stillfeather Setup"),
+            Flow::Update => tr!("更新 Stillfeather", "Update Stillfeather"),
+            Flow::Uninstall => tr!("解除安裝 Stillfeather", "Uninstall Stillfeather"),
         });
         let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
         let hwnd = CreateWindowExW(0, class.as_ptr(), title.as_ptr(), style, CW_USEDEFAULT, CW_USEDEFAULT, 200, 200, 0, 0, hinst, std::ptr::null());
@@ -449,13 +449,13 @@ impl Wizard {
             (Flow::Install, Page::Start) => {
                 let box_rect = RECT::new(pad, self.s(156), cw - pad * 2 - self.s(104) - self.s(10), self.s(38));
                 w.push(Widget { id: PATH, kind: Kind::Path, rect: box_rect, text: String::new() });
-                w.push(button(BROWSE, RECT::new(box_rect.right + self.s(10), box_rect.top, self.s(104), box_rect.height()), "瀏覽…", false));
-                w.push(check(CHK_DEFAULT, self.s(232), "設為預設檔案總管（Win+E 與開啟資料夾都改用 Stillfeather）", self.default_fm));
-                w.push(check(CHK_PICKER, self.s(268), "其他程式開啟檔案時也用 Stillfeather（上傳、選擇資料夾）", self.picker));
-                w.push(check(CHK_DESKTOP, self.s(304), "建立桌面捷徑", self.desktop));
-                w.push(check(CHK_START, self.s(340), "加入開始功能表", self.start_menu));
-                w.push(button(CANCEL, cancel_rect, "取消", false));
-                w.push(button(PRIMARY, primary_rect, "安裝", true));
+                w.push(button(BROWSE, RECT::new(box_rect.right + self.s(10), box_rect.top, self.s(104), box_rect.height()), tr!("瀏覽…", "Browse…"), false));
+                w.push(check(CHK_DEFAULT, self.s(232), tr!("設為預設檔案總管（Win+E 與開啟資料夾都改用 Stillfeather）", "Set as default file manager (Win+E and opening folders)"), self.default_fm));
+                w.push(check(CHK_PICKER, self.s(268), tr!("其他程式開啟或儲存檔案時也用 Stillfeather（上傳、另存新檔）", "Use Stillfeather for other programs' Open and Save dialogs"), self.picker));
+                w.push(check(CHK_DESKTOP, self.s(304), tr!("建立桌面捷徑", "Create a desktop shortcut"), self.desktop));
+                w.push(check(CHK_START, self.s(340), tr!("加入開始功能表", "Add to the Start menu"), self.start_menu));
+                w.push(button(CANCEL, cancel_rect, tr!("取消", "Cancel"), false));
+                w.push(button(PRIMARY, primary_rect, tr!("安裝", "Install"), true));
                 // 輸入框放在圓角框裡、垂直置中
                 let eh = self.s(22);
                 unsafe {
@@ -464,17 +464,17 @@ impl Wizard {
                 edit_visible = true;
             }
             (Flow::Uninstall, Page::Start) => {
-                w.push(button(CANCEL, cancel_rect, "取消", false));
-                w.push(button(PRIMARY, primary_rect, "解除安裝", true));
+                w.push(button(CANCEL, cancel_rect, tr!("取消", "Cancel"), false));
+                w.push(button(PRIMARY, primary_rect, tr!("解除安裝", "Uninstall"), true));
             }
             (Flow::Update, Page::Start) => {}
             (_, Page::Working) => {}
             (flow, Page::Done) => {
                 let ok = matches!(self.outcome, Some(Ok(_)));
                 if flow == Flow::Install && ok {
-                    w.push(check(CHK_LAUNCH, self.s(354), "立即開啟 Stillfeather", self.launch));
+                    w.push(check(CHK_LAUNCH, self.s(354), tr!("立即開啟 Stillfeather", "Open Stillfeather now"), self.launch));
                 }
-                w.push(button(PRIMARY, primary_rect, if ok { "完成" } else { "關閉" }, true));
+                w.push(button(PRIMARY, primary_rect, if ok { tr!("完成", "Done") } else { tr!("關閉", "Close") }, true));
             }
         }
         unsafe {
@@ -520,36 +520,36 @@ impl Wizard {
         let footer_top = c.height() - self.s(60);
         let ok = matches!(self.outcome, Some(Ok(_)));
         let (title, body): (String, String) = match (self.flow, self.page) {
-            (Flow::Install, Page::Start) => ("選擇安裝位置".into(), String::new()),
-            (Flow::Install, Page::Working) => ("正在安裝…".into(), String::new()),
+            (Flow::Install, Page::Start) => (tr!("選擇安裝位置", "Choose where to install").into(), String::new()),
+            (Flow::Install, Page::Working) => (tr!("正在安裝…", "Installing…").into(), String::new()),
             (Flow::Install, Page::Done) if ok => {
-                let mut b = format!("Stillfeather 已安裝到\n{}", self.dir);
+                let mut b = trf!("Stillfeather 已安裝到\n{}", "Stillfeather was installed to\n{}", self.dir);
                 if self.default_fm {
-                    b.push_str("\n\nWin+E 與開啟資料夾都會使用 Stillfeather。要改回 Windows 檔案總管，可以在 Stillfeather 的設定取消「設為預設檔案總管」，或解除安裝。");
+                    b.push_str(tr!("\n\nWin+E 與開啟資料夾都會使用 Stillfeather。要改回 Windows 檔案總管，可以在 Stillfeather 的設定取消「設為預設檔案總管」，或解除安裝。", "\n\nWin+E and opening folders use Stillfeather. To switch back to File Explorer, turn off “Set as default file manager” in Stillfeather's Settings, or uninstall it."));
                 }
                 if self.picker {
-                    b.push_str("\n\n其他程式開啟檔案、網頁上傳時也會跳出 Stillfeather（已經開著的程式要重新開啟）；可以在設定取消。");
+                    b.push_str(tr!("\n\n其他程式開啟檔案、網頁上傳時也會跳出 Stillfeather（已經開著的程式要重新開啟）；可以在設定取消。", "\n\nOther programs also show Stillfeather when they open or save files, and for uploads on web pages (programs that are already open need to be restarted); you can turn this off in Settings."));
                 }
-                ("安裝完成".into(), b)
+                (tr!("安裝完成", "Installation complete").into(), b)
             }
-            (Flow::Install, Page::Done) => ("安裝沒有完成".into(), self.failure_text()),
-            (Flow::Update, Page::Start | Page::Working) => ("正在更新 Stillfeather…".into(), String::new()),
-            (Flow::Update, Page::Done) if ok => (format!("已更新到 {}", crate::VERSION), "Stillfeather 馬上會重新開啟。".into()),
-            (Flow::Update, Page::Done) => ("更新沒有完成".into(), format!("{}\n\n按「關閉」會重新開啟 Stillfeather；可以稍後在設定按「檢查更新」再試一次。", self.failure_text())),
+            (Flow::Install, Page::Done) => (tr!("安裝沒有完成", "Installation didn't finish").into(), self.failure_text()),
+            (Flow::Update, Page::Start | Page::Working) => (tr!("正在更新 Stillfeather…", "Updating Stillfeather…").into(), String::new()),
+            (Flow::Update, Page::Done) if ok => (trf!("已更新到 {}", "Updated to {}", crate::VERSION), tr!("Stillfeather 馬上會重新開啟。", "Stillfeather will reopen in a moment.").into()),
+            (Flow::Update, Page::Done) => (tr!("更新沒有完成", "The update didn't finish").into(), trf!("{}\n\n按「關閉」會重新開啟 Stillfeather；可以稍後在設定按「檢查更新」再試一次。", "{}\n\nClick “Close” to reopen Stillfeather; you can try again later with “Check for updates” in Settings.", self.failure_text())),
             (Flow::Uninstall, Page::Start) => {
-                let mut b = format!(
-                    "解除安裝會：\n•  把預設的檔案總管改回 Windows 檔案總管，開啟檔案視窗改回 Windows 原本的\n•  刪除程式檔案與捷徑（{}）\n•  刪除設定、資料夾檢視記錄與記錄檔（%LOCALAPPDATA%\\{}）",
+                let mut b = trf!(
+                    "解除安裝會：\n•  把預設的檔案總管改回 Windows 檔案總管，開啟檔案視窗改回 Windows 原本的\n•  刪除程式檔案與捷徑（{}）\n•  刪除設定、資料夾檢視記錄與記錄檔（%LOCALAPPDATA%\\{}）", "Uninstalling will:\n•  Switch the default file manager back to File Explorer, and the file dialogs back to the Windows ones\n•  Delete the program files and shortcuts ({})\n•  Delete settings, folder view records and logs (%LOCALAPPDATA%\\{})",
                     self.dir,
                     install::DATA_DIR_NAME
                 );
                 if self.was_running {
-                    b.push_str("\n\nStillfeather 正在執行，會先將它關閉。");
+                    b.push_str(tr!("\n\nStillfeather 正在執行，會先將它關閉。", "\n\nStillfeather is running and will be closed first."));
                 }
-                ("解除安裝 Stillfeather".into(), b)
+                (tr!("解除安裝 Stillfeather", "Uninstall Stillfeather").into(), b)
             }
-            (Flow::Uninstall, Page::Working) => ("正在解除安裝…".into(), String::new()),
-            (Flow::Uninstall, Page::Done) if ok => ("已解除安裝 Stillfeather".into(), "預設的檔案總管已改回 Windows 檔案總管，程式檔案、捷徑、設定與記錄都已刪除。".into()),
-            (Flow::Uninstall, Page::Done) => ("解除安裝沒有完成".into(), self.failure_text()),
+            (Flow::Uninstall, Page::Working) => (tr!("正在解除安裝…", "Uninstalling…").into(), String::new()),
+            (Flow::Uninstall, Page::Done) if ok => (tr!("已解除安裝 Stillfeather", "Stillfeather was uninstalled").into(), tr!("預設的檔案總管已改回 Windows 檔案總管，程式檔案、捷徑、設定與記錄都已刪除。", "The default file manager is back to File Explorer, and the program files, shortcuts, settings and logs were deleted.").into()),
+            (Flow::Uninstall, Page::Done) => (tr!("解除安裝沒有完成", "Uninstall didn't finish").into(), self.failure_text()),
         };
         text(dc, &title, &title_rect, self.fonts.title, p.ink, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
         if !body.is_empty() {
@@ -559,8 +559,8 @@ impl Wizard {
         }
         match self.page {
             Page::Start if self.flow == Flow::Install => {
-                text(dc, "安裝位置", &body_rect(self.s(132), self.s(152)), self.fonts.small, p.muted, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-                let note = "預設裝在你的使用者資料夾，不需要系統管理員權限；選 Program Files 等位置時會請你允許。";
+                text(dc, tr!("安裝位置", "Install location"), &body_rect(self.s(132), self.s(152)), self.fonts.small, p.muted, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+                let note = tr!("預設裝在你的使用者資料夾，不需要系統管理員權限；選 Program Files 等位置時會請你允許。", "Installs to your user folder by default, so no administrator permission is needed; you'll be asked to allow it if you pick a location such as Program Files.");
                 text(dc, note, &body_rect(self.s(198), self.s(222)), self.fonts.small, p.muted, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
             }
             Page::Working => {
@@ -746,7 +746,7 @@ impl Wizard {
             let mut opts = 0u32;
             (v.GetOptions)(dlg, &mut opts);
             (v.SetOptions)(dlg, opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-            let (title, ok) = (ops::w("選擇安裝位置"), ops::w("選擇資料夾"));
+            let (title, ok) = (ops::w(tr!("選擇安裝位置", "Choose an install location")), ops::w(tr!("選擇資料夾", "Select folder")));
             (v.SetTitle)(dlg, title.as_ptr());
             (v.SetOkButtonLabel)(dlg, ok.as_ptr());
             // 從目前輸入的位置（或它存在的上層）開始
@@ -849,7 +849,7 @@ impl Wizard {
         }
         self.error = None;
         self.page = Page::Working;
-        self.status = "準備中…".into();
+        self.status = tr!("準備中…", "Getting ready…").into();
         self.percent = 0;
         self.show_focus = false;
         unsafe {

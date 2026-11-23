@@ -62,7 +62,7 @@ pub fn register(hinst: HINSTANCE) {
 pub fn create(parent: HWND) -> HWND {
     let data = Box::new(Data { hot: Hit::None, tracking: false, hover: Vec::new(), ellipsis_hover: Tween::new(0.0), path: String::new(), drop: None });
     let class = wide(CRUMBS_CLASS);
-    let name = wide("目前位置");
+    let name = wide(tr!("目前位置", "Current location"));
     unsafe {
         let hwnd = CreateWindowExW(
             0,
