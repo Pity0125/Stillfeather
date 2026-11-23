@@ -5,6 +5,11 @@
 //! 上傳 StillfeatherSetup.exe 與 `build.ps1 -Setup` 產生的 update.json。程式讀取
 //! `<repository>/releases/latest/download/update.json`（GitHub 會轉到最新正式版的那一份），
 //! 有新版就提醒；下載的安裝程式要大小與 SHA-256 都和 update.json 相符才會執行。
+//!
+//! update.json 本身另外有簽章（`update.json.sig`，和它放在同一個 Release）：以離線保存的私鑰（ECDSA P-256）
+//! 對 update.json 的原始位元組簽章，公鑰（`assets/update-signing-key.txt`）建置時嵌進程式。GitHub 帳號被盜時，
+//! 攻擊者可以把安裝程式和 update.json 一起換掉（SHA-256 也跟著換），但做不出簽章，Stillfeather 就不會更新。
+//! 驗證本身用 Windows 內建的 CNG（`src/win/update.rs`），這裡只處理格式。
 
 use crate::json::{self, Value};
 
@@ -13,6 +18,16 @@ pub const SETUP_FILE: &str = "StillfeatherSetup.exe";
 /// 自動檢查的間隔：每天開啟時最多檢查一次
 pub const CHECK_INTERVAL_SECS: u64 = 20 * 3600;
 pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
+/// update.json 的簽章檔：網址是 update.json 的網址加上這個字尾
+pub const SIGNATURE_SUFFIX: &str = ".sig";
+pub const MAX_SIGNATURE_BYTES: u64 = 4 * 1024;
+/// 嵌進程式的公鑰（見 [`public_key`]）
+pub const PUBLIC_KEY_FILE: &str = include_str!("../assets/update-signing-key.txt");
+/// ECDSA P-256 簽章（IEEE P1363：r 與 s 各 32 位元組，大端序；.NET 的 ECDsaCng.SignData 與 CNG 都用這個格式）
+pub const SIGNATURE_LEN: usize = 64;
+/// BCRYPT_ECCPUBLIC_BLOB：BCRYPT_ECCKEY_BLOB（魔術數字 "ECS1"、金鑰長度 32）＋ X ＋ Y
+pub const PUBLIC_KEY_LEN: usize = 72;
+const ECDSA_P256_PUBLIC_MAGIC: [u8; 4] = *b"ECS1";
 pub const MAX_SETUP_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_NOTES_CHARS: usize = 1200;
 const MAX_URL_LEN: usize = 2048;
@@ -39,6 +54,38 @@ fn github_repo(repository: &str) -> Option<(&str, &str)> {
     let (owner, repo) = (parts.next()?, parts.next()?);
     let valid = |s: &str| !s.is_empty() && s.len() <= 100 && s != "." && s != ".." && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
     (parts.next().is_none() && valid(owner) && valid(repo)).then_some((owner, repo))
+}
+
+/// update.json 的簽章檔網址（查詢字串之前加上 `.sig`）
+pub fn signature_url(manifest_url: &str) -> String {
+    match manifest_url.split_once('?') {
+        Some((path, query)) => format!("{path}{SIGNATURE_SUFFIX}?{query}"),
+        None => format!("{manifest_url}{SIGNATURE_SUFFIX}"),
+    }
+}
+
+// ---------------------------------------------------------------- 簽章與公鑰的格式
+
+/// 讀 Base64 文字檔：略過 `#` 開頭的說明與空行，取第一行資料
+fn base64_payload(text: &str) -> Option<Vec<u8>> {
+    let line = text.trim_start_matches('\u{feff}').lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#'))?;
+    crate::base64::decode(line)
+}
+
+/// update.json.sig：一行 Base64 的 64 位元組簽章
+pub fn parse_signature(text: &str) -> Option<[u8; SIGNATURE_LEN]> {
+    base64_payload(text)?.try_into().ok()
+}
+
+/// 公鑰檔：一行 Base64 的 BCRYPT_ECCPUBLIC_BLOB（P-256）
+pub fn parse_public_key(text: &str) -> Option<[u8; PUBLIC_KEY_LEN]> {
+    let key: [u8; PUBLIC_KEY_LEN] = base64_payload(text)?.try_into().ok()?;
+    (key[..4] == ECDSA_P256_PUBLIC_MAGIC && key[4..8] == 32u32.to_le_bytes()).then_some(key)
+}
+
+/// 這一版 Stillfeather 嵌入的公鑰。沒有時（還沒產生金鑰的開發版）不接受任何更新。
+pub fn public_key() -> Option<[u8; PUBLIC_KEY_LEN]> {
+    parse_public_key(PUBLIC_KEY_FILE)
 }
 
 /// 拆開 https 網址：（主機, 連接埠, 路徑與查詢字串）。只接受 https，不接受帳號密碼。
@@ -504,9 +551,42 @@ mod tests {
         assert_eq!(offer("0.1.0", &m, Some("0.1.5"), false), Offer::Newer, "略過的是舊的版本");
     }
 
+    /// 以 Python cryptography 產生的測試向量（金鑰只用在這裡，私鑰已丟棄）。Windows 端以 CNG 驗證同一組
+    /// （`src/win/update.rs` 的測試），確認 PowerShell／CNG 的格式與這裡一致。
+    pub const TEST_PUBLIC_KEY: &str = "RUNTMSAAAAAKIhaqk+jGdemKPYYlgZvYXt5TWX0oE30cuMzkVHQlEqrp+6J1haETlP+qVqzlifHg/kocihCed/nHwiFjX01p";
+    pub const TEST_SIGNATURE: &str = "45kBHn6DLlodl/Zqemz8MF3K6iKQi9zsgVldg9DL6xdmQgKSCrjUdviVF4IH8X5IstDnUelVg0dvRCwxMfFvEQ==";
+    pub const TEST_MESSAGE: &str = "{\r\n    \"version\":  \"0.2.0\",\r\n    \"url\":  \"https://github.com/Pity0125/Stillfeather/releases/download/v0.2.0/StillfeatherSetup.exe\",\r\n    \"sha256\":  \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\r\n    \"size\":  2328064,\r\n    \"notes\":  \"測試向量\"\r\n}";
+
+    #[test]
+    fn signature_and_key_formats() {
+        let key = parse_public_key(&format!("# 說明\r\n\r\n{TEST_PUBLIC_KEY}\r\n")).unwrap();
+        assert_eq!(&key[..8], b"ECS1\x20\0\0\0");
+        assert!(parse_signature(TEST_SIGNATURE).is_some());
+        assert!(parse_signature(&format!("\u{feff}{TEST_SIGNATURE}\n")).is_some());
+        // 長度不對、不是 P-256 公鑰、不是 Base64
+        assert!(parse_signature(TEST_PUBLIC_KEY).is_none());
+        assert!(parse_public_key(TEST_SIGNATURE).is_none());
+        let mut private_magic = crate::base64::decode(TEST_PUBLIC_KEY).unwrap();
+        private_magic[3] = b'2';
+        assert!(parse_public_key(&crate::base64::encode(&private_magic)).is_none());
+        assert!(parse_signature("not base64!").is_none());
+        assert!(parse_public_key("# 只有說明\n").is_none());
+        // 測試向量就是 update.json 的樣子
+        assert!(parse_manifest(TEST_MESSAGE).is_ok());
+    }
+
+    #[test]
+    fn embedded_key_is_valid_or_missing() {
+        // 還沒產生金鑰時檔案只有說明（不接受更新）；有資料的話一定要是有效的 P-256 公鑰
+        let has_data = PUBLIC_KEY_FILE.lines().any(|l| !l.trim().is_empty() && !l.trim().starts_with('#'));
+        assert_eq!(public_key().is_some(), has_data, "assets/update-signing-key.txt 的公鑰格式不正確");
+    }
+
     #[test]
     fn urls() {
         assert_eq!(manifest_url("https://github.com/pity0/stillfeather").as_deref(), Some("https://github.com/pity0/stillfeather/releases/latest/download/update.json"));
+        assert_eq!(signature_url("https://github.com/a/b/releases/latest/download/update.json"), "https://github.com/a/b/releases/latest/download/update.json.sig");
+        assert_eq!(signature_url("https://example.com/u.json?x=1"), "https://example.com/u.json.sig?x=1");
         assert_eq!(manifest_url(" https://github.com/pity0/still-feather.git/ ").as_deref(), Some("https://github.com/pity0/still-feather/releases/latest/download/update.json"));
         for bad in ["", "https://gitlab.com/a/b", "http://github.com/a/b", "https://github.com/a", "https://github.com/a/b/c", "https://github.com/../b", "https://github.com/a b/c"] {
             assert_eq!(manifest_url(bad), None, "{bad}");

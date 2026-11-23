@@ -1,0 +1,5 @@
+# Stillfeather 自動更新的公鑰（ECDSA P-256，Windows CNG 的 BCRYPT_ECCPUBLIC_BLOB，Base64）。
+# 建置時嵌進 Stillfeather，用來確認 update.json 是用離線保存的私鑰簽的（見 DEVELOPMENT.md「更新資訊的簽章」）。
+# 還沒有公鑰：執行 tools\New-UpdateSigningKey.ps1 產生一組金鑰，它會把公鑰寫在下面。之後不要再換：
+# 換了之後，已經安裝的 Stillfeather 就不會再接受更新。
+RUNTMSAAAABTNPfhj5C5f+8mjFbf/Ndasri3qrHPXEo0sifuAdC1dOtsYOwQ7r8vJJWao//9neHF2xr5c7sPZS9MHLRIsn34

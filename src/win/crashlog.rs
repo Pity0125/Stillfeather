@@ -1,5 +1,5 @@
 //! 當機診斷：程式被系統直接結束時（存取違規、堆疊用盡、堆積損壞——這些不會經過 panic 訊息），
-//! 在記錄資料夾留下記錄（開發版在 exe 旁；安裝版在 %LOCALAPPDATA%\FeatherFiles\logs）：
+//! 在記錄資料夾留下記錄（開發版在 exe 旁；安裝版在 %LOCALAPPDATA%\Stillfeather\logs）：
 //! - `trace.log`：經過的步驟，每一步立即寫入（程序被強制結束也留得住），最後一行就是出事的位置；
 //!   嚴重的硬體例外也記在這裡。
 //! - `crash.log`：未處理例外的代碼、位置與最後 64 個步驟。
@@ -77,7 +77,7 @@ fn exe_dir() -> Option<String> {
     feather_core::paths::parent(&path)
 }
 
-/// 記錄檔的資料夾：用安裝程式裝的（exe 旁有 Uninstall.exe）放在 %LOCALAPPDATA%\FeatherFiles\logs，
+/// 記錄檔的資料夾：用安裝程式裝的（exe 旁有 Uninstall.exe）放在 %LOCALAPPDATA%\Stillfeather\logs，
 /// 安裝資料夾可能沒有寫入權限，解除安裝時也一併刪除；開發版放在 exe 旁。
 pub fn log_dir() -> Option<String> {
     let dir = exe_dir()?;
@@ -86,7 +86,7 @@ pub fn log_dir() -> Option<String> {
         return Some(dir);
     }
     let base = std::env::var("LOCALAPPDATA").ok()?;
-    let logs = feather_core::paths::join(&feather_core::paths::join(&base, feather_core::install::DATA_DIR_NAME), "logs");
+    let logs = feather_core::paths::join(&feather_core::install::data_dir(&base), "logs");
     std::fs::create_dir_all(&logs).ok()?;
     Some(logs)
 }

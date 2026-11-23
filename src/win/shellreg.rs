@@ -400,7 +400,7 @@ pub fn enable_picker(dll: &str, exe: &str) -> Result<(), String> {
     set_string(&server, "ThreadingModel", "Apartment")
 }
 
-/// 使用者要不要這個功能（沒選過時預設開啟，見 install::picker_wanted）
+/// 使用者要不要這個功能（沒選過時預設關閉，見 install::picker_wanted）
 pub fn picker_choice() -> bool {
     install::picker_wanted(read_string(install::APP_KEY, install::PICKER_CHOICE_VALUE).as_deref())
 }
@@ -410,10 +410,10 @@ pub fn set_picker_choice(on: bool) -> Result<(), String> {
     set_string(install::APP_KEY, install::PICKER_CHOICE_VALUE, if on { "1" } else { "0" })
 }
 
-/// 實際登記的那一份的位置：%LOCALAPPDATA%\FeatherFiles\Picker\StillfeatherPicker.dll（見 install::PICKER_DIR_NAME）
+/// 實際登記的那一份的位置：%LOCALAPPDATA%\Stillfeather\Picker\StillfeatherPicker.dll（見 install::PICKER_DIR_NAME）
 pub fn deployed_picker_path() -> Option<String> {
     let base = std::env::var("LOCALAPPDATA").ok()?;
-    let dir = paths::join(&paths::join(&base, install::DATA_DIR_NAME), install::PICKER_DIR_NAME);
+    let dir = paths::join(&install::data_dir(&base), install::PICKER_DIR_NAME);
     Some(paths::join(&dir, feather_core::picker::DLL_NAME))
 }
 

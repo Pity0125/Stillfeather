@@ -4,7 +4,7 @@
 //!   寫入 Stillfeather（內嵌在安裝程式裡）、解除安裝程式、捷徑與「已安裝的應用程式」項目 → 需要時設為預設檔案總管。
 //!   裝到需要權限的位置（例如 Program Files）時，以系統管理員身分重新執行自己做那一步。
 //! - 解除安裝：在「設定 › 應用程式 › 已安裝的應用程式」按解除安裝時執行 Uninstall.exe：先把自己複製到暫存資料夾再執行，
-//!   接著改回 Windows 檔案總管與 Windows 的開啟檔案視窗、刪除捷徑、程式檔案、設定與記錄（%LOCALAPPDATA%\FeatherFiles）和登錄，
+//!   接著改回 Windows 檔案總管與 Windows 的開啟檔案視窗、刪除捷徑、程式檔案、設定與記錄（%LOCALAPPDATA%\Stillfeather）和登錄，
 //!   最後刪掉暫存的自己。
 //! - 靜默模式（/S）給部署工具與商店使用：不顯示畫面，以結束代碼回報（0 成功、1 失敗、3 參數錯誤）。
 //!   參數見 `feather_core::install::parse_setup_args`。

@@ -8,8 +8,9 @@
 //!   所以不會又繞回這裡），程式做的每一個設定都照樣轉交給它。
 //! - 程式呼叫 Show 時，把設定寫成請求檔，啟動 `Stillfeather.exe --pick <請求檔>`（同一個資料夾裡的那一份），
 //!   等使用者選好（期間照常處理程式的視窗訊息），再把結果以 IShellItem 交回，並照 Windows 的做法通知程式（OnFileOk）。
-//! - 找不到 Stillfeather、它無法啟動、使用者按「使用 Windows 視窗」、要選的不是一般檔案（例如手機、媒體櫃），
-//!   或是 Stillfeather 自己的程式要開檔時，就直接顯示 Windows 原本的視窗：程式永遠可以選到檔案。
+//! - 找不到 Stillfeather、它無法啟動、使用者按「使用 Windows 視窗」、要選的不是一般檔案（例如手機、媒體櫃）、
+//!   程式在視窗裡加了自己的選項（IFileDialogCustomize 的勾選方塊、下拉選單、按鈕，例如「編碼」「以唯讀開啟」），
+//!   或是 Stillfeather 自己的程式要開檔時，就直接顯示 Windows 原本的視窗：程式永遠可以選到檔案，也不會少了它的選項。
 //!
 //! 每個 COM 方法都接住 panic 並回傳錯誤（這個 DLL 是在別人的程式裡執行）。只支援 64 位元：
 //! IFileDialogCustomize 以「最多三個暫存器參數」的方式原封轉交，這在 x64 的呼叫慣例下才成立。
@@ -94,6 +95,7 @@ const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS: u32 = 0x4;
 const GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT: u32 = 0x2;
 const GA_ROOT: u32 = 2;
 const QS_ALLINPUT: u32 = 0x04FF;
+const MWMO_INPUTAVAILABLE: u32 = 0x0004;
 const PM_REMOVE: u32 = 1;
 const WM_QUIT: u32 = 0x0012;
 const INFINITE: u32 = 0xFFFF_FFFF;
@@ -181,7 +183,7 @@ extern "system" {
     fn SetForegroundWindow(hwnd: HWND) -> BOOL;
     fn AllowSetForegroundWindow(pid: u32) -> BOOL;
     fn GetAncestor(hwnd: HWND, flags: u32) -> HWND;
-    fn MsgWaitForMultipleObjects(count: u32, handles: *const HANDLE, wait_all: BOOL, ms: u32, mask: u32) -> u32;
+    fn MsgWaitForMultipleObjectsEx(count: u32, handles: *const HANDLE, ms: u32, mask: u32, flags: u32) -> u32;
     fn PeekMessageW(msg: *mut Msg, hwnd: HWND, min: u32, max: u32, remove: u32) -> BOOL;
     fn TranslateMessage(msg: *const Msg) -> BOOL;
     fn DispatchMessageW(msg: *const Msg) -> isize;
@@ -449,6 +451,8 @@ struct State {
     sinks: Vec<(u32, *mut c_void)>,
     next_cookie: u32,
     shown: Shown,
+    /// 程式加了自己的選項（勾選方塊、下拉選單…）：Stillfeather 的視窗顯示不出來，改用 Windows 的視窗
+    custom_controls: bool,
 }
 
 #[repr(C)]
@@ -605,7 +609,7 @@ unsafe extern "system" fn show(this: *mut c_void, owner: HWND) -> HRESULT {
         // 狀態每次重新取用，不跨過會呼叫回程式的地方（程式可能在事件裡再呼叫這個物件）
         d.state().shown = Shown::None;
         let options = current_options(d);
-        if use_system_dialog(options) {
+        if use_system_dialog(options) || d.state().custom_controls {
             return show_system(d, owner);
         }
         // 程式在 OnFileOk 拒絕時（例如檔案不符合它的要求）重新選，最多幾次
@@ -761,10 +765,11 @@ unsafe fn run_picker(d: &Dialog, owner: HWND, options: u32) -> Outcome {
     outcome
 }
 
-/// 等選擇器結束；期間處理這個執行緒的視窗訊息（程式的畫面才不會卡住）。
+/// 等選擇器結束；期間處理這個執行緒的視窗訊息（程式的畫面才不會卡住，也不會顯示「沒有回應」）。
+/// MWMO_INPUTAVAILABLE：佇列裡已經有、但之前被看過而沒取走的訊息也算，不會因此一直等下去。
 unsafe fn wait_pumping(process: HANDLE) {
     loop {
-        let r = MsgWaitForMultipleObjects(1, &process, 0, INFINITE, QS_ALLINPUT);
+        let r = MsgWaitForMultipleObjectsEx(1, &process, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if r == WAIT_OBJECT_0 {
             return;
         }
@@ -1139,6 +1144,13 @@ struct CustomizeVtbl {
     methods: [Forward3; 27],
 }
 
+/// 這個方法會不會在視窗裡加一個使用者要操作的選項（照 IFileDialogCustomize 的方法順序）：
+/// 0 EnableOpenDropDown、1 AddMenu、2 AddPushButton、3 AddComboBox、4 AddRadioButtonList、5 AddCheckButton、6 AddEditBox。
+/// 7 AddSeparator、8 AddText 之後是只有外觀或讀寫狀態的方法，不算。
+fn adds_input_control(index: usize) -> bool {
+    index <= 6
+}
+
 unsafe fn forward_custom(this: *mut c_void, index: usize, a: usize, b: usize, c: usize) -> HRESULT {
     guard(|| {
         let d = dialog_from_custom(this);
@@ -1146,7 +1158,12 @@ unsafe fn forward_custom(this: *mut c_void, index: usize, a: usize, b: usize, c:
             return E_NOTIMPL;
         }
         let f: Forward3 = std::mem::transmute::<*const c_void, Forward3>(slot(d.real_custom, 3 + index));
-        f(d.real_custom, a, b, c)
+        let hr = f(d.real_custom, a, b, c);
+        if hr >= 0 && adds_input_control(index) {
+            // Stillfeather 的視窗沒有地方放程式自己的選項；使用者選不到的話，程式會一直用預設值（例如編碼、唯讀）
+            d.state().custom_controls = true;
+        }
+        hr
     })
 }
 
@@ -1313,5 +1330,17 @@ mod tests {
         assert!(file_ok_accepts(E_NOTIMPL));
         assert!(file_ok_accepts(E_FAIL));
         assert!(!file_ok_accepts(S_FALSE));
+    }
+
+    #[test]
+    fn custom_controls_that_need_the_windows_dialog() {
+        // EnableOpenDropDown、AddMenu、AddPushButton、AddComboBox、AddRadioButtonList、AddCheckButton、AddEditBox
+        for i in 0..=6 {
+            assert!(adds_input_control(i), "{i}");
+        }
+        // AddSeparator、AddText、SetControlLabel…：只改外觀或讀寫狀態
+        for i in 7..27 {
+            assert!(!adds_input_control(i), "{i}");
+        }
     }
 }

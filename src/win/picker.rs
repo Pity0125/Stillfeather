@@ -531,7 +531,7 @@ fn deploy_dll() -> Result<String, String> {
     shellreg::deploy_picker(&src)
 }
 
-/// 主程式啟動時依使用者的選擇處理（沒選過時預設開啟）：
+/// 主程式啟動時依使用者的選擇處理（沒選過時預設關閉）：
 /// - 開啟：還沒登記就登記（程式旁邊沒有取代元件時略過）；已經登記的更新成這一版（重新建置、更新之後），
 ///   記下的 Stillfeather 不見了就改用這一份。另一份 Stillfeather（例如安裝版）負責時不動。
 /// - 關閉：還登記著就取消。
@@ -570,7 +570,7 @@ pub(super) fn maintain() {
 impl App {
     /// 設定裡的「其他程式開啟檔案時也用 Stillfeather」
     pub(super) fn set_picker_enabled(&mut self, on: bool) {
-        // 先記下選擇：之後每次啟動都照這個選擇處理（沒選過時預設開啟）
+        // 先記下選擇：之後每次啟動都照這個選擇處理（沒選過時預設關閉）
         let _ = shellreg::set_picker_choice(on);
         let result = if on {
             current_exe_path().ok_or_else(|| "找不到 Stillfeather 程式的位置。".to_string()).and_then(|exe| {

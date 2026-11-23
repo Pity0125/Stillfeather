@@ -1,0 +1,61 @@
+# 在 GitHub 的 Windows 主機上測試並建置 Stillfeather（安裝程式、update.json、RestoreExplorer.cmd）。
+#
+# - 每次 push 到 main、開 Pull Request，或推送 v* 標籤時執行；也可以在 Actions 頁面手動執行。
+# - 建置結果在這次執行的「Artifacts」可以下載。這裡不簽章：update.json 的簽章用離線保存的私鑰在自己的電腦上做
+#   （tools\Sign-Update.ps1），之後申請 SignPath Foundation 的免費程式碼簽章時，就用這個流程產生的檔案送簽
+#   （見 DEVELOPMENT.md「程式碼簽章」）。
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust（MSVC 工具鏈）
+        shell: powershell
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+          rustup default stable-x86_64-pc-windows-msvc
+          rustc --version
+
+      - name: 測試（核心邏輯、Win32 版面與 CNG 簽章驗證、開啟檔案視窗元件）
+        shell: powershell
+        run: .\test.ps1
+
+      - name: 建置安裝程式
+        shell: powershell
+        run: .\build.ps1 -Setup -Yes
+
+      - name: 上傳建置結果
+        uses: actions/upload-artifact@v4
+        with:
+          name: Stillfeather-${{ github.ref_name }}-${{ github.sha }}
+          path: |
+            dist/StillfeatherSetup.exe
+            dist/update.json
+            dist/RestoreExplorer.cmd
+          if-no-files-found: error
+
+      - name: 上傳 build.log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.sha }}
+          path: build.log
+          if-no-files-found: ignore

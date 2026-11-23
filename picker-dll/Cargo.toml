@@ -1,8 +1,9 @@
 [package]
 name = "stillfeather-picker"
-version = "0.1.0"
+version = "0.1.3"
 edition = "2021"
 description = "Stillfeather：讓其他程式的「開啟檔案」視窗改用 Stillfeather（取代元件）"
+license = "GPL-3.0-or-later"
 publish = false
 
 # 這個 DLL 會被載入其他程式（瀏覽器、編輯器…）裡，所以和 Stillfeather 本體分開建置：

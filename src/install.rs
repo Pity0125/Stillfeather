@@ -23,7 +23,29 @@ pub const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Unin
 pub const APP_KEY: &str = r"Software\Stillfeather";
 pub const BACKUP_KEY: &str = r"Software\Stillfeather\DefaultFileManagerBackup";
 /// 設定、資料夾檢視記錄與記錄檔所在的資料夾名稱（%LOCALAPPDATA% 底下）
-pub const DATA_DIR_NAME: &str = "FeatherFiles";
+pub const DATA_DIR_NAME: &str = "Stillfeather";
+/// v0.1.0～v0.1.2 用的資料夾名稱（沿用 C# 雛形的 FeatherFiles）。啟動時把設定搬到 [`DATA_DIR_NAME`]，
+/// 剩下的（記錄、舊的取代元件）在取代元件不再登記在那裡之後刪掉；解除安裝時兩個都刪。
+pub const OLD_DATA_DIR_NAME: &str = "FeatherFiles";
+/// 從舊資料夾搬過來的檔案（新資料夾已經有同名檔案時不蓋掉）。記錄檔、資訊清單與取代元件會重新產生，不必搬。
+pub const MIGRATED_FILES: &[&str] = &["settings.json", "settings.json.bak", "folder-views.json", "update-state.json", "picker-folders.txt"];
+
+/// Stillfeather 的資料夾：%LOCALAPPDATA%\Stillfeather
+pub fn data_dir(local_app_data: &str) -> String {
+    paths::join(local_app_data, DATA_DIR_NAME)
+}
+
+/// v0.1.x 的資料夾：%LOCALAPPDATA%\FeatherFiles
+pub fn old_data_dir(local_app_data: &str) -> String {
+    paths::join(local_app_data, OLD_DATA_DIR_NAME)
+}
+
+/// `path` 在 `dir` 裡面（不分大小寫）
+pub fn is_inside(path: &str, dir: &str) -> bool {
+    let n = |p: &str| paths::trim_end_sep(&paths::normalize_separators(p.trim())).to_lowercase();
+    let (p, d) = (n(path), n(dir));
+    !d.is_empty() && p.len() > d.len() && p.starts_with(&d) && p.as_bytes()[d.len()] == b'\\'
+}
 /// 資料夾右鍵選單的動詞名稱與文字
 pub const VERB: &str = "Stillfeather";
 pub const VERB_TEXT: &str = "以 Stillfeather 開啟";
@@ -69,14 +91,15 @@ pub fn default_fm_on_start(choice: Option<&str>, registered: Option<bool>) -> De
 
 /// 「其他程式開啟檔案時也用 Stillfeather」：取代元件啟動哪一個 Stillfeather（[`APP_KEY`] 底下的值）
 pub const PICKER_EXE_VALUE: &str = "PickerExe";
-/// 使用者的選擇（[`APP_KEY`] 底下的值）："1" 開、"0" 關；沒有這個值表示沒選過，預設開啟
+/// 使用者的選擇（[`APP_KEY`] 底下的值）："1" 開、"0" 關；沒有這個值表示沒選過，預設關閉
 pub const PICKER_CHOICE_VALUE: &str = "FilePicker";
 
-/// 要不要讓其他程式開啟檔案時跳出 Stillfeather：預設開啟，使用者關掉（"0"）才不要
+/// 要不要讓其他程式開啟檔案時跳出 Stillfeather：預設關閉，使用者勾選（"1"）才要。
+/// 取代元件會載入到每一個開檔的程式裡，出問題時當掉的是別人的程式，所以只在使用者自己選了之後才登記。
 pub fn picker_wanted(choice: Option<&str>) -> bool {
-    choice.is_none_or(|c| c.trim() != "0")
+    choice.is_some_and(|c| c.trim() == "1")
 }
-/// 取代元件實際登記的那一份放在 %LOCALAPPDATA%\FeatherFiles\Picker：
+/// 取代元件實際登記的那一份放在 %LOCALAPPDATA%\Stillfeather\Picker：
 /// 不登記程式資料夾裡的那一份，程式資料夾被移走或刪掉時，其他程式的開檔視窗仍然正常（找不到 Stillfeather 就用 Windows 的視窗）。
 pub const PICKER_DIR_NAME: &str = "Picker";
 
@@ -289,7 +312,7 @@ pub struct SetupArgs {
     pub silent: bool,
     pub dir: Option<String>,
     pub default_fm: Option<bool>,
-    /// 其他程式開啟檔案時也用 Stillfeather（None：沒有指定，維持使用者原本的選擇；沒選過就是開啟）
+    /// 其他程式開啟檔案時也用 Stillfeather（None：沒有指定，維持使用者原本的選擇；沒選過就是關閉）
     pub file_picker: Option<bool>,
     pub desktop: Option<bool>,
     pub start_menu: Option<bool>,
@@ -447,6 +470,23 @@ mod tests {
     }
 
     #[test]
+    fn data_dirs() {
+        let base = r"C:\Users\pity0\AppData\Local";
+        assert_eq!(data_dir(base), r"C:\Users\pity0\AppData\Local\Stillfeather");
+        assert_eq!(old_data_dir(base), r"C:\Users\pity0\AppData\Local\FeatherFiles");
+        let old = old_data_dir(base);
+        assert!(is_inside(r"C:\Users\pity0\AppData\Local\FeatherFiles\Picker\StillfeatherPicker.dll", &old));
+        assert!(is_inside(r"c:/users/PITY0/appdata/local/featherfiles/picker/x.dll", &old));
+        assert!(!is_inside(r"C:\Users\pity0\AppData\Local\FeatherFilesX\Picker\x.dll", &old));
+        assert!(!is_inside(&old, &old));
+        assert!(!is_inside(r"C:\Users\pity0\AppData\Local\Stillfeather\Picker\x.dll", &old));
+        assert!(!is_inside(r"C:\x.dll", ""));
+        // 搬過去的檔案不包含會重新產生的記錄、資訊清單與取代元件
+        assert!(MIGRATED_FILES.contains(&"settings.json") && MIGRATED_FILES.contains(&"folder-views.json"));
+        assert!(!MIGRATED_FILES.iter().any(|f| f.ends_with(".log") || f.ends_with(".dll")));
+    }
+
+    #[test]
     fn install_dirs() {
         assert_eq!(default_install_dir(r"C:\Users\pity0\AppData\Local"), r"C:\Users\pity0\AppData\Local\Programs\Stillfeather");
         assert_eq!(with_app_folder(r"D:\Apps\"), r"D:\Apps\Stillfeather");
@@ -568,6 +608,7 @@ mod tests {
     fn picker_keys() {
         assert_eq!(picker_server_key(), r"Software\Classes\CLSID\{DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7}\InprocServer32");
         assert!(is_picker_dll(r"C:\Users\me\AppData\Local\FeatherFiles\Picker\stillfeatherpicker.dll"));
+        assert!(is_picker_dll(r"C:\Users\me\AppData\Local\Stillfeather\Picker\StillfeatherPicker.dll"));
         assert!(!is_picker_dll(r"%SystemRoot%\System32\comdlg32.dll"));
         assert!(GENERATED_FILES.contains(&"picker-trace.log"));
     }
@@ -575,10 +616,13 @@ mod tests {
     #[test]
     fn file_picker_choice() {
         // 沒選過：預設開啟；只有明確關掉才不要
-        assert!(picker_wanted(None));
+        // 沒選過是關閉：只有使用者自己勾選才會登記
+        assert!(!picker_wanted(None));
         assert!(picker_wanted(Some("1")));
+        assert!(picker_wanted(Some(" 1 ")));
         assert!(!picker_wanted(Some("0")));
         assert!(!picker_wanted(Some(" 0 ")));
+        assert!(!picker_wanted(Some("")));
         let args = |v: &[&str]| parse_setup_args(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap();
         assert_eq!(args(&[]).file_picker, None);
         assert_eq!(args(&["--file-picker"]).file_picker, Some(true));

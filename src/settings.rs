@@ -1,5 +1,5 @@
-//! 使用者設定。檔案格式與 C# 版的 `%LOCALAPPDATA%\FeatherFiles\settings.json` 相容，
-//! 兩個版本可以共用同一份設定與常用位置。
+//! 使用者設定（`%LOCALAPPDATA%\Stillfeather\settings.json`）。欄位格式與 C# 雛形的
+//! `%LOCALAPPDATA%\FeatherFiles\settings.json` 相容（v0.1.x 用的就是那一份，新版啟動時搬過來）。
 
 use crate::json::{self, Value};
 use crate::paths;

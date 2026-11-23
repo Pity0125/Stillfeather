@@ -148,7 +148,7 @@ struct Wizard {
     args: SetupArgs,
     dir: String,
     default_fm: bool,
-    /// 其他程式開啟檔案時也用 Stillfeather（預設勾選）
+    /// 其他程式開啟檔案時也用 Stillfeather（預設不勾；已經選過的照原本的選擇）
     picker: bool,
     desktop: bool,
     start_menu: bool,
@@ -238,7 +238,7 @@ fn run(flow: Flow, args: SetupArgs, dir: String, default_fm: bool, desktop: bool
         let edit = CreateWindowExW(0, edit_class.as_ptr(), text.as_ptr(), WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 10, 10, hwnd, EDIT_ID as HMENU, hinst, std::ptr::null());
         SendMessageW(edit, WM_SETFONT, fonts.body as WPARAM, 1);
         let was_running = flow == Flow::Uninstall && ops::app_running();
-        let picker = args.file_picker.unwrap_or(true);
+        let picker = args.file_picker.unwrap_or_else(ops::picker_choice);
         let wiz = Box::new(Wizard {
             hwnd,
             edit,

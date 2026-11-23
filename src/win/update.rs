@@ -5,7 +5,8 @@
 //!   設定的「檢查更新」不受影響，也不管之前略過的版本。
 //! - 提醒用 Stillfeather 自己的對話方塊：「更新」「略過這個版本」「稍後」。Stillfeather 不在前景、
 //!   或有其他對話方塊開著時先等，回到可以操作時才跳出來。
-//! - 下載用 WinHTTP（遵循系統的 Proxy 設定），只接受 https；安裝程式的大小與 SHA-256 必須和 update.json 相符，
+//! - 下載用 WinHTTP（遵循系統的 Proxy 設定），只接受 https。update.json 必須有更新金鑰的簽章（update.json.sig，
+//!   以 Windows 內建的 CNG 驗證 ECDSA P-256），才相信裡面的版本、網址與 SHA-256；安裝程式的大小與 SHA-256 必須和它相符，
 //!   目前的 Stillfeather 有數位簽章時，新的安裝程式也必須有有效的簽章，否則不執行。
 //! - 安裝版以 `--update --dir <安裝位置>` 啟動新的安裝程式後關閉自己：安裝程式顯示進度、保留原本的捷徑與
 //!   預設檔案總管設定，完成後重新開啟 Stillfeather。開發版（沒有安裝）只開啟安裝程式，讓使用者自己選。
@@ -93,14 +94,93 @@ pub fn source_url() -> Option<String> {
 pub fn start_check(manual: bool) -> bool {
     let Some(url) = source_url() else { return false };
     std::thread::spawn(move || {
-        let result = match fetch(&url, update::MAX_MANIFEST_BYTES, &mut |_, _| {}) {
-            Ok(bytes) => String::from_utf8(bytes).map_err(|_| "更新資訊不是 UTF-8 文字。".to_string()).and_then(|t| update::parse_manifest(&t)),
-            Err((404, _)) => Err("GitHub 上還沒有含 update.json 的正式版。".into()),
-            Err((_, e)) => Err(e),
-        };
+        let result = fetch_manifest(&url);
         app::post(WorkerMsg::Update(Event::Checked { manual, result }));
     });
     true
+}
+
+const NO_KEY: &str = "這一版 Stillfeather 沒有內建更新金鑰，無法確認更新的來源，所以不檢查更新。";
+const UNSIGNED: &str = "最新版的更新資訊沒有簽章（update.json.sig），無法確認是 Stillfeather 發佈的，為了安全沒有更新。";
+const BAD_SIGNATURE: &str = "更新資訊的簽章不正確，可能被竄改過，為了安全沒有更新。";
+
+/// 下載並核對 update.json：先確認簽章（update.json.sig）是 Stillfeather 的更新金鑰簽的，才相信裡面的內容。
+fn fetch_manifest(url: &str) -> Result<Manifest, String> {
+    if update::public_key().is_none() {
+        return Err(NO_KEY.into());
+    }
+    let bytes = match fetch(url, update::MAX_MANIFEST_BYTES, &mut |_, _| {}) {
+        Ok(b) => b,
+        Err((404, _)) => return Err("GitHub 上還沒有含 update.json 的正式版。".into()),
+        Err((_, e)) => return Err(e),
+    };
+    let signature = match fetch(&update::signature_url(url), update::MAX_SIGNATURE_BYTES, &mut |_, _| {}) {
+        Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+        Err((404, _)) => return Err(UNSIGNED.into()),
+        Err((_, e)) => return Err(e),
+    };
+    check_signed(&bytes, &signature)
+}
+
+/// 簽章正確才解析 update.json（簽的是檔案的原始位元組，所以先驗證、後解析）
+fn check_signed(manifest: &[u8], signature: &str) -> Result<Manifest, String> {
+    let key = update::public_key().ok_or(NO_KEY)?;
+    let sig = update::parse_signature(signature).ok_or(UNSIGNED)?;
+    if !signature_valid(manifest, &sig, &key) {
+        crumb("更新：update.json 的簽章不正確");
+        return Err(BAD_SIGNATURE.into());
+    }
+    let text = std::str::from_utf8(manifest).map_err(|_| "更新資訊不是 UTF-8 文字。".to_string())?;
+    update::parse_manifest(text)
+}
+
+/// `Stillfeather.exe --verify-update <update.json>`：發佈前（tools\Sign-Update.ps1）用這一版內建的公鑰檢查
+/// update.json 與旁邊的 update.json.sig，確認已安裝的 Stillfeather 會接受。結束代碼：
+/// 0 正確、1 這一版沒有內建公鑰、2 讀不到檔案、3 沒有簽章或簽章不正確、4 update.json 格式不正確。
+pub fn verify_release_files(manifest_path: &str) -> i32 {
+    if update::public_key().is_none() {
+        return 1;
+    }
+    let Ok(manifest) = std::fs::read(manifest_path) else { return 2 };
+    let Ok(signature) = std::fs::read_to_string(format!("{manifest_path}{}", update::SIGNATURE_SUFFIX)) else { return 3 };
+    match check_signed(&manifest, &signature) {
+        Ok(_) => 0,
+        Err(e) if e == UNSIGNED || e == BAD_SIGNATURE => 3,
+        Err(_) => 4,
+    }
+}
+
+// ---------------------------------------------------------------- update.json 的簽章（CNG）
+
+#[cfg_attr(windows, link(name = "bcrypt", kind = "raw-dylib"))]
+extern "system" {
+    fn BCryptOpenAlgorithmProvider(alg: *mut isize, id: *const u16, implementation: *const u16, flags: u32) -> i32;
+    fn BCryptImportKeyPair(alg: isize, import_key: isize, blob_type: *const u16, key: *mut isize, input: *const u8, input_len: u32, flags: u32) -> i32;
+    fn BCryptVerifySignature(key: isize, padding: *const c_void, hash: *const u8, hash_len: u32, signature: *const u8, signature_len: u32, flags: u32) -> i32;
+    fn BCryptDestroyKey(key: isize) -> i32;
+    fn BCryptCloseAlgorithmProvider(alg: isize, flags: u32) -> i32;
+}
+
+/// `data` 的簽章是不是 `public_key` 對應的私鑰簽的（ECDSA P-256，對 SHA-256 雜湊簽章，IEEE P1363 格式）。
+/// 用 Windows 內建的 CNG（bcrypt.dll）驗證，不自己實作密碼學。
+pub fn signature_valid(data: &[u8], signature: &[u8; update::SIGNATURE_LEN], public_key: &[u8; update::PUBLIC_KEY_LEN]) -> bool {
+    let hash = update::sha256(data);
+    let alg_id = wide("ECDSA_P256");
+    let blob_type = wide("ECCPUBLICBLOB");
+    unsafe {
+        let mut alg: isize = 0;
+        if BCryptOpenAlgorithmProvider(&mut alg, alg_id.as_ptr(), std::ptr::null(), 0) != 0 || alg == 0 {
+            return false;
+        }
+        let mut key: isize = 0;
+        let imported = BCryptImportKeyPair(alg, 0, blob_type.as_ptr(), &mut key, public_key.as_ptr(), public_key.len() as u32, 0) == 0 && key != 0;
+        let valid = imported && BCryptVerifySignature(key, std::ptr::null(), hash.as_ptr(), hash.len() as u32, signature.as_ptr(), signature.len() as u32, 0) == 0;
+        if key != 0 {
+            BCryptDestroyKey(key);
+        }
+        BCryptCloseAlgorithmProvider(alg, 0);
+        valid
+    }
 }
 
 #[repr(C)]
@@ -608,6 +688,25 @@ mod tests {
         assert_eq!(std::mem::offset_of!(WintrustData, prov_flags), 72);
         assert_eq!(std::mem::size_of::<GuiThreadInfo>(), 72);
         assert_eq!(std::mem::size_of::<LastInputInfo>(), 8);
+    }
+
+    /// 和 feather_core::update 的測試向量相同（以 Python cryptography 產生，私鑰已丟棄）：
+    /// 確認 Windows 的 CNG 接受 PowerShell／.NET 產生的格式。只在 Windows 上執行（test.ps1）。
+    #[cfg(windows)]
+    #[test]
+    fn cng_verifies_test_vector() {
+        let key = update::parse_public_key("RUNTMSAAAAAKIhaqk+jGdemKPYYlgZvYXt5TWX0oE30cuMzkVHQlEqrp+6J1haETlP+qVqzlifHg/kocihCed/nHwiFjX01p").unwrap();
+        let sig = update::parse_signature("45kBHn6DLlodl/Zqemz8MF3K6iKQi9zsgVldg9DL6xdmQgKSCrjUdviVF4IH8X5IstDnUelVg0dvRCwxMfFvEQ==").unwrap();
+        let msg = "{\r\n    \"version\":  \"0.2.0\",\r\n    \"url\":  \"https://github.com/Pity0125/Stillfeather/releases/download/v0.2.0/StillfeatherSetup.exe\",\r\n    \"sha256\":  \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\r\n    \"size\":  2328064,\r\n    \"notes\":  \"測試向量\"\r\n}";
+        assert!(signature_valid(msg.as_bytes(), &sig, &key), "正確的簽章");
+        // 內容改一個字、簽章改一個位元、換一把公鑰：都不能通過
+        assert!(!signature_valid(msg.replace("0.2.0", "0.2.1").as_bytes(), &sig, &key));
+        let mut bad = sig;
+        bad[10] ^= 1;
+        assert!(!signature_valid(msg.as_bytes(), &bad, &key));
+        let mut other = key;
+        other[40] ^= 1;
+        assert!(!signature_valid(msg.as_bytes(), &sig, &other));
     }
 
     #[test]

@@ -11,6 +11,24 @@ use crate::paths;
 
 /// Stillfeather 以選擇器模式啟動的參數
 pub const PICK_ARG: &str = "--pick";
+
+/// 請求檔與結果檔的格式版本（第一行 `stillfeather-pick=<版本>`、`stillfeather-picked=<版本>`）。
+///
+/// 已經開著的程式會一直用它當初載入的取代元件，直到重新開啟；所以新版 Stillfeather 一定會收到舊版元件寫的請求，
+/// 舊版元件也會讀到新版 Stillfeather 寫的結果。規則：
+/// - 只「加」欄位（舊的讀取端會略過不認得的欄位）時，版本不變。
+/// - 改掉或拿掉欄位的意思時才加一；讀取端要能讀所有 ≤ 自己版本的格式（見 `old_requests_still_parse` 測試）。
+/// - 讀到比自己新的請求就不處理（結束代碼 2），元件改開 Windows 原本的視窗；
+///   結果檔一律用版本 1 寫（`stillfeather-picked=1`），所有版本的元件都讀得懂。
+pub const PROTOCOL: u32 = 1;
+const REQUEST_HEADER: &str = "stillfeather-pick=";
+const RESPONSE_HEADER: &str = "stillfeather-picked=";
+
+/// 第一行的版本號：`prefix` 後面是 1 到 `max` 的數字才算
+fn header_version(line: Option<&str>, prefix: &str, max: u32) -> Option<u32> {
+    let v: u32 = line?.trim_start_matches('\u{feff}').trim().strip_prefix(prefix)?.parse().ok()?;
+    (1..=max).contains(&v).then_some(v)
+}
 /// 取代元件的檔名（放在 Stillfeather.exe 旁邊）
 pub const DLL_NAME: &str = "StillfeatherPicker.dll";
 /// Windows「開啟檔案」視窗的類別識別碼
@@ -109,7 +127,7 @@ fn flag(b: bool) -> &'static str {
 
 impl Request {
     pub fn to_text(&self) -> String {
-        let mut out = String::from("stillfeather-pick=1\n");
+        let mut out = format!("{REQUEST_HEADER}{PROTOCOL}\n");
         let mut put = |k: &str, v: &str| {
             out.push_str(k);
             out.push('=');
@@ -145,8 +163,13 @@ impl Request {
 
     pub fn parse(text: &str) -> Result<Request, String> {
         let mut lines = text.lines();
-        if lines.next().map(|l| l.trim_start_matches('\u{feff}').trim()) != Some("stillfeather-pick=1") {
-            return Err("不是 Stillfeather 的選擇器請求。".into());
+        let first = lines.next();
+        if header_version(first, REQUEST_HEADER, PROTOCOL).is_none() {
+            return Err(if first.is_some_and(|l| l.trim_start_matches('\u{feff}').starts_with(REQUEST_HEADER)) {
+                "選擇器請求的格式比這一版 Stillfeather 新（請更新 Stillfeather）。".into()
+            } else {
+                "不是 Stillfeather 的選擇器請求。".into()
+            });
         }
         let mut r = Request::default();
         for line in lines {
@@ -240,7 +263,8 @@ pub struct Response {
 
 impl Response {
     pub fn to_text(&self) -> String {
-        let mut out = String::from("stillfeather-picked=1\n");
+        // 一律寫版本 1：已經載入在其他程式裡的舊版元件只認得這個（見 PROTOCOL）
+        let mut out = format!("{RESPONSE_HEADER}1\n");
         out.push_str(&format!("type_index={}\n", self.type_index));
         for p in &self.paths {
             out.push_str("path=");
@@ -252,9 +276,7 @@ impl Response {
 
     pub fn parse(text: &str) -> Option<Response> {
         let mut lines = text.lines();
-        if lines.next().map(|l| l.trim_start_matches('\u{feff}').trim()) != Some("stillfeather-picked=1") {
-            return None;
-        }
+        header_version(lines.next(), RESPONSE_HEADER, PROTOCOL)?;
         let mut r = Response::default();
         for line in lines {
             match line.split_once('=') {
@@ -470,6 +492,47 @@ mod tests {
         let back = Request::parse(&odd.to_text()).unwrap();
         assert_eq!(back.title, "a b c");
         assert_eq!(back.types.len(), 2);
+    }
+
+    /// v0.1.0～v0.1.2 的取代元件寫出的請求（原樣保留，不要改）：之後的 Stillfeather 都必須讀得懂，
+    /// 因為已經開著的程式會一直用舊的元件。
+    const REQUEST_V0_1: &str = "stillfeather-pick=1\nmode=files\nmulti=1\ntitle=選擇要上傳的檔案\nok=&Open\nlabel=File &name:\nfolder=\ndefault_folder=C:\\Users\\me\\Pictures\nfile_name=\ntype_index=2\ndefault_ext=png\nmust_exist=1\nshow_hidden=0\nowner=263690\nenable_owner=1\nhost_pid=4321\nhost=chrome.exe\nout=C:\\Temp\\Stillfeather-pick-4321-99-out.txt\ntype=All Files\t*.*\ntype=Images\t*.png;*.jpg\n";
+    /// 同一時期的 Stillfeather 寫出的結果：舊版元件只認得這個樣子。
+    const RESPONSE_V0_1: &str = "stillfeather-picked=1\ntype_index=2\npath=C:\\Users\\me\\Pictures\\a.png\npath=C:\\Users\\me\\Pictures\\b c.jpg\n";
+
+    #[test]
+    fn old_requests_still_parse() {
+        let r = Request::parse(REQUEST_V0_1).unwrap();
+        assert_eq!(r.mode, Mode::Files);
+        assert!(r.multi && r.must_exist && r.enable_owner && !r.show_hidden);
+        assert_eq!(r.host, "chrome.exe");
+        assert_eq!(r.host_pid, 4321);
+        assert_eq!(r.owner, 263690);
+        assert_eq!(r.type_index, 2);
+        assert_eq!(r.default_folder, "C:\\Users\\me\\Pictures");
+        assert_eq!(r.types.len(), 2);
+        assert_eq!(r.types[1].spec, "*.png;*.jpg");
+        assert_eq!(r.out, "C:\\Temp\\Stillfeather-pick-4321-99-out.txt");
+        // 新版寫出的請求，舊版的讀法（只認 stillfeather-pick=1、略過不認得的欄位）也讀得懂
+        assert!(sample().to_text().starts_with("stillfeather-pick=1\n"));
+    }
+
+    #[test]
+    fn responses_stay_readable_by_old_components() {
+        let r = Response { paths: vec!["C:\\Users\\me\\Pictures\\a.png".into(), "C:\\Users\\me\\Pictures\\b c.jpg".into()], type_index: 2 };
+        assert_eq!(r.to_text(), RESPONSE_V0_1);
+        assert_eq!(Response::parse(RESPONSE_V0_1), Some(r));
+    }
+
+    #[test]
+    fn newer_formats_fall_back_to_windows() {
+        // 比自己新的請求：不處理（Stillfeather 以結束代碼 2 結束，元件改開 Windows 的視窗）
+        let newer = REQUEST_V0_1.replacen("stillfeather-pick=1", &format!("stillfeather-pick={}", PROTOCOL + 1), 1);
+        assert!(Request::parse(&newer).unwrap_err().contains("新"));
+        assert!(Request::parse(&REQUEST_V0_1.replacen("=1", "=0", 1)).is_err());
+        assert!(Request::parse(&REQUEST_V0_1.replacen("=1", "=x", 1)).is_err());
+        let newer = RESPONSE_V0_1.replacen("picked=1", &format!("picked={}", PROTOCOL + 1), 1);
+        assert_eq!(Response::parse(&newer), None);
     }
 
     #[test]

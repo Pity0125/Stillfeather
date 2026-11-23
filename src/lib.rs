@@ -7,6 +7,7 @@
 pub mod base64;
 pub mod anim;
 pub mod category;
+pub mod crashguard;
 pub mod entry;
 pub mod folderviews;
 pub mod format;

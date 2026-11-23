@@ -2,7 +2,9 @@
 #   .\build.ps1          沒有 Rust 時會詢問是否自動安裝
 #   .\build.ps1 -Yes     不詢問，直接安裝並建置
 #   .\build.ps1 -Setup   另外產生安裝程式 dist\StillfeatherSetup.exe（內含剛建置好的 Stillfeather），
-#                        以及發佈到 GitHub Releases 用的 dist\update.json（更新說明取自 -Notes 或 release-notes.txt）
+#                        以及發佈到 GitHub Releases 用的 dist\update.json（更新說明取自 -Notes 或 release-notes.txt）、
+#                        update.json.sig（私鑰在 %USERPROFILE%\Stillfeather-signing\update-signing.key 或
+#                        STILLFEATHER_SIGNING_KEY 指定的位置時自動簽章，見 tools\Sign-Update.ps1）與 RestoreExplorer.cmd
 # 另外建置 app\StillfeatherPicker.dll（picker-dll\：讓其他程式的「開啟檔案」視窗改用 Stillfeather，在「設定」開啟）。
 # 完整的編譯輸出會寫到 build.log，方便回報問題。
 param([switch]$Yes, [switch]$Setup, [string]$Notes = '')
@@ -74,6 +76,14 @@ function Invoke-Logged([string[]]$CargoArgs) {
 
 Push-Location $root
 try {
+    # 安裝程式裡的 Stillfeather 要能驗證更新的簽章：沒有公鑰就不建置（見 DEVELOPMENT.md「更新資訊的簽章」）
+    if ($Setup) {
+        $publicKey = @(Get-Content -LiteralPath (Join-Path $root 'assets\update-signing-key.txt') -Encoding UTF8 -ErrorAction SilentlyContinue |
+            Where-Object { $_.Trim() -and -not $_.TrimStart().StartsWith('#') })
+        if ($publicKey.Count -eq 0) {
+            throw '還沒有更新簽章的金鑰：先執行 .\tools\New-UpdateSigningKey.ps1（只需要一次），commit assets\update-signing-key.txt 之後再建置安裝程式。沒有內建公鑰的 Stillfeather 不會接受任何更新。'
+        }
+    }
     Add-CargoPath
     $exe = Join-Path $root 'app\FeatherFiles.exe'
     # 背景攔截 Win+E（FeatherFiles.exe --win-e，沒有視窗）會鎖住 exe：先結束它，建置後開啟 Stillfeather 時會再啟動
@@ -172,6 +182,15 @@ try {
     Write-Host '建置開啟檔案視窗元件（StillfeatherPicker.dll）…'
     "== cargo $($pickerArgs -join ' ') ==" | Out-File -FilePath $log -Encoding utf8 -Append
     $code = Invoke-Logged $pickerArgs
+    # 嵌入版本資訊失敗時，略過資源再試一次（元件本身不受影響）
+    if ($code -ne 0 -and -not $env:FEATHER_NO_ICON_RES) {
+        $text = Get-Content -LiteralPath $log -Raw -Encoding UTF8
+        if ($text -match 'picker_version|cvtres|CVT\d{4}') {
+            Write-Host '無法把版本資訊嵌入 StillfeatherPicker.dll，略過資源重新建置…' -ForegroundColor Yellow
+            $env:FEATHER_NO_ICON_RES = '1'
+            $code = Invoke-Logged $pickerArgs
+        }
+    }
     if ($code -eq 0 -and (Test-Path -LiteralPath $pickerBuilt)) {
         Copy-Item -Force $pickerBuilt $pickerDll
         Write-Host "完成：$pickerDll" -ForegroundColor Green
@@ -232,7 +251,24 @@ try {
             $manifestPath = Join-Path $dist 'update.json'
             [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
             Write-Host "更新資訊：$manifestPath" -ForegroundColor Green
-            Write-Host "發佈：在 GitHub 建立標籤 v$version 的正式版 Release，上傳 StillfeatherSetup.exe 與 update.json 兩個檔案。"
+
+            # 簽章：已安裝的 Stillfeather 只接受有正確簽章的 update.json（舊的簽章對新的 update.json 一定不符，先刪掉）
+            Remove-Item -LiteralPath "$manifestPath.sig" -ErrorAction SilentlyContinue
+            $signingKey = if ($env:STILLFEATHER_SIGNING_KEY) { $env:STILLFEATHER_SIGNING_KEY } else { Join-Path $env:USERPROFILE 'Stillfeather-signing\update-signing.key' }
+            if (Test-Path -LiteralPath $signingKey) {
+                & (Join-Path $root 'tools\Sign-Update.ps1') -KeyPath $signingKey -Manifest $manifestPath
+            } else {
+                Write-Host ''
+                Write-Host 'update.json 還沒簽章：插上存放私鑰的隨身碟後執行' -ForegroundColor Yellow
+                Write-Host '  .\tools\Sign-Update.ps1 -KeyPath <私鑰的位置>' -ForegroundColor Yellow
+                Write-Host '沒有 update.json.sig 的話，已安裝的 Stillfeather（0.1.3 起）不會接受這次更新。' -ForegroundColor Yellow
+            }
+
+            # 救援腳本：Stillfeather 打不開、或安裝資料夾被直接刪掉時，用它改回 Windows 檔案總管
+            Copy-Item -Force (Join-Path $root 'RestoreExplorer.cmd') $dist
+            Write-Host ''
+            Write-Host "發佈：在 GitHub 建立標籤 v$version 的正式版 Release，上傳 dist 裡的 StillfeatherSetup.exe、update.json、update.json.sig 與 RestoreExplorer.cmd 四個檔案。"
+            Write-Host '發佈前先把 StillfeatherSetup.exe 丟到 https://www.virustotal.com 掃描一次（見 DEVELOPMENT.md「發佈新版本」）。'
         } else {
             Write-Host '沒有產生 update.json：Cargo.toml 的 repository 還沒填 GitHub 專案網址（例如 https://github.com/帳號/專案）。' -ForegroundColor Yellow
         }

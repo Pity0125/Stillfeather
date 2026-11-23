@@ -1,8 +1,9 @@
 [package]
 name = "feather-files"
-version = "0.1.2"
+version = "0.1.1"
 edition = "2021"
 description = "Stillfeather：Windows 11 輕量檔案管理（Rust／原生 Win32 版）"
+license = "GPL-3.0-or-later"
 publish = false
 # 更新提醒：Stillfeather 會檢查這個 GitHub 專案 Releases 的最新正式版（見 DEVELOPMENT.md「自動更新」）。
 # 拿掉這一行就不會檢查更新。

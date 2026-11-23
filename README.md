@@ -5,24 +5,84 @@
 <h1 align="center">Stillfeather</h1>
 
 <p align="center">
-  安靜、輕巧的 Windows 檔案管理程式<br>
-  <sub>A quiet, lightweight file manager for Windows</sub>
+  安靜、輕巧的 Windows 檔案管理程式
 </p>
 
 <p align="center">
-  <a href="../../releases/latest"><b>下載最新版</b></a> ·
+  <a href="https://github.com/Pity0125/Stillfeather/releases/latest"><img src="https://img.shields.io/github/v/release/Pity0125/Stillfeather?label=%E6%9C%80%E6%96%B0%E7%89%88" alt="最新版"></a>
+  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4" alt="Windows 10 | 11">
+  <img src="https://img.shields.io/badge/Rust-%E5%8E%9F%E7%94%9F%20Win32-B7410E" alt="Rust 原生 Win32">
+</p>
+
+<p align="center">
+  <a href="https://github.com/Pity0125/Stillfeather/releases/latest"><b>下載最新版</b></a> ·
   <a href="#安裝">安裝</a> ·
   <a href="#快捷鍵">快捷鍵</a> ·
-  <a href="../../issues">回報問題</a>
+  <a href="https://github.com/Pity0125/Stillfeather/issues">回報問題</a>
 </p>
+
+<p align="center">
+  <b>繁體中文</b> · <a href="README.en.md">English</a>
+</p>
+
+<!-- 截圖：把截圖存成 docs/screenshot-light.png、docs/screenshot-dark.png（建議 1600×1000 左右），
+     錄好的操作 GIF 存成 docs/demo.gif，再把下面三行的註解拿掉。
+<p align="center"><img src="docs/screenshot-light.png" width="820" alt="Stillfeather 淺色模式"></p>
+<p align="center"><img src="docs/screenshot-dark.png" width="820" alt="Stillfeather 深色模式"></p>
+<p align="center"><img src="docs/demo.gif" width="820" alt="分頁、雙欄拖放與快速預覽"></p>
+-->
 
 ---
 
-Stillfeather 是用來取代 Windows 檔案總管的檔案管理程式。它保留你已經熟悉的操作——同樣的快捷鍵、同樣的拖放規則、同樣的右鍵選單項目——再加上分頁、雙欄、快速預覽與 Ctrl+Z 復原，放進一個米白與深灰的柔和介面裡。
+Stillfeather 是用來取代 Windows 檔案總管的檔案管理程式。你已經熟悉的操作都還在：同樣的快捷鍵、同樣的拖放規則、同樣的右鍵選單項目。它再加上分頁、雙欄、快速預覽和 Ctrl+Z 復原，放進一個米白與深灰的柔和介面裡。
 
-它以 Rust 搭配原生 Win32 撰寫，沒有網頁引擎、不需要 .NET，也不依賴任何第三方套件；動畫結束後就停止重畫，閒置時不耗 CPU。
+它用 Rust 搭配原生 Win32 撰寫，沒有網頁引擎、不需要 .NET，也不依賴任何第三方套件。動畫結束後就停止重畫，閒置時不耗 CPU。
 
-## 特色
+## 重點
+
+- **分頁與雙欄**：兩欄各有自己的分頁，檔案直接在兩欄之間拖放。
+- **快速預覽**：圖片、影片、PDF、程式碼，還有 Word、Excel、PowerPoint，不需要安裝 Office。
+- **Ctrl+Z 復原**：最近 30 個重新命名、移動與刪除都能還原。
+- **搜尋整台電腦**：多執行緒，結果邊找邊出現。
+- **接手 Windows**：Win+E、雙擊資料夾、網頁上傳的選檔視窗都可以改用 Stillfeather。
+- **安靜**：自己的對話方塊、沒有「叮」聲、細緻的動畫。
+
+## 安裝
+
+**系統需求**：Windows 10 或 Windows 11，64 位元（x64）。不需要 .NET、Office 或其他執行環境。
+
+1. 到 [Releases](https://github.com/Pity0125/Stillfeather/releases/latest) 下載 `StillfeatherSetup.exe`。安裝程式只有這一個檔案，安裝時不需要網路。
+2. 執行後選擇安裝位置，預設是 `%LOCALAPPDATA%\Programs\Stillfeather`，只裝給目前使用者，不需要系統管理員權限。選到 `C:\Program Files` 這類需要權限的位置時，Windows 會詢問是否允許。
+3. 選擇選項：
+   - **設為預設檔案總管**（預設勾選，見[和 Windows 整合](#和-windows-整合)）
+   - **其他程式開啟檔案時也用 Stillfeather**（預設不勾；想用的話勾選，之後也可以在設定開啟）
+   - 建立桌面捷徑
+   - 加入開始功能表
+4. 按「安裝」。
+
+已經裝過時會直接覆蓋升級，設定與常用位置都會保留。
+
+> [!NOTE]
+> 如果 Windows 顯示「Windows 已保護您的電腦」，這是 SmartScreen 對下載量還少或沒有數位簽章的程式的提醒。請先確認檔案是從這個專案的 [Releases](https://github.com/Pity0125/Stillfeather/releases) 頁面下載的，再按「其他資訊」→「仍要執行」。
+
+<details>
+<summary><b>命令列安裝（大量部署用）</b></summary>
+
+| 參數 | 說明 |
+|---|---|
+| `/S` | 靜默安裝，不顯示畫面（和畫面上的預設一樣會設為預設檔案總管） |
+| `/D=路徑`（放在最後）或 `--dir 路徑` | 安裝位置 |
+| `--no-default-explorer` | 不設為預設檔案總管 |
+| `--file-picker` | 其他程式開啟檔案時也用 Stillfeather（預設不使用） |
+| `--desktop` | 建立桌面捷徑（靜默安裝預設不建立） |
+| `--no-start-menu` | 不加入開始功能表 |
+| `--launch` | 安裝完成後開啟 Stillfeather |
+
+靜默解除安裝：`"…\Stillfeather\Uninstall.exe" /S`。完整參數見 [DEVELOPMENT.md](DEVELOPMENT.md)。
+
+</details>
+
+## 功能
 
 ### 熟悉，但更順手
 
@@ -33,88 +93,74 @@ Stillfeather 是用來取代 Windows 檔案總管的檔案管理程式。它保�
 - **常用位置**：把資料夾拖到側欄就能釘選，右鍵也可以釘選或取消。
 - **完整的右鍵選單**：除了 Stillfeather 自己的命令，也包含已安裝程式加入的項目（在終端中開啟、7-Zip、Git、傳送到…），不必再按「顯示其他選項」。
 - **拖放規則和檔案總管一樣**：同一個磁碟預設移動、不同磁碟預設複製，按住 Ctrl／Shift／Alt 改成複製、移動或建立捷徑。拖到分頁上停一下，就會切換到那個分頁。
-- **接管「開啟檔案」視窗**：網頁上傳、其他程式的開啟舊檔與選擇資料夾也可以改用 Stillfeather（見下方「[用 Stillfeather 選擇要開啟或上傳的檔案](#用-stillfeather-選擇要開啟或上傳的檔案)」）。
-- **自動更新清單**：其他程式（或檔案總管）在畫面上的資料夾新增、刪除、改名或修改檔案時，清單和側欄會自己更新，不必按 F5；選取和捲動位置不會跳掉。正在看的資料夾被改名就跟著到新的名稱，被刪除就回到上一層。
+- **自動更新清單**：其他程式在畫面上的資料夾新增、刪除、改名或修改檔案時，清單和側欄會自己更新，不必按 F5，選取和捲動位置也不會跳掉。正在看的資料夾被改名就跟著到新的名稱，被刪除就回到上一層。
 
 ### 快速預覽
 
-滑鼠停在檔案上，旁邊就會出現預覽；按住空白鍵放大到視窗中央，放開就關閉，按住時還可以用方向鍵換下一個。不喜歡自動跳出來的話，可以在設定改成只有按住空白鍵才預覽。
+滑鼠停在檔案上，旁邊就會出現預覽。按住空白鍵放大到視窗中央，放開就關閉，按住時還可以用方向鍵換下一個。不喜歡自動跳出來的話，可以在設定勾選「按空白鍵預覽」，改成只有按住空白鍵才預覽。
 
-- **圖片**：常見格式都可以預覽，WebP、HEIC 等只要系統裝有解碼器也可以。
-- **影片**：縮圖、解析度與長度。
-- **PDF**：第一頁與總頁數。
-- **文字與程式碼**：自動判斷 UTF-8、UTF-16 或 Big5，附行號，二十多種語言有語法上色。
-- **Word、Excel、PowerPoint 與 OpenDocument**：**不需要安裝 Office**，直接讀出段落、標題、清單、投影片與表格，一般文件幾毫秒就好。不會執行文件裡的巨集或任何內容。
-- 雲端尚未下載的檔案不會因為預覽而被下載。
+| 類型 | 預覽內容 |
+|---|---|
+| 圖片 | 常見格式都可以；WebP、HEIC 等只要系統裝有解碼器也可以 |
+| 影片 | 縮圖、解析度與長度 |
+| PDF | 第一頁與總頁數 |
+| 文字與程式碼 | 自動判斷 UTF-8、UTF-16 或 Big5，附行號，二十多種語言有語法上色 |
+| Word、Excel、PowerPoint、OpenDocument | **不需要安裝 Office**，直接讀出段落、標題、清單、投影片與表格，一般文件幾毫秒就好 |
+
+預覽 Office 文件時只讀取文字與表格，不會執行巨集或任何內嵌內容。雲端尚未下載的檔案，也不會因為預覽而被下載。
 
 ### 搜尋
 
-搜尋目前資料夾（可以包含子資料夾）或整台電腦的檔名。多個執行緒同時搜尋，結果邊找邊出現，可以隨時取消；沒有搜尋完整時（例如結果太多或有資料夾讀不到）會明確標示。
+搜尋目前資料夾（可以包含子資料夾）或整台電腦的檔名。多個執行緒同時搜尋，結果邊找邊出現，可以隨時取消。沒有搜尋完整時（例如結果太多，或有資料夾讀不到）會明確標示。
 
 ### 按錯了也沒關係
 
-Ctrl+Z 可以復原最近 30 個重新命名、移動與刪除。刪除一律先送到資源回收筒，復原時會從回收筒搬回原位；原位置已經有同名檔案時，不會覆蓋它。
+Ctrl+Z 可以復原最近 30 個重新命名、移動與刪除。刪除一律先送到資源回收筒，復原時從回收筒搬回原位；原位置已經有同名檔案時，不會覆蓋它。
 
 ### 安靜、柔和
 
-- 淺色模式以米白為底、深色模式以近黑灰為底，搭配柔和的陶土橘重點色、大圓角卡片與膠囊形按鈕。跟隨 Windows 的深淺色，也可以自訂重點色與背景色。
+- 淺色模式以米白為底，深色模式以近黑灰為底，搭配柔和的陶土橘重點色、大圓角卡片與膠囊形按鈕。跟隨 Windows 的深淺色，也可以自訂重點色與背景色。
 - 確認、錯誤等訊息都用 Stillfeather 自己的對話方塊，不再有 Windows 的「叮」聲。
-- 換資料夾、切換分頁、選取與懸停都有細緻的淡入淡出；關閉 Windows 的「在 Windows 中顯示動畫」時，一律直接切換。
+- 換資料夾、切換分頁、選取與懸停都有細緻的淡入淡出。關閉 Windows 的「在 Windows 中顯示動畫」時，一律直接切換。
 - 支援高 DPI，在不同縮放比例的螢幕之間移動也會重新調整。
 
-## 系統需求
+## 和 Windows 整合
 
-- Windows 10 或 Windows 11，64 位元（x64）
-- 不需要 .NET、Office 或其他執行環境；安裝到預設位置不需要系統管理員權限
-
-## 安裝
-
-1. 到 [Releases](../../releases/latest) 下載 `StillfeatherSetup.exe`。安裝程式只有這一個檔案，不需要網路。
-2. 執行後選擇安裝位置，預設是 `%LOCALAPPDATA%\Programs\Stillfeather`。
-3. 選擇是否**設為預設檔案總管**、**其他程式開啟檔案時也用 Stillfeather**、建立桌面捷徑、加入開始功能表（都預設勾選，桌面捷徑也是），然後按「安裝」。
-
-已經裝過時會直接覆蓋升級，設定與常用位置都會保留。
-
-> 如果 Windows 顯示「Windows 已保護您的電腦」，這是 SmartScreen 對下載量還少或沒有數位簽章的程式的提醒。請先確認檔案是從這個專案的 Releases 頁面下載的，再按「其他資訊」→「仍要執行」。
-
-需要大量部署時，可以用 `StillfeatherSetup.exe /S` 靜默安裝（和畫面上的預設一樣會設為預設檔案總管，不要的話加 `--no-default-explorer`）。完整參數見 [DEVELOPMENT.md](DEVELOPMENT.md)。
+以下設定都只修改目前使用者，不影響這台電腦的其他使用者，隨時可以在 Stillfeather 的「設定」（F12）關閉。
 
 ### 設為預設檔案總管
 
-預設開啟（安裝時可以取消勾選，之後也可以在「設定」關閉）。設為預設後，**Win+E** 以及在桌面或其他程式裡雙擊資料夾、磁碟，都會用 Stillfeather 開啟；Stillfeather 已經開著時會開在新分頁。
+設為預設後，**Win+E** 以及在桌面或其他程式裡雙擊資料夾、磁碟，都會用 Stillfeather 開啟。Stillfeather 已經開著時，會開在新分頁。
 
-- 只修改目前使用者的設定，不影響這台電腦的其他使用者。
-- 關掉後會記住，不會再自動開回來；之後改用別的檔案管理程式時，Stillfeather 也不會搶回來。
+- 在設定取消勾選，立即改回 Windows 檔案總管。
 - Windows 原本的「開啟」仍保留在右鍵選單裡。
-- 隨時可以在 Stillfeather 的「設定」取消，立即改回。
-- **新版 Windows 11 的 Win+E**：2026 年 10 月起陸續推出的更新讓 Win+E 直接開 Windows 檔案總管，不看預設檔案總管的設定（雙擊資料夾不受影響）。所以「設定」裡多了「攔截 Win+E 按鍵，改開 Stillfeather」（預設開啟）：開著時 Stillfeather 會在背景執行一個沒有視窗的小程式（登入時自動啟動），接住 Win+E 改開 Stillfeather。不想要背景程式可以取消勾選，Win+E 就會依 Windows 的行為。以系統管理員身分執行的視窗在最前面時，Win+E 仍會開 Windows 檔案總管。
+- 關掉後會記住，不會再自動開回來。之後改用別的檔案管理程式時，Stillfeather 也不會搶回來。
+
+### 新版 Windows 11 的 Win+E
+
+2026 年 10 月起陸續推出的 Windows 11 更新，讓 Win+E 直接開 Windows 檔案總管，不看預設檔案總管的設定（雙擊資料夾不受影響）。所以設定裡另有「**攔截 Win+E 按鍵，改開 Stillfeather**」，預設開啟：
+
+- 開著時，Stillfeather 會在背景執行一個沒有視窗的小程式（登入時自動啟動），接住 Win+E 改開 Stillfeather。
+- 不想要背景程式的話取消勾選，Win+E 就照 Windows 的行為。
+- 以系統管理員身分執行的視窗在最前面時，Win+E 仍會開 Windows 檔案總管。
+- 有些防毒軟體可能會把攔截按鍵當成可疑行為。
 
 ### 用 Stillfeather 選擇要開啟或上傳的檔案
 
-「其他程式開啟檔案時也用 Stillfeather」預設開啟（安裝時可以取消勾選，之後也可以在「設定」關閉）。網頁上傳檔案、各種程式的「開啟舊檔」與「選擇資料夾」都會跳出 Stillfeather 的精簡視窗：
+「**其他程式開啟檔案時也用 Stillfeather**」預設關閉，在設定勾選就會開啟。開啟後，網頁上傳檔案、各種程式的「開啟舊檔」與「選擇資料夾」，都會跳出 Stillfeather 的精簡視窗：
 
 - 只保留選檔需要的部分：上一頁／下一頁／上一層、路徑列、重新整理、搜尋、新增資料夾、排序與檢視、左側資料夾樹、檔案清單，以及底部的檔名欄、檔案類型與確定／取消。一樣可以懸停預覽、拖放、按右鍵。
 - 雙擊資料夾進去，雙擊檔案（或選好按「開啟」）就交給那個程式；可以多選的程式就能一次選多個。檔名欄可以直接打名稱、路徑，或 `*.png` 這種篩選。
 - 每個程式會記住上次用的資料夾。
-- 右上角的「使用 Windows 視窗」隨時可以改用 Windows 原本的視窗。以系統管理員身分執行的程式、32 位元程式，以及找不到 Stillfeather 時，都會直接用 Windows 的視窗，所以永遠選得到檔案。
-- 只修改目前使用者的設定；取消勾選（或解除安裝）就恢復原狀。已經開著的程式可能要重新開啟後才會套用。
+- 右上角的「使用 Windows 視窗」隨時可以改回 Windows 原本的視窗。以系統管理員身分執行的程式、32 位元程式，以及找不到 Stillfeather 時，都會直接用 Windows 的視窗，所以永遠選得到檔案。
+- 程式在開檔視窗裡加了自己的選項（例如「編碼」下拉選單、「以唯讀開啟」）時，會照常用 Windows 的視窗，那些選項才不會不見。
+- 這個功能會在其他程式裡載入 Stillfeather 的元件。某個程式開檔時出現異常的話，取消勾選即可改回，並歡迎回報是哪個程式。
+- 已經開著的程式，可能要重新開啟後才會套用。
 
-### 更新
+### 如果資料夾打不開
 
-Stillfeather 會在背景檢查有沒有新版（最多每 20 小時一次），有的話顯示新版本、下載大小與更新說明，你可以選擇「更新」「略過這個版本」或「稍後」。
-
-下載的安裝程式必須和發佈資訊裡的大小與 SHA-256 完全相符才會執行；目前的版本有數位簽章時，新版也必須有有效的簽章。更新後會保留原本的捷徑與預設檔案總管設定，並自動重新開啟。
-
-不想收到提醒的話，在設定勾選「不要啟用更新提醒」；旁邊的「檢查更新」可以隨時手動檢查；找到新版本時按鈕會變成「立即更新」，按一下就開始更新。
-
-### 解除安裝
-
-在「設定 › 應用程式 › 已安裝的應用程式」找到 Stillfeather，按「解除安裝」。它會：
-
-- 把預設檔案總管改回 Windows 檔案總管（或安裝前的設定），開啟檔案視窗改回 Windows 原本的，並停止背景攔截 Win+E
-- 移除程式與捷徑，以及 Stillfeather 的設定、記錄與暫存檔
-
-你的檔案不會受到任何影響。
+- Stillfeather 在一分鐘內連續三次沒能正常開啟時，會自動改回 Windows 檔案總管（預設檔案總管、Win+E、開啟檔案視窗都改回 Windows 的），用 Windows 檔案總管開啟你要開的位置，並說明怎麼回報。問題排除後，在設定重新勾選即可。
+- Stillfeather 完全打不開，或安裝資料夾被直接刪掉而沒有解除安裝時：從 [Releases](https://github.com/Pity0125/Stillfeather/releases/latest) 下載 `RestoreExplorer.cmd`，雙擊執行。它只修改目前使用者的設定，會結束 Stillfeather、把開啟資料夾與 Win+E 改回 Windows 檔案總管、開啟檔案視窗改回 Windows 原本的，不會動到你的檔案。
 
 ## 快捷鍵
 
@@ -139,21 +185,44 @@ Stillfeather 會在背景檢查有沒有新版（最多每 20 小時一次），
 | F12、Ctrl+, | 設定 |
 | 在清單或側欄直接打字 | 跳到名稱開頭相符的項目 |
 
+## 更新
+
+Stillfeather 會在背景檢查有沒有新版（最多每 20 小時一次）。有新版時會顯示新版本、下載大小與更新說明，你可以選擇「更新」「略過這個版本」或「稍後」。
+
+- 發佈資訊（`update.json`）必須有 Stillfeather 的簽章才會被接受：簽章用的私鑰離線保存，不在 GitHub 上，所以即使 GitHub 帳號被盜，也做不出能讓 Stillfeather 更新的假版本。
+- 下載的安裝程式必須和發佈資訊裡的大小與 SHA-256 完全相符才會執行；目前的版本有數位簽章時，新版也必須有有效的簽章。
+- 更新後會保留原本的捷徑與預設檔案總管設定，並自動重新開啟。
+- 不想收到提醒的話，在設定勾選「不要啟用更新提醒」。旁邊的「檢查更新」可以隨時手動檢查，找到新版本時按鈕會變成「立即更新」，按一下就開始更新。
+
+## 解除安裝
+
+在 Windows 的「設定 › 應用程式 › 已安裝的應用程式」找到 Stillfeather，按「解除安裝」。它會：
+
+- 把預設檔案總管改回 Windows 檔案總管（或安裝前的設定），把開啟檔案視窗改回 Windows 原本的，並停止背景攔截 Win+E
+- 移除程式與捷徑，以及 Stillfeather 的設定、記錄與暫存檔
+
+**你的檔案不會受到任何影響。**
+
 ## 隱私
 
 - Stillfeather 不收集、也不上傳任何使用資料。唯一的連線是向 GitHub 檢查更新，可以在設定關閉。
-- 設定與記錄都存放在你的電腦上：`%LOCALAPPDATA%\FeatherFiles`。
-- 預覽 Office 文件時只讀取文字與表格，不執行巨集或任何內嵌內容。
-
+- 設定與記錄都存放在你的電腦上：`%LOCALAPPDATA%\Stillfeather`。
 
 ## 回報問題
 
-歡迎到 [Issues](../../issues) 回報。請描述發生了什麼、怎麼重現，並附上 Stillfeather 的版本（在「設定 › 應用程式 › 已安裝的應用程式」可以看到）。
+歡迎到 [Issues](https://github.com/Pity0125/Stillfeather/issues) 回報。請描述發生了什麼、怎麼重現，並附上 Stillfeather 的版本（在「設定 › 應用程式 › 已安裝的應用程式」可以看到）。
 
-如果程式意外關閉，`%LOCALAPPDATA%\FeatherFiles\logs` 裡的 `trace.log` 與 `crash.log` 能幫助找出原因。記錄檔可能包含資料夾路徑，附上之前可以先看過一遍。
+如果程式意外關閉，`%LOCALAPPDATA%\Stillfeather\logs` 裡的 `trace.log` 與 `crash.log` 能幫助找出原因（連續當掉而自動改回 Windows 檔案總管時，是 `trace-before-rescue.log` 與 `crash-before-rescue.log`）。記錄檔可能包含資料夾路徑，附上之前可以先看過一遍。
 
 ## 從原始碼建置
 
-Stillfeather 沒有任何第三方依賴。在 Windows 上雙擊 `Launch.cmd` 就會建置並啟動（電腦沒有 Rust 時會詢問是否自動安裝）；雙擊 `BuildSetup.cmd` 會產生安裝程式 `dist\StillfeatherSetup.exe`。
+Stillfeather 沒有任何第三方依賴。在 Windows 上：
 
-建置細節、測試、專案結構與發佈新版本的步驟，請見 [DEVELOPMENT.md](DEVELOPMENT.md)。
+- 雙擊 `Launch.cmd`：建置並啟動（電腦沒有 Rust 時會詢問是否自動安裝）。
+- 雙擊 `BuildSetup.cmd`：產生安裝程式 `dist\StillfeatherSetup.exe`。
+
+建置細節、測試、專案結構與發佈新版本的步驟，請見 [DEVELOPMENT.md](DEVELOPMENT.md)。各版本的變更見 [CHANGELOG.md](CHANGELOG.md)。
+
+## 授權
+
+Stillfeather 以 [GNU General Public License v3.0](LICENSE)（或之後的版本）授權：可以自由使用、修改與散布；散布修改過的版本時，也必須以同樣的授權公開原始碼。

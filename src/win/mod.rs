@@ -18,6 +18,7 @@ pub mod pane;
 pub mod perf;
 pub mod picker;
 pub mod preview;
+pub mod rescue;
 pub mod settings_dialog;
 pub mod shellmenu;
 pub mod shellreg;
@@ -51,8 +52,8 @@ fn activate_visual_styles() {
     unsafe {
         let mut cookie: usize = 0;
         if let Ok(base) = std::env::var("LOCALAPPDATA") {
-            let dir = feather_core::paths::join(&base, "FeatherFiles");
-            let file = feather_core::paths::join(&dir, "FeatherFiles.rust.manifest");
+            let dir = feather_core::install::data_dir(&base);
+            let file = feather_core::paths::join(&dir, "Stillfeather.comctl6.manifest");
             let current = std::fs::read_to_string(&file).ok();
             if current.as_deref() != Some(COMCTL6_MANIFEST) {
                 let _ = std::fs::create_dir_all(&dir);
@@ -99,18 +100,18 @@ fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         let text = format!("{info}\n\n{}", std::backtrace::Backtrace::force_capture());
         if let Ok(base) = std::env::var("LOCALAPPDATA") {
-            let dir = feather_core::paths::join(&base, "FeatherFiles");
+            let dir = feather_core::install::data_dir(&base);
             let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::write(feather_core::paths::join(&dir, "rust-crash.log"), &text);
         }
-        // 記錄資料夾也留一份（開發版在 exe 旁，方便從專案資料夾取得；安裝版在 %LOCALAPPDATA%\FeatherFiles\logs）
+        // 記錄資料夾也留一份（開發版在 exe 旁，方便從專案資料夾取得；安裝版在 %LOCALAPPDATA%\Stillfeather\logs）
         if let Some(dir) = crashlog::log_dir() {
             let _ = std::fs::write(feather_core::paths::join(&dir, "crash.log"), &text);
         }
         let first: String = text.lines().take(6).collect::<Vec<_>>().join("\n");
         message_box(
             0,
-            &format!("Stillfeather 發生未預期的錯誤，即將關閉。\n\n{first}\n\n詳細內容已寫入 %LOCALAPPDATA%\\FeatherFiles\\rust-crash.log"),
+            &format!("Stillfeather 發生未預期的錯誤，即將關閉。\n\n{first}\n\n詳細內容已寫入 %LOCALAPPDATA%\\Stillfeather\\rust-crash.log"),
             MB_OK | MB_ICONERROR,
         );
     }));
@@ -139,10 +140,19 @@ pub fn entry() -> i32 {
         SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
+    // 發佈前的檢查（tools\Sign-Update.ps1）：用這一版內建的公鑰驗證 update.json 的簽章，不開視窗
+    if args.first().map(String::as_str) == Some("--verify-update") {
+        return match args.get(1) {
+            Some(manifest) => update::verify_release_files(manifest),
+            None => 2,
+        };
+    }
     // 背景攔截 Win+E（新版 Windows 11 的 Win+E 不看登錄，見 wine.rs）：沒有視窗，不載入介面
     if args.first().map(String::as_str) == Some(feather_core::wine::WIN_E_ARG) {
         return wine::run();
     }
+    // v0.1.x 的設定在 %LOCALAPPDATA%\FeatherFiles：讀設定之前搬到 %LOCALAPPDATA%\Stillfeather
+    rescue::migrate_data_dir();
     activate_visual_styles();
     if let Err(e) = unsafe { load_comctl() } {
         message_box(0, &format!("無法初始化 Windows 通用控制項：{e}"), MB_OK | MB_ICONERROR);
@@ -172,6 +182,12 @@ pub fn entry() -> i32 {
     if open_home && paths.is_empty() {
         paths.push(feather_core::install::HOME_MARKER.to_string());
     }
+    // 前面一分鐘內連續三次沒能正常啟動：改回 Windows 檔案總管並用它開這次的位置（見 rescue.rs）
+    if rescue::rescue_if_crash_loop(&paths) {
+        return 0;
+    }
+    // 這次啟動的記號：正常結束（離開這個函式）或撐過 20 秒時拿掉；當掉就留著，下次啟動據此判斷
+    let _startup = rescue::Marker::start();
     let instance = instance::Instance::acquire();
     if !instance.primary {
         let full: Vec<String> = paths.iter().map(|p| if p == feather_core::install::HOME_MARKER { p.clone() } else { full_path(p).unwrap_or_else(|_| p.clone()) }).collect();

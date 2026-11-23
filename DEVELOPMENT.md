@@ -36,7 +36,7 @@
 ### 安裝
 
 1. 選擇安裝位置：預設是 `%LOCALAPPDATA%\Programs\Stillfeather`（目前使用者，不需要系統管理員權限）。可以直接輸入，或按「瀏覽…」選資料夾；選的資料夾不叫 Stillfeather 時，會在底下建一個 `Stillfeather` 資料夾，不會把檔案散在別的資料夾裡。不能裝到磁碟根目錄或 Windows 資料夾。
-2. 選項：**設為預設檔案總管**（Win+E 與開啟資料夾都改用 Stillfeather，預設勾選）、**其他程式開啟檔案時也用 Stillfeather**（網頁上傳、開啟舊檔、選擇資料夾，預設勾選，見「其他程式的開啟檔案視窗」）、建立桌面捷徑、加入開始功能表。
+2. 選項：**設為預設檔案總管**（Win+E 與開啟資料夾都改用 Stillfeather，預設勾選）、**其他程式開啟檔案時也用 Stillfeather**（網頁上傳、開啟舊檔、選擇資料夾，**預設不勾**；之前選過的照原本的選擇，見「其他程式的開啟檔案視窗」）、建立桌面捷徑、加入開始功能表。
 3. 選到需要權限的位置（例如 `C:\Program Files`）時，Windows 會詢問是否允許；只有寫入檔案那一步以系統管理員身分執行，裝好後開啟的 Stillfeather 仍是一般權限。
 4. 安裝內容：`Stillfeather.exe`、`StillfeatherPicker.dll`（「其他程式開啟檔案時也用 Stillfeather」的取代元件，在設定開啟前不會被使用）、`Uninstall.exe`、開始功能表與桌面捷徑、「設定 › 應用程式 › 已安裝的應用程式」裡的項目（名稱、圖示、版本、大小、解除安裝命令）。
 5. 已經裝過時，預設位置就是原本的位置，直接覆蓋升級；Stillfeather 正在執行會先請它關閉。
@@ -73,12 +73,14 @@
 1. 關閉執行中的 Stillfeather 與背景攔截 Win+E，拿掉登入時的啟動。
 2. **把預設的檔案總管改回 Windows 檔案總管**（或安裝前的設定），**其他程式的開啟檔案視窗改回 Windows 原本的**。
 3. 刪除開始功能表與桌面捷徑、`Stillfeather.exe`、`StillfeatherPicker.dll`、`Uninstall.exe`，安裝資料夾空了就一併刪除（只刪 Stillfeather 自己的檔案，資料夾裡有別的東西就保留）。
-4. **刪除下載與產生的資料**：`%LOCALAPPDATA%\FeatherFiles`（設定、資料夾檢視記錄、記錄檔、Common Controls 資訊清單、登記用的取代元件；它還載入在其他程式裡而刪不掉時，先移到暫存資料夾）、暫存資料夾裡快速預覽留下的 `FeatherFiles-preview-*` 與更新提醒下載的 `Stillfeather-update`。
+4. **刪除下載與產生的資料**：`%LOCALAPPDATA%\Stillfeather`（設定、資料夾檢視記錄、記錄檔、啟動記號、Common Controls 資訊清單、登記用的取代元件；它還載入在其他程式裡而刪不掉時，先移到暫存資料夾）與 v0.1.x 留下的 `%LOCALAPPDATA%\FeatherFiles`、暫存資料夾裡快速預覽留下的 `FeatherFiles-preview-*` 與更新提醒下載的 `Stillfeather-update`。
 5. 移除「已安裝的應用程式」項目與 `HKCU\Software\Stillfeather`。
 
 `Uninstall.exe` 會先把自己複製到暫存資料夾再執行，安裝資料夾裡就沒有執行中的檔案可以整個刪掉；結束後暫存的那一份也會自動刪除。裝在需要權限的位置時，刪除檔案那一步會請你允許。
 
-注意：`%LOCALAPPDATA%\FeatherFiles\settings.json` 與 C# 版共用；在同時有 C# 開發版的電腦上解除安裝，C# 版的設定也會一起刪除。
+注意：v0.1.x 用的 `%LOCALAPPDATA%\FeatherFiles` 也是 C# 雛形的資料夾；在同時有 C# 雛形的電腦上，新版搬走設定或解除安裝後，C# 雛形會回到預設設定。
+
+Stillfeather 打不開、或安裝資料夾被直接刪掉而沒有解除安裝時，見「救援」。
 
 ### 命令列（部署工具與商店）
 
@@ -87,7 +89,7 @@
 | `/S`（也接受 `/SILENT`、`/VERYSILENT`、`/quiet`、`--silent`） | 不顯示畫面；結束代碼 0 成功、1 失敗、3 參數錯誤 |
 | `/D=路徑`（最後一個參數，可含空白）、`--dir 路徑` | 安裝位置 |
 | `--default-explorer`／`--no-default-explorer` | 設為／不設為預設檔案總管，並記下選擇。靜默安裝沒有指定時和畫面上一樣**設為預設**；`--update` 沒有指定時維持原狀 |
-| `--file-picker`／`--no-file-picker` | 其他程式開啟檔案時也用／不用 Stillfeather。沒有指定時維持使用者原本的選擇；沒選過就是開啟（Stillfeather 第一次啟動時登記） |
+| `--file-picker`／`--no-file-picker` | 其他程式開啟檔案時也用／不用 Stillfeather。沒有指定時維持使用者原本的選擇；沒選過就是**關閉** |
 | `--desktop`／`--no-desktop` | 桌面捷徑（靜默安裝預設不建立） |
 | `--no-start-menu` | 不加入開始功能表 |
 | `--launch` | 靜默安裝完成後開啟 Stillfeather |
@@ -97,7 +99,7 @@
 
 ### 上架前要準備的
 
-- **程式碼簽章**：沒有簽章的安裝程式下載後會被 SmartScreen 擋下（「Windows 已保護您的電腦」），上架到 Microsoft Store 也需要簽章。需要向憑證機構購買程式碼簽章憑證，用 `signtool sign` 依序簽 `target\release\FeatherFiles.exe`（建置安裝程式之前）與 `dist\StillfeatherSetup.exe`。
+- **程式碼簽章**：見下方「程式碼簽章」。沒有簽章的安裝程式下載後會被 SmartScreen 擋下（「Windows 已保護您的電腦」），也比較容易被防毒誤判；上架到 Microsoft Store 也需要簽章。
 - **Microsoft Store（Win32 安裝程式）**：需要可下載的固定網址（HTTPS）、靜默安裝參數（填 `/S`）、「已安裝的應用程式」項目（已提供），以及簽章。
 - 版本號碼取自 `Cargo.toml` 的 `version`，會寫進 exe 的版本資訊與「已安裝的應用程式」，也是更新提醒比較新舊的依據。
 
@@ -105,23 +107,47 @@
 
 裝好的 Stillfeather 會檢查 GitHub Releases 上的最新正式版，有新版時用自己的對話方塊提醒，顯示目前版本、新版本、下載大小與更新說明：
 
-- **更新**：下載新的安裝程式，核對大小與 SHA-256 都和 `update.json` 相符（目前這一版有數位簽章時，新版也必須有有效的簽章）後才執行。Stillfeather 會先關閉，安裝程式顯示「正在更新」的進度，裝到原本的位置、保留原本的捷徑與預設檔案總管設定，完成後自動重新開啟。失敗時顯示原因，按「關閉」會重新開啟原本那一版。
+- 讀的是 `https://github.com/Pity0125/Stillfeather/releases/latest/download/update.json`（不是 api.github.com，所以沒有每個 IP 每小時 60 次的限制）與旁邊的 `update.json.sig`。**簽章不正確或沒有簽章就不提醒、不更新**（見「更新資訊的簽章」）。
+- **更新**：下載新的安裝程式，核對大小與 SHA-256 都和（已驗證簽章的）`update.json` 相符（目前這一版有數位簽章時，新版也必須有有效的簽章）後才執行。Stillfeather 會先關閉，安裝程式顯示「正在更新」的進度，裝到原本的位置、保留原本的捷徑與預設檔案總管設定，完成後自動重新開啟。失敗時顯示原因，按「關閉」會重新開啟原本那一版。
 - **略過這個版本**：這一版不再提醒，有更新的版本時才會再提醒。
 - **稍後**：這次執行不再提醒，下次開啟時再說。
 - 開啟後約 10 秒在背景檢查，最多每 20 小時一次；Stillfeather 不在前景、或有對話方塊、選單開著時，等可以操作時才跳出來。沒有網路時不會有任何訊息。
 - 設定裡的 **「不要啟用更新提醒」** 會關掉自動檢查；旁邊的 **「檢查更新」** 隨時可以手動檢查（不管之前略過的版本），結果顯示在按鈕旁。找到新版本時按鈕變成重點色的 **「立即更新」**：按下會像「儲存」一樣儲存並關閉設定，接著直接下載更新（不再詢問）；沒按它就關閉設定的話，關閉後跳出更新提醒。
 - 沒有安裝、直接從 `app\` 執行的開發版按「更新」時，只會開啟新版的安裝程式，讓你自己選位置。
-- 上次檢查的時間與略過的版本記在 `%LOCALAPPDATA%\FeatherFiles\update-state.json`（解除安裝時一起刪除）。
+- 上次檢查的時間與略過的版本記在 `%LOCALAPPDATA%\Stillfeather\update-state.json`（解除安裝時一起刪除）。
+
+### 更新資訊的簽章
+
+`update.json` 和安裝程式放在同一個 Release；只靠裡面的 SHA-256 的話，GitHub 帳號被盜時攻擊者可以把兩個一起換掉。所以 `update.json` 另外以**離線保存的私鑰**簽章，公鑰在建置時嵌進 Stillfeather：
+
+- **演算法**：ECDSA P-256 搭配 SHA-256，簽的是 `update.json` 的原始位元組，簽章（64 位元組，Base64）放在 `update.json.sig`。Windows 沒有內建 Ed25519，為了維持「零第三方套件、不自己實作密碼學」，驗證用 Windows 內建的 CNG（`bcrypt.dll` 的 `BCryptVerifySignature`），簽章用 PowerShell／.NET 內建的 `ECDsaCng`。
+- **公鑰**：`assets/update-signing-key.txt`（BCRYPT_ECCPUBLIC_BLOB 的 Base64），要 commit。`feather_core::update::public_key` 以 `include_str!` 嵌入；沒有公鑰的建置不接受任何更新，`build.ps1 -Setup` 也會拒絕建置。
+- **私鑰**：只在你自己手上（預設 `%USERPROFILE%\Stillfeather-signing\update-signing.key`，可以放隨身碟，用 `-KeyPath` 或環境變數 `STILLFEATHER_SIGNING_KEY` 指定）。不要放進專案資料夾（`*.key` 已列在 `.gitignore`）、不要上傳到 GitHub Actions。備份到另一個隨身碟或密碼管理器：私鑰不見了就不能再發佈更新。
+- **第一次**：執行 `.\tools\New-UpdateSigningKey.ps1`（只需要一次），commit `assets\update-signing-key.txt`。之後**不要換金鑰**：換了之後，已經安裝的 Stillfeather 不會接受新金鑰簽的更新，使用者要手動重新安裝。私鑰外流時才用 `-Force` 換。
+- **簽章**：`BuildSetup.cmd` 產生 `update.json` 後，私鑰在預設位置（或 `STILLFEATHER_SIGNING_KEY`）就自動執行 `tools\Sign-Update.ps1`；不在的話（例如私鑰在隨身碟），插上後手動執行 `.\tools\Sign-Update.ps1 -KeyPath E:\…\update-signing.key`。它會確認私鑰和公鑰是同一組，再用剛建置的 `app\FeatherFiles.exe --verify-update dist\update.json` 驗證一次，確認已安裝的版本會接受。簽完之後不要再改 `update.json`。
+- **過渡**：0.1.0～0.1.2 還不會檢查簽章，它們照舊以 SHA-256 更新到 0.1.3；0.1.3 起每一版都必須附上 `update.json.sig`。
+- **其他保護**：GitHub 帳號一定要開兩步驟驗證，最好用通行金鑰（passkey）或硬體金鑰；不要在 GitHub Actions 放任何簽章用的私鑰。
 
 ### 發佈新版本
 
-1. **第一次**：在 GitHub 建立公開的專案，把 `Cargo.toml` 裡 `# repository = …` 那一行取消註解，填上專案網址（例如 `repository = "https://github.com/帳號/stillfeather"`）。之後建置的 Stillfeather 才會檢查更新；在這之前已經裝好的版本不會檢查，要手動裝一次新版。
-2. 修改 `Cargo.toml` 的 `version`（例如 `0.2.0`，必須比上一版大）。想附上更新說明的話，寫在專案資料夾的 `release-notes.txt`，或執行 `.\build.ps1 -Setup -Notes "說明"`。
-3. 執行 `BuildSetup.cmd`（或 `.\build.ps1 -Setup`）：產生 `dist\StillfeatherSetup.exe` 與 `dist\update.json`（版本、下載網址、大小與 SHA-256）。有程式碼簽章憑證的話，在這一步之前先簽好 exe（見上一節）；簽完安裝程式後要重新產生 `update.json`，否則 SHA-256 會不符。
-4. 在 GitHub 的 Releases 按「Draft a new release」，標籤填 `v0.2.0`（`v` 加上版本號碼），上傳 `StillfeatherSetup.exe` 與 `update.json` 兩個檔案，以**正式版**發佈（不要勾 pre-release，最新的正式版才會被讀到）。
-5. 已安裝的 Stillfeather 會在下次開啟時（距離上次檢查超過 20 小時）提醒；在設定按「檢查更新」會立刻檢查。
+1. 修改 `Cargo.toml` 的 `version`（必須比上一版大），`picker-dll/Cargo.toml` 的版本跟著改；更新說明寫在 `release-notes.txt`（會放進 `update.json`，提醒對話方塊會顯示），也加到 `CHANGELOG.md`。
+2. 執行 `test.ps1`，再執行 `BuildSetup.cmd`（或 `.\build.ps1 -Setup`）：產生 `dist\StillfeatherSetup.exe`、`dist\update.json`（版本、下載網址、大小與 SHA-256）、`dist\update.json.sig`（私鑰在預設位置時）與 `dist\RestoreExplorer.cmd`。有程式碼簽章時，先簽好 exe 再產生 `update.json`（簽完安裝程式後要重新產生，否則 SHA-256 會不符），最後才簽 `update.json`。
+3. **掃毒**：把 `dist\StillfeatherSetup.exe`，以及裝好之後的 `Stillfeather.exe`、`StillfeatherPicker.dll`（在 `%LOCALAPPDATA%\Programs\Stillfeather`）丟到 [VirusTotal](https://www.virustotal.com) 掃一次。有誤判就到 Microsoft 的 [WDSI 檔案提交](https://www.microsoft.com/wdsi/filesubmission) 以「軟體開發人員」身分回報（選 Incorrectly detected as malware），其他防毒廠商也大多有誤判回報頁。
+4. **手動測試**：在乾淨的 Windows（例如 Windows 沙箱或虛擬機器）安裝、更新、解除安裝各一次；有改到開啟檔案視窗元件時，照「其他程式的開啟檔案視窗」的測試清單走一遍。
+5. 在 GitHub 的 Releases 按「Draft a new release」，標籤填 `v0.2.0`（`v` 加上版本號碼），**發佈說明寫實際改了什麼**（可以直接貼 `CHANGELOG.md` 這一版的段落），上傳 `StillfeatherSetup.exe`、`update.json`、`update.json.sig` 與 `RestoreExplorer.cmd` 四個檔案，以**正式版**發佈（不要勾 pre-release，最新的正式版才會被讀到）。
+6. 已安裝的 Stillfeather 會在下次開啟時（距離上次檢查超過 20 小時）提醒；在設定按「檢查更新」會立刻檢查。
 
-測試時可以用環境變數 `STILLFEATHER_UPDATE_URL` 指定其他 https 網址的 `update.json`。
+測試時可以用環境變數 `STILLFEATHER_UPDATE_URL` 指定其他 https 網址的 `update.json`（旁邊一樣要有用同一把私鑰簽的 `update.json.sig`）。
+
+### GitHub Actions
+
+`.github/workflows/build.yml`：每次 push 到 main、Pull Request 或推送 `v*` 標籤時，在 GitHub 的 Windows 主機執行 `test.ps1`（包含以 CNG 驗證簽章測試向量）與 `build.ps1 -Setup`，產生的安裝程式、`update.json` 與 `RestoreExplorer.cmd` 在那次執行的 Artifacts 可以下載。這裡**不簽章**：`update.json` 仍然在自己的電腦上用離線的私鑰簽。
+
+### 程式碼簽章
+
+- **Azure Artifact Signing**（原名 Trusted Signing）：個人開發者目前只開放美國與加拿大，台灣的個人帳號申請不了。
+- **SignPath Foundation**：對開源專案免費。條件包括 OSI 認可的授權（本專案是 GPL-3.0，見 `LICENSE`）、在 GitHub Actions 上自動建置（見上一節）、GitHub 與 SignPath 帳號都開兩步驟驗證，以及已經發佈過版本。申請通過後，在 `build.yml` 加上 SignPath 的上傳與簽章步驟，就改用 GitHub Actions 建置的檔案發佈。
+- 簽章後 `download` 的檢查會自動生效：目前這一版有 Authenticode 簽章時，新版的安裝程式也必須有有效的簽章。
 
 ## 程式圖示
 
@@ -223,9 +249,9 @@
 
 ## 其他程式的開啟檔案視窗（選擇器）
 
-「其他程式開啟檔案時也用 Stillfeather（上傳、選擇資料夾）」**預設開啟**：網頁的上傳按鈕、各種程式的「開啟舊檔」與「選擇資料夾」都會跳出 Stillfeather 的精簡視窗。
+「其他程式開啟檔案時也用 Stillfeather（上傳、選擇資料夾）」**預設關閉**（0.1.3 起）：開啟後，網頁的上傳按鈕、各種程式的「開啟舊檔」與「選擇資料夾」都會跳出 Stillfeather 的精簡視窗。取代元件會被載入到每一個開檔的程式裡，出問題時當掉或卡住的是別人的程式，使用者很難聯想到 Stillfeather，所以只在使用者自己勾選後才登記。
 
-- 使用者的選擇記在 `HKCU\Software\Stillfeather` 的 `FilePicker`（`1` 開、`0` 關）；**沒有這個值表示沒選過，視為開啟**。安裝程式的選項（預設勾選）會寫入它並立即登記；主程式每次啟動依它登記或取消（所以開發版、沒有經過安裝程式的使用者、從舊版更新的使用者也都是開啟的），只有在設定或安裝程式關掉（`0`）才不會開。另一個程式已經取代了這個視窗時不覆寫它。
+- 使用者的選擇記在 `HKCU\Software\Stillfeather` 的 `FilePicker`（`1` 開、`0` 關）；**沒有這個值表示沒選過，視為關閉**（`install::picker_wanted`）。安裝程式的選項（預設不勾；之前選過的照原本的選擇）與設定的勾選會寫入它；主程式每次啟動依它登記或取消：0.1.0～0.1.2 經過安裝程式而記下 `1` 的使用者維持開啟，沒有記錄的（開發版、沒經過安裝程式）會取消登記。另一個程式已經取代了這個視窗時不覆寫它。
 - 設定裡的勾選框顯示的是這個選擇。
 
 做法和 Files App 的「取代檔案選擇器」相同：
@@ -233,9 +259,10 @@
 - **取代元件** `StillfeatherPicker.dll`（`picker-dll/`，獨立建置）：在目前使用者的登錄 `HKCU\Software\Classes\CLSID\{DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7}\InprocServer32`（Windows「開啟檔案」視窗元件 `CLSID_FileOpenDialog`）登記它。之後 64 位元、一般權限的程式建立這個視窗時，拿到的是它的物件。
   - 它同時建立一個 Windows 原本的視窗物件（從 HKLM 登記的 `comdlg32.dll` 直接取得，不經過 COM 查表，所以不會繞回自己），程式的每個設定（類型、資料夾、選項、標題、自訂的勾選方塊與下拉選單 `IFileDialogCustomize`）都照樣交給它。
   - 程式呼叫 `Show` 時，把設定寫成請求檔，啟動 `Stillfeather.exe --pick <請求檔>`，等使用者選好（期間照常處理程式的視窗訊息、停用程式的視窗，和 Windows 的視窗一樣），再以 `IShellItem`／`IShellItemArray` 交回，並照 Windows 的做法呼叫程式的 `OnFileOk`（WinForms、WPF 等靠它取得檔名）。只有回傳 `S_FALSE` 才算拒絕（重新選）：Chrome、Edge 與 Electron 程式登記的 `AutoCloseDialogEventHandler` 回傳 `E_NOTIMPL`，Windows 的視窗照樣關閉，當成拒絕的話上傳時會一直重新跳出選擇器。
-  - 找不到 Stillfeather、它無法啟動或異常結束、使用者按「使用 Windows 視窗」、要選的不是檔案系統項目（`FOS_ALLNONSTORAGEITEMS`，例如手機、媒體櫃），或是 Stillfeather 自己的程式與 `explorer.exe` 要開檔時，直接顯示 Windows 原本的視窗：程式永遠選得到檔案。
+  - 找不到 Stillfeather、它無法啟動或異常結束、使用者按「使用 Windows 視窗」、要選的不是檔案系統項目（`FOS_ALLNONSTORAGEITEMS`，例如手機、媒體櫃）、程式在視窗裡加了自己的選項（`IFileDialogCustomize` 的 EnableOpenDropDown、AddMenu、AddPushButton、AddComboBox、AddRadioButtonList、AddCheckButton、AddEditBox，例如記事本的「編碼」、Office 的「開啟」下拉選單；Stillfeather 的視窗放不下它們，使用者選不到的話程式只會拿到預設值），或是 Stillfeather 自己的程式與 `explorer.exe` 要開檔時，直接顯示 Windows 原本的視窗：程式永遠選得到檔案。
+  - 等待選擇器時以 `MsgWaitForMultipleObjectsEx`（`MWMO_INPUTAVAILABLE`）照常處理程式的視窗訊息：程式不會顯示「沒有回應」，之前被看過而沒取走的訊息也不會讓它一直等。
   - 載入在別人的程式裡執行，所以獨立建置成 `panic = "unwind"`，每個 COM 方法都接住 panic、回傳錯誤。只支援 x64：`IFileDialogCustomize` 以「最多三個暫存器參數」原封轉交，這在 x64 的呼叫慣例下才成立。32 位元程式讀另一個登錄位置，照常用 Windows 的視窗；以系統管理員身分執行的程式不讀目前使用者的類別登記，也照常用 Windows 的視窗。
-  - 登記的是複製到 `%LOCALAPPDATA%\FeatherFiles\Picker` 的那一份，不是程式資料夾裡的：程式資料夾被移走或刪掉時，其他程式的開檔視窗仍然正常（找不到 Stillfeather 就用 Windows 的視窗）。要啟動的 Stillfeather 記在 `HKCU\Software\Stillfeather` 的 `PickerExe`。主程式每次啟動會把登記的那一份更新成這一版（重新建置、更新之後）；舊的還載入在其他程式裡時先改名讓位，下次再刪。
+  - 登記的是複製到 `%LOCALAPPDATA%\Stillfeather\Picker` 的那一份（0.1.x 是 `%LOCALAPPDATA%\FeatherFiles\Picker`，新版啟動時換過來），不是程式資料夾裡的：程式資料夾被移走或刪掉時，其他程式的開檔視窗仍然正常（找不到 Stillfeather 就用 Windows 的視窗）。要啟動的 Stillfeather 記在 `HKCU\Software\Stillfeather` 的 `PickerExe`。主程式每次啟動會把登記的那一份更新成這一版（重新建置、更新之後）；舊的還載入在其他程式裡時先改名讓位，下次再刪。
   - 另一個程式已經取代了這個視窗時不覆寫，在設定裡回報。
 - **選擇器**（`Stillfeather.exe --pick`，`src/win/picker.rs`）：和一般的 Stillfeather 是不同的程序，不佔用單一實例、不檢查更新、不寫入設定檔與資料夾檢視記錄（主程式可能同時開著），記錄檔寫成 `picker-trace.log` 等。視窗蓋在要求的程式上（它的視窗是擁有者），置中在那個視窗上，預設 1100×720。
   - 只保留選檔需要的部分：上一頁／下一頁／上一層、重新整理、路徑列、搜尋、新增資料夾、排序與檢視、左側資料夾樹、檔案清單，底部是檔名欄、檔案類型、確定與取消，右上角是「使用 Windows 視窗」。沒有分頁、雙欄、篩選籤、個人化卡片、深淺色與設定按鈕；Ctrl+T 等分頁、雙欄、設定的快捷鍵不作用，「在新分頁開啟」改成在原地開啟。懸停預覽、右鍵選單、拖放、自動重新整理照常。
@@ -245,6 +272,20 @@
   - 起始資料夾：程式指定一定要用的 → 這個程式上次用的（記在設定檔旁的 `picker-folders.txt`，每個程式一筆、最多 64 筆）→ 程式建議的 → 使用者資料夾。
   - Esc 或關閉視窗是取消。要求的程式結束了（例如當機），選擇器也跟著關閉。
 - 請求與結果的格式、類型篩選、檔名欄解析與上次的資料夾在 `src/picker.rs`（有單元測試），取代元件以 `#[path]` 引入同一個檔案，兩邊格式不會不一致。
+- **新舊版本混用**：已經開著的程式會一直用它當初載入的元件，直到重新開啟，所以新版 Stillfeather 一定會收到舊版元件的請求，舊版元件也會讀到新版 Stillfeather 的結果。請求與結果的第一行帶格式版本（`stillfeather-pick=1`、`stillfeather-picked=1`，`picker::PROTOCOL`）：只加欄位時版本不變（讀取端略過不認得的欄位）；改掉欄位的意思才加一，而且讀取端要能讀所有比自己舊的版本。讀到比自己新的請求時 Stillfeather 以結束代碼 2 結束，元件改開 Windows 的視窗；結果檔一律寫版本 1。`picker::tests` 保留了 0.1.x 元件寫出的請求與結果原文，之後的版本都必須讀得懂。
+
+### 開啟檔案視窗的測試清單
+
+改到 `picker-dll/` 或 `src/win/picker.rs` 時，發佈前在 Windows 上走一遍（每一項都要確認：選得到檔案、取消沒有副作用、程式沒有卡住或當掉）：
+
+- 瀏覽器上傳：Chrome、Edge、Firefox（單選、多選、`accept` 限定類型的上傳欄位），以及 Electron 程式（VS Code「開啟檔案」「開啟資料夾」）。
+- 檔案類型：有多種類型的程式（例如小畫家的「開啟」）切換類型、用 `*.png` 篩選；選資料夾模式（`FOS_PICKFOLDERS`）。
+- 自訂選項：記事本（「編碼」下拉選單）、Office（「開啟」按鈕的下拉選單、「以唯讀開啟」）要出現 **Windows 原本的視窗**，選項照常可用。
+- OnFileOk：WinForms／WPF 程式（例如 Paint.NET、Notepad++ 以外的 .NET 程式）選定後要拿得到檔名；程式拒絕（`S_FALSE`）時會重新選。
+- 模態：選擇器開著時，原本的程式不能操作、仍然會重畫（拖動選擇器時底下的視窗不會變白或顯示「沒有回應」）；關閉後焦點回到原本的程式。
+- 失敗退回：選擇器開著時用工作管理員結束 `Stillfeather.exe --pick`，程式要改開 Windows 的視窗；設 `STILLFEATHER_PICKER=off` 的程式一律用 Windows 的視窗。
+- 新舊版本：開著一個程式（例如記事本）不關，更新 Stillfeather 之後再從那個程式開檔，舊的元件和新版 Stillfeather 要能配合。
+- 有反作弊的遊戲（Easy Anti-Cheat、BattlEye、Vanguard 等）會擋未簽章的 DLL 載入：確認遊戲裡需要選檔的地方不會因此當掉；如果會，就在說明裡請使用者對那個遊戲關掉這個功能。
 - 解除安裝會取消登記。已經開著的程式可能保留著之前載入的元件，重新開啟後才會套用開啟或關閉。偵錯時可以設環境變數 `STILLFEATHER_PICKER=off`，讓那個程式一律用 Windows 的視窗。
 
 ## 已移植（與 C# 版相同的行為）
@@ -358,9 +399,17 @@
 | 拖曳資料夾到側欄「常用位置」標題 | 釘選成常用位置 |
 | 拖曳側欄或兩欄之間的分隔線 | 調整布局（自動儲存） |
 
+## 救援
+
+預設檔案總管、Win+E、開啟檔案視窗都交給 Stillfeather 時，如果某台電腦上它一啟動就當掉（常見原因是第三方的右鍵選單、縮圖或圖示擴充在它的程式裡出錯），使用者會連資料夾都打不開。所以有兩層救援：
+
+- **自動**（`feather_core::crashguard`、`src/win/rescue.rs`）：主程式每次啟動先在 `%LOCALAPPDATA%\Stillfeather\startup` 放一個 `<開始時間毫秒>-<程序代號>` 的空檔案，正常結束或撐過 20 秒就刪掉（每次啟動各自一個檔案，同時開好幾個資料夾也不會互相覆寫）。下次啟動時如果一分鐘內已經留下三個，就不開 Stillfeather：改回 Windows 檔案總管與 Windows 的開啟檔案視窗、停止背景攔截 Win+E，並把選擇記成「關」（之後啟動不會又設回去；「攔截 Win+E」的選擇不動），用 Windows 檔案總管開啟這次要開的位置，再用最簡單的 Windows 訊息方塊說明（Stillfeather 自己的對話方塊可能正是出問題的地方），並把 `crash.log`、`trace.log` 複製成 `*-before-rescue.log`（下一次正常啟動會重新開始記錄）。選擇器（`--pick`）、背景攔截（`--win-e`）與 `--perf` 不經過這個檢查。
+  - 測試方法：在命令提示字元執行三次「`start "" "…\Stillfeather.exe"`，等兩秒，`taskkill /f /im Stillfeather.exe`」（一分鐘內完成），第四次開啟就會救援。
+- **手動**：`RestoreExplorer.cmd`（隨每個 Release 上傳，`build.ps1 -Setup` 會複製到 `dist\`）。不需要 Stillfeather 還在：結束 Stillfeather（包含背景攔截）、拿掉登入時的啟動、把開啟資料夾／磁碟與 Win+E 改回 Windows 檔案總管（安裝前另一套檔案管理程式的設定從 `HKCU\Software\Stillfeather\DefaultFileManagerBackup` 還原）、開啟檔案視窗改回 Windows 原本的；程式已經不在時也拿掉「已安裝的應用程式」裡留下的項目。只改 HKCU，不需要系統管理員權限。寫的是和 `shellreg::restore_default_file_manager`、`disable_picker` 同樣的登錄位置，改了那邊要一起改這裡。
+
 ## 設定檔
 
-設定與常用位置存放在 `%LOCALAPPDATA%\FeatherFiles\settings.json`，**與 C# 版共用同一個檔案與欄位格式**，兩個版本可以交替使用。寫入時會先寫暫存檔、清空緩衝再改名取代，避免檔案寫到一半而損毀。也可以用環境變數 `FEATHER_SETTINGS_PATH` 指定其他完整路徑。Rust 版另外記錄 `ViewMode`（沒有個別記錄的資料夾所用的預設檢視）、`ShowHidden`（顯示隱藏的項目）、`PersonalizeCollapsed`（個人化卡片收合）、`SpacePreview`（按空白鍵預覽）與 `UpdateReminders`（更新提醒）；C# 版讀取時會忽略，若由 C# 版儲存設定，這幾項會回到預設（詳細資料、不顯示、展開、關閉、開啟）。每個資料夾的檢視另外存在同一個資料夾的 `folder-views.json`，C# 版不會讀取或覆寫它。
+設定與常用位置存放在 `%LOCALAPPDATA%\Stillfeather\settings.json`，欄位格式與 C# 雛形相同。0.1.0～0.1.2 存在 `%LOCALAPPDATA%\FeatherFiles`（和 C# 雛形共用）：新版啟動時把 `install::MIGRATED_FILES`（設定、備份、資料夾檢視、更新狀態、每個程式上次的資料夾）搬到新資料夾（新資料夾已經有的不蓋掉），取代元件換到新資料夾登記之後，再刪掉舊資料夾剩下的記錄與舊元件（`rescue::migrate_data_dir`、`remove_old_data_dir`）。從此不再和 C# 雛形共用設定。寫入時會先寫暫存檔、清空緩衝再改名取代，避免檔案寫到一半而損毀。也可以用環境變數 `FEATHER_SETTINGS_PATH` 指定其他完整路徑。Rust 版另外記錄 `ViewMode`（沒有個別記錄的資料夾所用的預設檢視）、`ShowHidden`（顯示隱藏的項目）、`PersonalizeCollapsed`（個人化卡片收合）、`SpacePreview`（按空白鍵預覽）與 `UpdateReminders`（更新提醒）；每個資料夾的檢視另外存在同一個資料夾的 `folder-views.json`。
 
 設定檔讀不懂（例如手動改壞）時會改用預設值啟動，並先把原檔備份成同一個資料夾的 `settings.json.bak`，常用位置等內容不會在下次儲存時被預設值蓋掉而消失。
 
@@ -377,15 +426,15 @@
 
 ## 驗證狀態
 
-這版是在 Linux 沙盒中撰寫的，**尚未在 Windows 上編譯或實際執行過**。已完成的檢查：
+Stillfeather 在 Windows 11 上建置與日常使用，0.1.0 起以安裝程式在 GitHub Releases 發佈。程式碼在 Linux 上也能做大部分的檢查（Win32 宣告以 `cfg_attr(windows, link(...))` 標註，所以整個專案在 Linux 上也能 `cargo check`），GitHub Actions 則在 Windows 上執行全部測試並建置安裝程式（見「GitHub Actions」）。
 
-- 整個專案（含所有 Win32 程式碼）通過 `cargo check` 與 `cargo clippy` 型別檢查，沒有錯誤。
-- 161 個核心單元測試通過，涵蓋：選擇器（請求與結果的格式、換行與定位字元不會破壞格式、類型的顯示名稱、萬用字元與類型篩選、檔名欄的多個名稱與路徑解析、每個程式上次用的資料夾與上限）、自動重新整理（讀取排程與節流、讀取中又有變更不會漏掉、變更通知對應到哪個資料夾、資料夾改名與搬移後的新路徑、丟進資源回收筒視為刪除、往上找還在的資料夾、清單是否相同、側欄子資料夾的增減）、更新提醒（版本比較含預覽版、`update.json` 的解析與檢查，包括 Windows PowerShell 寫出的格式、https 網址拆解、檢查間隔與略過的版本、SHA-256 與標準測試向量）、安裝程式參數（含更新模式）、Office 文件的內容擷取（以 Python 產生、含真實命名空間與樣式的 .docx／.xlsx／.pptx／.odt／.ods／.odp 測試檔，以及隨機破壞的檔案不會閃退）、DEFLATE 解壓（stored、固定與動態 Huffman，與 zlib 輸出比對；壓縮炸彈會被上限擋下）、ZIP 讀取、容錯的 XML 讀取、Excel 日期序號與數字格式、快速預覽的檔案分類、文字編碼判斷與各語言語法上色、復原紀錄與資源回收筒紀錄檔解析、檢視模式與大圖示縮放、設定檔讀寫（含 C# 版寫出的 `\uXXXX` 跳脫）、路徑處理與麵包屑分段、自然排序、檔案類型分類與篩選統計、動畫補間與列動畫狀態、打字跳轉、.ico 轉資源檔、拖放目標檢查、分頁與雙欄規則、單一實例資料格式、檔案作業前的路徑檢查、路徑列的相對路徑、重新解析點標籤判斷（連結與雲端檔案）、刪除後的選取位置、預覽快取的淘汰規則、自然排序與舊版結果完全相同；設定檔解析另以隨機輸入測試，不會因格式錯誤而閃退。
-- 取代元件（picker-dll）23 個測試通過：COM 結構與函式表的大小（IFileOpenDialog 29 格、IFileDialogCustomize 30 格、STARTUPINFOW、MSG）、HRESULT 與登錄根機碼的值，以及它引入的路徑與選擇器格式測試。實際載入到其他程式、與瀏覽器等的互動都要在 Windows 上才能確認。
-- 7 個 Windows 端測試通過：更新說明的截斷、變更通知的旗標處理，以及 Win32 結構的版面（含變更通知註冊用的 `SHChangeNotifyEntry`）——40 個結構與數位簽章檢查用的 `WINTRUST_DATA`、`GUITHREADINFO`（含清單與樹狀圖自繪用的 `NMLVCUSTOMDRAW`、`NMTVCUSTOMDRAW`）的大小與 x64 Windows SDK 相符，GUID 版面正確。
-- 新介面依同一組座標與配色畫過示意圖，確認比例、留白與元件沒有重疊；但實際的 Win32 自繪效果（尤其清單與樹狀圖的膠囊選取列）、動畫的流暢度與交叉淡化，都要在 Windows 上執行才能確認。
+- 整個專案（含所有 Win32 程式碼、安裝程式與 picker-dll）通過 `cargo check` 與 `cargo clippy` 型別檢查，沒有錯誤。
+- 179 個核心單元測試通過，涵蓋：連續啟動失敗的判斷（一分鐘內三次、太舊或看不懂的記號、時鐘調整）、更新簽章與公鑰的格式（以 Python cryptography 產生的 ECDSA P-256 測試向量）、Base64、資料夾搬移的清單、選擇器（請求與結果的格式與版本、0.1.x 元件寫出的請求與結果仍然讀得懂、比自己新的格式改用 Windows 的視窗、換行與定位字元不會破壞格式、類型的顯示名稱、萬用字元與類型篩選、檔名欄的多個名稱與路徑解析、每個程式上次用的資料夾與上限）、自動重新整理（讀取排程與節流、讀取中又有變更不會漏掉、變更通知對應到哪個資料夾、資料夾改名與搬移後的新路徑、丟進資源回收筒視為刪除、往上找還在的資料夾、清單是否相同、側欄子資料夾的增減）、更新提醒（版本比較含預覽版、`update.json` 的解析與檢查，包括 Windows PowerShell 寫出的格式、https 網址拆解、檢查間隔與略過的版本、SHA-256 與標準測試向量）、安裝程式參數（含更新模式）、Office 文件的內容擷取（以 Python 產生、含真實命名空間與樣式的 .docx／.xlsx／.pptx／.odt／.ods／.odp 測試檔，以及隨機破壞的檔案不會閃退）、DEFLATE 解壓（stored、固定與動態 Huffman，與 zlib 輸出比對；壓縮炸彈會被上限擋下）、ZIP 讀取、容錯的 XML 讀取、Excel 日期序號與數字格式、快速預覽的檔案分類、文字編碼判斷與各語言語法上色、復原紀錄與資源回收筒紀錄檔解析、檢視模式與大圖示縮放、設定檔讀寫（含 C# 版寫出的 `\uXXXX` 跳脫）、路徑處理與麵包屑分段、自然排序、檔案類型分類與篩選統計、動畫補間與列動畫狀態、打字跳轉、.ico 轉資源檔、拖放目標檢查、分頁與雙欄規則、單一實例資料格式、檔案作業前的路徑檢查、路徑列的相對路徑、重新解析點標籤判斷（連結與雲端檔案）、刪除後的選取位置、預覽快取的淘汰規則、自然排序與舊版結果完全相同；設定檔解析另以隨機輸入測試，不會因格式錯誤而閃退。
+- 取代元件（picker-dll）28 個測試通過：哪些 IFileDialogCustomize 方法會讓它改用 Windows 的視窗、COM 結構與函式表的大小（IFileOpenDialog 29 格、IFileDialogCustomize 30 格、STARTUPINFOW、MSG）、HRESULT 與登錄根機碼的值，以及它引入的路徑與選擇器格式測試。實際載入到其他程式、與瀏覽器等的互動都要在 Windows 上才能確認。
+- 8 個 Windows 端測試（`cargo test --bin FeatherFiles`；以 CNG 驗證簽章測試向量的那一個只在 Windows 上執行）：Windows 內建的 CNG 接受和 PowerShell／.NET 相同格式的簽章與公鑰、竄改內容／簽章／公鑰都驗證不過、更新說明的截斷、變更通知的旗標處理，以及 Win32 結構的版面（含變更通知註冊用的 `SHChangeNotifyEntry`）——40 個結構與數位簽章檢查用的 `WINTRUST_DATA`、`GUITHREADINFO`（含清單與樹狀圖自繪用的 `NMLVCUSTOMDRAW`、`NMTVCUSTOMDRAW`）的大小與 x64 Windows SDK 相符，GUID 版面正確。
+- 介面、拖放、預覽、預設檔案總管、Win+E 攔截與開啟檔案視窗的實際行為以手動測試確認（開啟檔案視窗見上方的測試清單）。
 
-第一次在 Windows 建置時可能會遇到小問題。若程式發生未預期的錯誤，會跳出訊息，並把詳細內容寫入 `%LOCALAPPDATA%\FeatherFiles\rust-crash.log`，方便回報修正。程式若被系統直接結束而沒有任何訊息（存取違規、堆疊用盡、堆積損壞等），請看記錄資料夾（開發版是 `app\` 資料夾裡 exe 旁邊；用安裝程式裝的是 `%LOCALAPPDATA%\FeatherFiles\logs`）：`trace.log` 逐步記下操作經過（最後一行就是出事的位置）、`crash.log` 記下例外代碼與位置、`stderr.log` 收集執行環境的錯誤訊息；每次啟動會重新開始記錄。效能與資源占用可用 `perf.ps1` 量測（見「效能量測」）。
+若程式發生未預期的錯誤，會跳出訊息，並把詳細內容寫入 `%LOCALAPPDATA%\Stillfeather\rust-crash.log`，方便回報修正。程式若被系統直接結束而沒有任何訊息（存取違規、堆疊用盡、堆積損壞等），請看記錄資料夾（開發版是 `app\` 資料夾裡 exe 旁邊；用安裝程式裝的是 `%LOCALAPPDATA%\Stillfeather\logs`）：`trace.log` 逐步記下操作經過（最後一行就是出事的位置）、`crash.log` 記下例外代碼與位置、`stderr.log` 收集執行環境的錯誤訊息；每次啟動會重新開始記錄。效能與資源占用可用 `perf.ps1` 量測（見「效能量測」）。
 
 ## 效能量測
 
@@ -410,7 +459,7 @@ Stillfeather 會把啟動時間、每次資料夾讀取與搜尋的耗時寫進 
 ```text
 Cargo.toml          無任何依賴
 build.rs            把圖示與版本資訊嵌入 exe；安裝程式另外嵌入資訊清單
-assets/             程式圖示（.ico、1024 像素原圖與 SVG 原稿）
+assets/             程式圖示（.ico、1024 像素原圖與 SVG 原稿）；update-signing-key.txt 是更新簽章的公鑰
 src/
   lib.rs            平台無關核心（任何平台都可執行 cargo test --lib）
     json.rs         設定檔用的小型 JSON 解析／輸出
@@ -420,11 +469,13 @@ src/
     paths.rs        Windows 路徑字串處理
     entry.rs        清單項目、顯示名稱與類型
     category.rs     篩選籤的檔案類型分類與統計
+    crashguard.rs   連續啟動失敗的判斷（啟動記號的檔名、一分鐘內三次）
+    base64.rs       Base64 編碼與解碼（PowerShell 參數、更新簽章與公鑰）
     anim.rs         動畫補間、緩動曲線、清單列的選取與懸停動畫狀態
     typeahead.rs    清單與側欄的打字跳轉
     undo.rs         復原紀錄、資源回收筒 $I 紀錄檔解析
     quicklook.rs    快速預覽：檔案分類、文字解碼、語法上色
-    update.rs       更新提醒：版本比較、update.json 解析與檢查、檢查間隔、SHA-256
+    update.rs       更新提醒：版本比較、update.json 解析與檢查、簽章與公鑰的格式、檢查間隔、SHA-256
     office.rs       快速預覽的 Office 文件：讀出 Word／PowerPoint／Excel／OpenDocument 的段落、標題、清單、投影片與表格
     inflate.rs      DEFLATE 解壓（ZIP 用；有輸出上限，可只解壓開頭）
     zip.rs          ZIP 讀取（中央目錄、stored／deflate 項目）
@@ -465,11 +516,12 @@ src/
     fileops.rs      Shell 檔案作業、重新命名、新增資料夾、復原移動與刪除
     undo.rs         Ctrl+Z：記錄操作、檢查現況後復原
     clipboard.rs    檔案與文字剪貼簿
-    crashlog.rs     當機診斷：步驟記錄、未處理例外、標準錯誤導到記錄檔（開發版在 exe 旁，安裝版在 %LOCALAPPDATA%\FeatherFiles\logs）；效能記錄
+    crashlog.rs     當機診斷：步驟記錄、未處理例外、標準錯誤導到記錄檔（開發版在 exe 旁，安裝版在 %LOCALAPPDATA%\Stillfeather\logs）；效能記錄
+    rescue.rs       連續啟動失敗時改回 Windows 檔案總管；v0.1.x 資料夾（FeatherFiles）的搬移
     perf.rs         --perf：在這台電腦上量測資料夾列舉、搜尋、圖示與快速預覽
     preview.rs      快速預覽視窗（懸停、按住空白鍵、右鍵選單）與 --preview-worker 子程序
     settings_dialog.rs  設定對話方塊
-    update.rs       更新提醒：背景檢查、提醒對話方塊、WinHTTP 下載、核對與數位簽章、啟動安裝程式更新
+    update.rs       更新提醒：背景檢查、update.json 的簽章驗證（CNG）、提醒對話方塊、WinHTTP 下載、核對與數位簽章、啟動安裝程式更新
     instance.rs     單一實例（具名互斥鎖 + WM_COPYDATA）
     shellreg.rs     登錄（HKCU）讀寫、設為／取消預設檔案總管；安裝程式也共用
     theme.rs        配色、字型、圓角卡片繪製、深色模式
@@ -482,7 +534,14 @@ src/
     setup.manifest  安裝程式的資訊清單
 picker-dll/         StillfeatherPicker.dll：取代其他程式的「開啟檔案」視窗（獨立的 cdylib，panic = "unwind"，無任何依賴）
   src/lib.rs        COM 類別工廠、IFileOpenDialog 與 IFileDialogCustomize（轉交給 Windows 原本的物件）、啟動選擇器並等待
-build.ps1           建置並輸出到 app\（含 StillfeatherPicker.dll）；-Setup 另外產生 dist\StillfeatherSetup.exe
+build.ps1           建置並輸出到 app\（含 StillfeatherPicker.dll）；-Setup 另外產生 dist\StillfeatherSetup.exe、update.json（與簽章）、RestoreExplorer.cmd
+tools/
+  New-UpdateSigningKey.ps1  產生更新簽章的金鑰（只需要一次）：私鑰寫到專案以外的位置，公鑰寫進 assets\update-signing-key.txt
+  Sign-Update.ps1   用私鑰簽 dist\update.json，產生 update.json.sig，並用建置好的 exe 驗證
+RestoreExplorer.cmd 救援：不需要 Stillfeather 還在，把開啟資料夾、Win+E 與開啟檔案視窗改回 Windows 的（見「救援」）
+.github/workflows/build.yml  GitHub Actions：在 Windows 上測試並建置安裝程式
+LICENSE             GPL-3.0
+CHANGELOG.md        各版本的變更
 BuildSetup.cmd      雙擊產生安裝程式
 DiagnoseWinE.cmd    設為預設檔案總管後 Win+E 仍開 Windows 檔案總管時，在那台電腦上雙擊：把相關設定寫到桌面的 Stillfeather-WinE.txt（只讀取，可選擇重新啟動檔案總管再測）
 perf.ps1            效能量測（見「效能量測」），結果寫到 app\perf-report.txt
@@ -494,7 +553,7 @@ Launch.cmd          以此資料夾為起始位置啟動
 
 ## 技術備註
 
-- **Common Controls v6**：沒有資源編譯器可嵌入 manifest，因此在執行期以 activation context 啟用 v6。manifest 檔寫在 `%LOCALAPPDATA%\FeatherFiles\FeatherFiles.rust.manifest`；失敗時退回 shell32 內建的 manifest。comctl32 的函式也在啟用之後才以 `GetProcAddress` 載入，確保拿到的是 v6。
+- **Common Controls v6**：沒有資源編譯器可嵌入 manifest，因此在執行期以 activation context 啟用 v6。manifest 檔寫在 `%LOCALAPPDATA%\Stillfeather\Stillfeather.comctl6.manifest`；失敗時退回 shell32 內建的 manifest。comctl32 的函式也在啟用之後才以 `GetProcAddress` 載入，確保拿到的是 v6。
 - **深色模式**：使用 Windows 10 1809 起的 uxtheme 未公開序數（#133、#135、#136），找不到時自動略過，不影響其他功能。
 - **動畫**：沒有動畫框架，以一次性計時器逐格重畫（約每秒 60 格）。繪圖時若還有動畫在進行，就預約下一格；動畫結束就不再預約，閒置時不耗 CPU。內容切換的交叉淡化是先擷取目前畫面（`PrintWindow` 搭配 `PW_RENDERFULLCONTENT`），蓋一層不接收滑鼠的分層視窗，更新底下內容後再讓這層淡出。擷取失敗時直接切換，不播放動畫。
 - **平台**：只支援 x64（`raw-dylib` 依 x64 呼叫慣例宣告）。

@@ -563,7 +563,7 @@ pub fn settings_path() -> Result<String, String> {
         }
     }
     let base = std::env::var("LOCALAPPDATA").map_err(|_| "找不到 %LOCALAPPDATA%。".to_string())?;
-    Ok(paths::join(&paths::join(&base, "FeatherFiles"), "settings.json"))
+    Ok(paths::join(&feather_core::install::data_dir(&base), "settings.json"))
 }
 
 fn load_settings() -> (Settings, Option<String>) {
@@ -851,8 +851,10 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         maintain_default_file_manager();
         // 「攔截 Win+E」（預設開啟）：新版 Windows 11 的 Win+E 不看登錄，在背景攔截按鍵改開 Stillfeather
         super::wine::maintain();
-        // 「其他程式開啟檔案時也用 Stillfeather」（預設開啟）：依使用者的選擇登記或取消，並更新登記的取代元件
+        // 「其他程式開啟檔案時也用 Stillfeather」（預設關閉）：依使用者的選擇登記或取消，並更新登記的取代元件
         super::picker::maintain();
+        // v0.1.x 的資料夾（%LOCALAPPDATA%\FeatherFiles）：設定已經搬走、取代元件也換到新資料夾之後刪掉
+        super::rescue::remove_old_data_dir();
     }
 
     let mut msg: MSG = unsafe { std::mem::zeroed() };
@@ -3030,7 +3032,7 @@ impl App {
         self.hide_preview();
         let current = self.settings.clone();
         let exe = current_exe_path();
-        // 「攔截 Win+E」與「其他程式開啟檔案時也用 Stillfeather」顯示使用者的選擇（沒選過時預設開啟）
+        // 「攔截 Win+E」與「其他程式開啟檔案時也用 Stillfeather」顯示使用者的選擇（沒選過時：攔截 Win+E 開啟、開檔視窗關閉）
         let was = settings_dialog::Integration {
             default_fm: exe.as_deref().is_some_and(shellreg::is_default_file_manager),
             win_e: shellreg::win_e_choice(),

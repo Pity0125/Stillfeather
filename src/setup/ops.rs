@@ -141,6 +141,11 @@ pub fn app_running() -> bool {
     main_window() != 0
 }
 
+/// 使用者之前對「其他程式開啟檔案時也用 Stillfeather」的選擇（沒選過是關閉）：安裝畫面的勾選框照它顯示
+pub fn picker_choice() -> bool {
+    shellreg::picker_choice()
+}
+
 /// 請執行中的 Stillfeather 關閉，等它結束（最多 15 秒）。
 pub fn close_app() -> Result<(), String> {
     let hwnd = main_window();
@@ -461,11 +466,13 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
 
     progress(50, "刪除設定與記錄…");
     if let Some(base) = local_app_data() {
-        let data = paths::join(&base, install::DATA_DIR_NAME);
-        move_loaded_picker(&data);
-        if std::path::Path::new(&data).exists() {
-            if let Err(e) = std::fs::remove_dir_all(&data) {
-                errors.push(format!("無法刪除 {data}：{e}"));
+        // 目前的資料夾，以及 v0.1.x 用的 %LOCALAPPDATA%\FeatherFiles（還沒被新版清掉時）
+        for data in [install::data_dir(&base), install::old_data_dir(&base)] {
+            move_loaded_picker(&data);
+            if std::path::Path::new(&data).exists() {
+                if let Err(e) = std::fs::remove_dir_all(&data) {
+                    errors.push(format!("無法刪除 {data}：{e}"));
+                }
             }
         }
     }
