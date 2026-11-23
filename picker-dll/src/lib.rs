@@ -643,7 +643,7 @@ unsafe fn show_system(d: &Dialog, owner: HWND) -> HRESULT {
     }
 }
 
-/// 照 Windows 的做法通知程式「使用者按了開啟」；程式回傳 S_OK 才算選定。
+/// 照 Windows 的做法通知程式「使用者按了開啟」：每個事件接收者都問，有一個拒絕就不算選定。
 unsafe fn file_ok(this: *mut c_void, d: &Dialog) -> bool {
     type OnFileOk = unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT;
     let sinks: Vec<*mut c_void> = d.state().sinks.iter().map(|(_, s)| *s).collect();
@@ -652,11 +652,18 @@ unsafe fn file_ok(this: *mut c_void, d: &Dialog) -> bool {
         let f: OnFileOk = std::mem::transmute::<*const c_void, OnFileOk>(slot(sink, 3));
         let hr = f(sink, this);
         release(sink);
-        if hr != S_OK {
+        if !file_ok_accepts(hr) {
             return false;
         }
     }
     true
+}
+
+/// OnFileOk 的回傳值算不算接受：只有 S_FALSE 是拒絕（Windows 的視窗也是這樣）。
+/// 很多程式不處理這個事件而回傳 E_NOTIMPL，例如 Chrome、Edge 與 Electron 程式（AutoCloseDialogEventHandler）；
+/// 把它當成拒絕的話，上傳時按「開啟」會一直重新跳出選擇器。
+fn file_ok_accepts(hr: HRESULT) -> bool {
+    hr != S_FALSE
 }
 
 enum Outcome {
@@ -1297,5 +1304,14 @@ mod tests {
         assert_eq!(E_CANCELLED as u32, 0x8007_04C7);
         assert_eq!(HKEY_LOCAL_MACHINE as usize, 0xFFFF_FFFF_8000_0002);
         assert_eq!(HKEY_CURRENT_USER as usize, 0xFFFF_FFFF_8000_0001);
+    }
+
+    #[test]
+    fn file_ok_only_s_false_refuses() {
+        assert!(file_ok_accepts(S_OK));
+        // Chrome／Edge 的 AutoCloseDialogEventHandler::OnFileOk 回傳 E_NOTIMPL：要當成接受
+        assert!(file_ok_accepts(E_NOTIMPL));
+        assert!(file_ok_accepts(E_FAIL));
+        assert!(!file_ok_accepts(S_FALSE));
     }
 }

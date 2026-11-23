@@ -1,4 +1,27 @@
+# 建置產生的檔案（build.ps1、cargo）：可以隨時重新建置
 target/
 app/
-build.log
 dist/
+build.log
+
+# 程式碼簽章憑證：內含私密金鑰，絕對不要上傳
+*.pfx
+*.p12
+*.pvk
+
+# rustfmt 留下的備份
+**/*.rs.bk
+
+# testdata 的 Python 指令碼留下的快取
+__pycache__/
+*.pyc
+
+# 編輯器與系統產生的檔案
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+# Office 開著文件時的暫存檔（例如編輯 testdata\office 裡的範例）
+~$*

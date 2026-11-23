@@ -192,12 +192,11 @@ impl App {
                         let offer = update::offer(VERSION, &m, self.updates.state.skipped.as_deref(), manual);
                         crumb(if offer == Offer::Newer { "更新：有新版本" } else { "更新：已是最新版本" });
                         if manual {
-                            let text = match offer {
-                                Offer::Newer => format!("有新版本 {}", m.version),
-                                _ => "已是最新版本".to_string(),
-                            };
-                            // 設定已經關了：在狀態列告訴使用者
-                            if !settings_dialog::update_status(&text) && offer != Offer::Newer {
+                            if offer == Offer::Newer {
+                                // 設定還開著：「檢查更新」改成「立即更新」；已經關了就直接跳出提醒（見下面）
+                                settings_dialog::update_found(&m.version);
+                            } else if !settings_dialog::update_status("已是最新版本") {
+                                // 設定已經關了：在狀態列告訴使用者
                                 self.set_footer(format!("Stillfeather {VERSION} 已是最新版本"));
                             }
                         }
@@ -314,8 +313,19 @@ impl App {
         }
     }
 
-    /// 關閉設定之後：提醒在設定裡按「檢查更新」找到的新版本；剛關掉更新提醒的話，自動檢查找到的就不提醒了
+    /// 關閉設定之後：按了「立即更新」就直接下載；否則提醒在設定裡按「檢查更新」找到的新版本。
+    /// 剛關掉更新提醒的話，自動檢查找到的就不提醒了。
     pub(super) fn after_settings_closed(&mut self) {
+        if settings_dialog::take_update_now() {
+            if let Some((m, _)) = self.updates.pending.take() {
+                self.updates.prompted = true;
+                unsafe {
+                    KillTimer(self.hwnd, TIMER_PROMPT);
+                }
+                self.start_update_download(m);
+                return;
+            }
+        }
         if !self.settings.update_reminders && matches!(self.updates.pending, Some((_, false))) {
             self.updates.pending = None;
         }

@@ -9,7 +9,7 @@ use super::theme;
 use super::util::*;
 use feather_core::settings::{color_to_hex, parse_color, Settings, ThemeMode, SIDEBAR_MAX, SIDEBAR_MIN, SPLIT_MAX, SPLIT_MIN};
 
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
 const CLASS: &str = "FeatherFiles.Settings";
 
@@ -38,6 +38,12 @@ const NOTE_ID: u16 = 90;
 /// 開著的設定視窗與它的更新狀態文字（背景檢查完成時由主視窗更新）
 static DIALOG: AtomicIsize = AtomicIsize::new(0);
 static UPDATE_NOTE: AtomicIsize = AtomicIsize::new(0);
+/// 「檢查更新」按鈕；找到新版本後改成「立即更新」
+static UPDATE_BUTTON: AtomicIsize = AtomicIsize::new(0);
+/// 這次開著的設定已經找到新版本（按鈕是「立即更新」）
+static UPDATE_READY: AtomicBool = AtomicBool::new(false);
+/// 按了「立即更新」：設定關閉後直接下載更新，不再詢問
+static UPDATE_NOW: AtomicBool = AtomicBool::new(false);
 
 /// 和 Windows 整合的選項（不存在 settings.json，由主視窗套用到登錄）
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +82,29 @@ pub fn update_status(text: &str) -> bool {
     true
 }
 
+/// 設定開著時，告訴使用者有新版本：「檢查更新」改成「立即更新」，按下就儲存設定、關閉並開始更新。
+/// 設定沒有開著時回傳 false。
+pub fn update_found(version: &str) -> bool {
+    if !update_status(&format!("有新版本 {version}")) {
+        return false;
+    }
+    let button = UPDATE_BUTTON.load(Ordering::Relaxed);
+    if button != 0 {
+        set_window_text(button, "立即更新");
+        controls::set_primary(button);
+        unsafe {
+            InvalidateRect(button, std::ptr::null(), 0);
+        }
+    }
+    UPDATE_READY.store(true, Ordering::Relaxed);
+    true
+}
+
+/// 設定關閉後：使用者是不是按了「立即更新」（只回答一次）
+pub fn take_update_now() -> bool {
+    UPDATE_NOW.swap(false, Ordering::Relaxed)
+}
+
 /// 設定開著時，顯示檢查失敗的原因（對話方塊開在設定上方）。設定沒有開著時回傳 false。
 pub fn update_failed(error: &str) -> bool {
     let dlg = DIALOG.load(Ordering::Relaxed);
@@ -84,6 +113,26 @@ pub fn update_failed(error: &str) -> bool {
     }
     super::dialog::Spec::new(super::dialog::Icon::Warning, "無法檢查更新").body(error).show(dlg);
     true
+}
+
+/// 「儲存」：檢查輸入，沒問題就記下結果並關閉設定；有誤時說明原因、留在設定裡
+fn save(hwnd: HWND, st: &mut State) -> bool {
+    match collect(st) {
+        Ok(s) => {
+            st.result = Some(s);
+            st.integration = Integration {
+                default_fm: controls::is_checked(st.toggles[5]),
+                win_e: controls::is_checked(st.toggles[8]),
+                picker: controls::is_checked(st.toggles[7]),
+            };
+            st.done = true;
+            true
+        }
+        Err(e) => {
+            super::dialog::Spec::new(super::dialog::Icon::Warning, "設定有誤").body(&e).show(hwnd);
+            false
+        }
+    }
 }
 
 pub fn register(hinst: HINSTANCE) {
@@ -377,11 +426,14 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
     st.toggles[6] = button(dlg, T_NO_UPDATES, Kind::Toggle, "不要啟用更新提醒", RECT::new(lx, yy, s(200), row_h));
     let check_w = s(100);
     let check_x = cw - lx - check_w;
-    button(dlg, CHECK_UPDATES, Kind::Text, "檢查更新", RECT::new(check_x, yy, check_w, row_h));
+    let check = button(dlg, CHECK_UPDATES, Kind::Text, "檢查更新", RECT::new(check_x, yy, check_w, row_h));
     let note_x = lx + s(212);
     let update_note = note(dlg, &format!("目前版本 {}", super::update::VERSION), RECT::new(note_x, yy + s(7), check_x - s(10) - note_x, s(22)));
     DIALOG.store(dlg, Ordering::Relaxed);
     UPDATE_NOTE.store(update_note, Ordering::Relaxed);
+    UPDATE_BUTTON.store(check, Ordering::Relaxed);
+    UPDATE_READY.store(false, Ordering::Relaxed);
+    UPDATE_NOW.store(false, Ordering::Relaxed);
     let by = ch - s(56);
     button(dlg, RESET, Kind::Text, "還原預設", RECT::new(lx, by, s(100), s(34)));
     let cancel = button(dlg, IDCANCEL as u16, Kind::Text, "取消", RECT::new(cw - lx - s(92), by, s(92), s(34)));
@@ -421,6 +473,8 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
         }
         DIALOG.store(0, Ordering::Relaxed);
         UPDATE_NOTE.store(0, Ordering::Relaxed);
+        UPDATE_BUTTON.store(0, Ordering::Relaxed);
+        UPDATE_READY.store(false, Ordering::Relaxed);
         EnableWindow(owner, 1);
         SetForegroundWindow(owner);
         SetWindowLongPtrW(dlg, GWLP_USERDATA, 0);
@@ -485,8 +539,15 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     pick_color(hwnd, st, target, t.pal.surface);
                 }
                 CHECK_UPDATES => {
-                    let text = if super::update::start_check(true) { "正在檢查…" } else { "這一版沒有設定更新來源" };
-                    update_status(text);
+                    if UPDATE_READY.load(Ordering::Relaxed) {
+                        // 立即更新：和「儲存」一樣先儲存並關閉設定，主視窗接著下載更新
+                        if save(hwnd, st) {
+                            UPDATE_NOW.store(true, Ordering::Relaxed);
+                        }
+                    } else {
+                        let text = if super::update::start_check(true) { "正在檢查…" } else { "這一版沒有設定更新來源" };
+                        update_status(text);
+                    }
                 }
                 RESET => {
                     let mut d = Settings::default();
@@ -495,20 +556,9 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 }
                 // 攔截 Win+E 只在設為預設檔案總管時有作用
                 T_DEFAULT_FM => controls::set_enabled(st.toggles[8], controls::is_checked(st.toggles[5])),
-                c if c == IDOK as u16 => match collect(st) {
-                    Ok(s) => {
-                        st.result = Some(s);
-                        st.integration = Integration {
-                            default_fm: controls::is_checked(st.toggles[5]),
-                            win_e: controls::is_checked(st.toggles[8]),
-                            picker: controls::is_checked(st.toggles[7]),
-                        };
-                        st.done = true;
-                    }
-                    Err(e) => {
-                        super::dialog::Spec::new(super::dialog::Icon::Warning, "設定有誤").body(&e).show(hwnd);
-                    }
-                },
+                c if c == IDOK as u16 => {
+                    save(hwnd, st);
+                }
                 c if c == IDCANCEL as u16 => st.done = true,
                 _ => {}
             }

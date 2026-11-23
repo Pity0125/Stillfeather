@@ -1,6 +1,6 @@
 [package]
 name = "feather-files"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Stillfeather：Windows 11 輕量檔案管理（Rust／原生 Win32 版）"
 publish = false

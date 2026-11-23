@@ -109,7 +109,7 @@
 - **略過這個版本**：這一版不再提醒，有更新的版本時才會再提醒。
 - **稍後**：這次執行不再提醒，下次開啟時再說。
 - 開啟後約 10 秒在背景檢查，最多每 20 小時一次；Stillfeather 不在前景、或有對話方塊、選單開著時，等可以操作時才跳出來。沒有網路時不會有任何訊息。
-- 設定裡的 **「不要啟用更新提醒」** 會關掉自動檢查；旁邊的 **「檢查更新」** 隨時可以手動檢查（不管之前略過的版本），結果顯示在按鈕旁，找到新版本時關閉設定後就會詢問。
+- 設定裡的 **「不要啟用更新提醒」** 會關掉自動檢查；旁邊的 **「檢查更新」** 隨時可以手動檢查（不管之前略過的版本），結果顯示在按鈕旁。找到新版本時按鈕變成重點色的 **「立即更新」**：按下會像「儲存」一樣儲存並關閉設定，接著直接下載更新（不再詢問）；沒按它就關閉設定的話，關閉後跳出更新提醒。
 - 沒有安裝、直接從 `app\` 執行的開發版按「更新」時，只會開啟新版的安裝程式，讓你自己選位置。
 - 上次檢查的時間與略過的版本記在 `%LOCALAPPDATA%\FeatherFiles\update-state.json`（解除安裝時一起刪除）。
 
@@ -232,7 +232,7 @@
 
 - **取代元件** `StillfeatherPicker.dll`（`picker-dll/`，獨立建置）：在目前使用者的登錄 `HKCU\Software\Classes\CLSID\{DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7}\InprocServer32`（Windows「開啟檔案」視窗元件 `CLSID_FileOpenDialog`）登記它。之後 64 位元、一般權限的程式建立這個視窗時，拿到的是它的物件。
   - 它同時建立一個 Windows 原本的視窗物件（從 HKLM 登記的 `comdlg32.dll` 直接取得，不經過 COM 查表，所以不會繞回自己），程式的每個設定（類型、資料夾、選項、標題、自訂的勾選方塊與下拉選單 `IFileDialogCustomize`）都照樣交給它。
-  - 程式呼叫 `Show` 時，把設定寫成請求檔，啟動 `Stillfeather.exe --pick <請求檔>`，等使用者選好（期間照常處理程式的視窗訊息、停用程式的視窗，和 Windows 的視窗一樣），再以 `IShellItem`／`IShellItemArray` 交回，並照 Windows 的做法呼叫程式的 `OnFileOk`（WinForms、WPF 等靠它取得檔名；程式拒絕時重新選）。
+  - 程式呼叫 `Show` 時，把設定寫成請求檔，啟動 `Stillfeather.exe --pick <請求檔>`，等使用者選好（期間照常處理程式的視窗訊息、停用程式的視窗，和 Windows 的視窗一樣），再以 `IShellItem`／`IShellItemArray` 交回，並照 Windows 的做法呼叫程式的 `OnFileOk`（WinForms、WPF 等靠它取得檔名）。只有回傳 `S_FALSE` 才算拒絕（重新選）：Chrome、Edge 與 Electron 程式登記的 `AutoCloseDialogEventHandler` 回傳 `E_NOTIMPL`，Windows 的視窗照樣關閉，當成拒絕的話上傳時會一直重新跳出選擇器。
   - 找不到 Stillfeather、它無法啟動或異常結束、使用者按「使用 Windows 視窗」、要選的不是檔案系統項目（`FOS_ALLNONSTORAGEITEMS`，例如手機、媒體櫃），或是 Stillfeather 自己的程式與 `explorer.exe` 要開檔時，直接顯示 Windows 原本的視窗：程式永遠選得到檔案。
   - 載入在別人的程式裡執行，所以獨立建置成 `panic = "unwind"`，每個 COM 方法都接住 panic、回傳錯誤。只支援 x64：`IFileDialogCustomize` 以「最多三個暫存器參數」原封轉交，這在 x64 的呼叫慣例下才成立。32 位元程式讀另一個登錄位置，照常用 Windows 的視窗；以系統管理員身分執行的程式不讀目前使用者的類別登記，也照常用 Windows 的視窗。
   - 登記的是複製到 `%LOCALAPPDATA%\FeatherFiles\Picker` 的那一份，不是程式資料夾裡的：程式資料夾被移走或刪掉時，其他程式的開檔視窗仍然正常（找不到 Stillfeather 就用 Windows 的視窗）。要啟動的 Stillfeather 記在 `HKCU\Software\Stillfeather` 的 `PickerExe`。主程式每次啟動會把登記的那一份更新成這一版（重新建置、更新之後）；舊的還載入在其他程式裡時先改名讓位，下次再刪。
