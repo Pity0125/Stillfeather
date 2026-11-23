@@ -12,6 +12,7 @@
   <a href="https://github.com/Pity0125/Stillfeather/releases/latest"><img src="https://img.shields.io/github/v/release/Pity0125/Stillfeather?label=%E6%9C%80%E6%96%B0%E7%89%88" alt="最新版"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4" alt="Windows 10 | 11">
   <img src="https://img.shields.io/badge/Rust-%E5%8E%9F%E7%94%9F%20Win32-B7410E" alt="Rust 原生 Win32">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/%E6%8E%88%E6%AC%8A-GPL--3.0-blue" alt="授權 GPL-3.0"></a>
 </p>
 
 <p align="center">
@@ -64,6 +65,8 @@ Stillfeather 是用來取代 Windows 檔案總管的檔案管理程式。你已�
 
 > [!NOTE]
 > 如果 Windows 顯示「Windows 已保護您的電腦」，這是 SmartScreen 對下載量還少或沒有數位簽章的程式的提醒。請先確認檔案是從這個專案的 [Releases](https://github.com/Pity0125/Stillfeather/releases) 頁面下載的，再按「其他資訊」→「仍要執行」。
+>
+> 少數防毒軟體也可能把還沒有數位簽章的新程式誤判為可疑。每個版本發佈前都會用 [VirusTotal](https://www.virustotal.com) 檢查；遇到誤判歡迎[回報](https://github.com/Pity0125/Stillfeather/issues)。
 
 <details>
 <summary><b>命令列安裝（大量部署用）</b></summary>
@@ -140,7 +143,7 @@ Ctrl+Z 可以復原最近 30 個重新命名、移動與刪除。刪除一律先
 
 2026 年 10 月起陸續推出的 Windows 11 更新，讓 Win+E 直接開 Windows 檔案總管，不看預設檔案總管的設定（雙擊資料夾不受影響）。所以設定裡另有「**攔截 Win+E 按鍵，改開 Stillfeather**」，預設開啟：
 
-- 開著時，Stillfeather 會在背景執行一個沒有視窗的小程式（登入時自動啟動），接住 Win+E 改開 Stillfeather。
+- 開著時，Stillfeather 會在背景執行一個沒有視窗的小程式（登入時自動啟動），接住 Win+E 改開 Stillfeather。它只看 E 鍵是不是和 Win 鍵一起按，其他按鍵直接放行，不記錄、也不傳送任何按鍵。
 - 不想要背景程式的話取消勾選，Win+E 就照 Windows 的行為。
 - 以系統管理員身分執行的視窗在最前面時，Win+E 仍會開 Windows 檔案總管。
 - 有些防毒軟體可能會把攔截按鍵當成可疑行為。
@@ -189,6 +192,9 @@ Ctrl+Z 可以復原最近 30 個重新命名、移動與刪除。刪除一律先
 
 Stillfeather 會在背景檢查有沒有新版（最多每 20 小時一次）。有新版時會顯示新版本、下載大小與更新說明，你可以選擇「更新」「略過這個版本」或「稍後」。
 
+> [!IMPORTANT]
+> 0.1.1 在 2026-11-24 以同一個版本號重新發佈。裝了 2026-11-22 最初那一版的電腦不會自動收到這次更新，請到 [Releases](https://github.com/Pity0125/Stillfeather/releases/latest) 下載 `StillfeatherSetup.exe` 重新安裝一次（設定會保留），之後就會照常自動更新。
+
 - 發佈資訊（`update.json`）必須有 Stillfeather 的簽章才會被接受：簽章用的私鑰離線保存，不在 GitHub 上，所以即使 GitHub 帳號被盜，也做不出能讓 Stillfeather 更新的假版本。
 - 下載的安裝程式必須和發佈資訊裡的大小與 SHA-256 完全相符才會執行；目前的版本有數位簽章時，新版也必須有有效的簽章。
 - 更新後會保留原本的捷徑與預設檔案總管設定，並自動重新開啟。
@@ -202,6 +208,8 @@ Stillfeather 會在背景檢查有沒有新版（最多每 20 小時一次）。
 - 移除程式與捷徑，以及 Stillfeather 的設定、記錄與暫存檔
 
 **你的檔案不會受到任何影響。**
+
+安裝資料夾已經被刪掉、沒辦法從設定解除安裝時，見[如果資料夾打不開](#如果資料夾打不開)的 `RestoreExplorer.cmd`。
 
 ## 隱私
 
@@ -220,6 +228,7 @@ Stillfeather 沒有任何第三方依賴。在 Windows 上：
 
 - 雙擊 `Launch.cmd`：建置並啟動（電腦沒有 Rust 時會詢問是否自動安裝）。
 - 雙擊 `BuildSetup.cmd`：產生安裝程式 `dist\StillfeatherSetup.exe`。
+- 在 PowerShell 執行 `.\test.ps1`：跑全部測試。
 
 建置細節、測試、專案結構與發佈新版本的步驟，請見 [DEVELOPMENT.md](DEVELOPMENT.md)。各版本的變更見 [CHANGELOG.md](CHANGELOG.md)。
 

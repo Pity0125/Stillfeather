@@ -12,6 +12,7 @@
   <a href="https://github.com/Pity0125/Stillfeather/releases/latest"><img src="https://img.shields.io/github/v/release/Pity0125/Stillfeather?label=latest" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4" alt="Windows 10 | 11">
   <img src="https://img.shields.io/badge/Rust-native%20Win32-B7410E" alt="Rust, native Win32">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0"></a>
 </p>
 
 <p align="center">
@@ -67,6 +68,8 @@ If Stillfeather is already installed, the installer upgrades it in place and kee
 
 > [!NOTE]
 > If Windows shows "Windows protected your PC", that's SmartScreen warning about a program that is new or not code-signed. First make sure you downloaded the file from this project's [Releases](https://github.com/Pity0125/Stillfeather/releases) page, then click "More info" → "Run anyway".
+>
+> A few antivirus products may also flag new programs that aren't code-signed yet. Every release is checked on [VirusTotal](https://www.virustotal.com) before it's published; if you run into a false positive, please [report it](https://github.com/Pity0125/Stillfeather/issues).
 
 <details>
 <summary><b>Command-line install (for deployment)</b></summary>
@@ -143,7 +146,7 @@ These settings only affect the current user, not other people on the same PC, an
 
 Windows 11 updates rolling out since October 2026 make Win+E open File Explorer directly, ignoring the default file manager setting (double-clicking folders isn't affected). So Settings also has **Intercept Win+E and open Stillfeather** (`攔截 Win+E 按鍵，改開 Stillfeather`), on by default:
 
-- While it's on, Stillfeather runs a small windowless background helper (started at sign-in) that catches Win+E and opens Stillfeather instead.
+- While it's on, Stillfeather runs a small windowless background helper (started at sign-in) that catches Win+E and opens Stillfeather instead. It only checks whether E is pressed together with the Windows key and lets every other key through; it never records or sends any keystrokes.
 - If you don't want a background helper, turn it off and Win+E goes back to Windows' behavior.
 - When a window running as administrator is in front, Win+E still opens File Explorer.
 - Some antivirus software may treat the key interception as suspicious.
@@ -192,6 +195,9 @@ Windows 11 updates rolling out since October 2026 make Win+E open File Explorer 
 
 Stillfeather checks for new versions in the background (at most once every 20 hours). When there is one, it shows the new version, download size and release notes, and you can choose Update, Skip this version, or Later.
 
+> [!IMPORTANT]
+> Version 0.1.1 was re-released under the same version number on 2026-11-24. PCs with the original build from 2026-11-22 won't get this update automatically: download `StillfeatherSetup.exe` from [Releases](https://github.com/Pity0125/Stillfeather/releases/latest) and reinstall once (your settings are kept). After that, updates arrive as usual.
+
 - The release info (`update.json`) is only accepted if it carries Stillfeather's signature. The signing key is kept offline, not on GitHub, so even if the GitHub account were compromised, nobody could publish a fake update that Stillfeather would install.
 - A downloaded installer only runs if its size and SHA-256 exactly match the published release. If your current version is code-signed, the new one must have a valid signature too.
 - Updating keeps your shortcuts and default file manager setting, and reopens Stillfeather when done.
@@ -205,6 +211,8 @@ In Windows, go to **Settings › Apps › Installed apps**, find Stillfeather an
 - Remove the program and shortcuts, along with Stillfeather's settings, logs and temporary files
 
 **Your own files are never touched.**
+
+If the install folder has already been deleted and you can't uninstall from Settings, use `RestoreExplorer.cmd` from [If folders won't open](#if-folders-wont-open).
 
 ## Privacy
 
@@ -223,6 +231,7 @@ Stillfeather has no third-party dependencies. On Windows:
 
 - Double-click `Launch.cmd` to build and run it (if Rust isn't installed, it offers to install it for you).
 - Double-click `BuildSetup.cmd` to produce the installer `dist\StillfeatherSetup.exe`.
+- Run `.\test.ps1` in PowerShell to run all the tests.
 
 For build details, tests, project structure and how to publish a release, see [DEVELOPMENT.md](DEVELOPMENT.md) (in Chinese). Changes in each version are listed in [CHANGELOG.md](CHANGELOG.md) (in Chinese).
 
