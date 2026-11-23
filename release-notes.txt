@@ -1,4 +1,5 @@
-更安全的預設與救援：
+更安全的預設、救援與 Win+E：
+• 新版 Windows 11 的 Win+E 也能開 Stillfeather（設定裡的「攔截 Win+E 按鍵」，預設開啟）
 • 「其他程式開啟檔案時也用 Stillfeather」改成預設關閉（之前勾選的維持開啟）；程式在開檔視窗加了自己的選項時改用 Windows 的視窗
 • 一分鐘內連續三次沒能開啟時，自動改回 Windows 檔案總管；Release 另附 RestoreExplorer.cmd 救援腳本
 • 更新資訊改成必須有簽章才會被接受

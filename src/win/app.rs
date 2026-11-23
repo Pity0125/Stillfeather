@@ -853,7 +853,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         super::wine::maintain();
         // 「其他程式開啟檔案時也用 Stillfeather」（預設關閉）：依使用者的選擇登記或取消，並更新登記的取代元件
         super::picker::maintain();
-        // v0.1.x 的資料夾（%LOCALAPPDATA%\FeatherFiles）：設定已經搬走、取代元件也換到新資料夾之後刪掉
+        // 舊版的資料夾（%LOCALAPPDATA%\FeatherFiles）：設定已經搬走、取代元件也換到新資料夾之後刪掉
         super::rescue::remove_old_data_dir();
     }
 

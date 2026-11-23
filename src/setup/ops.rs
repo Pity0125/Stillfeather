@@ -466,7 +466,7 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
 
     progress(50, "刪除設定與記錄…");
     if let Some(base) = local_app_data() {
-        // 目前的資料夾，以及 v0.1.x 用的 %LOCALAPPDATA%\FeatherFiles（還沒被新版清掉時）
+        // 目前的資料夾，以及舊版用的 %LOCALAPPDATA%\FeatherFiles（還沒被新版清掉時）
         for data in [install::data_dir(&base), install::old_data_dir(&base)] {
             move_loaded_picker(&data);
             if std::path::Path::new(&data).exists() {

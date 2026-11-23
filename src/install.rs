@@ -24,7 +24,7 @@ pub const APP_KEY: &str = r"Software\Stillfeather";
 pub const BACKUP_KEY: &str = r"Software\Stillfeather\DefaultFileManagerBackup";
 /// 設定、資料夾檢視記錄與記錄檔所在的資料夾名稱（%LOCALAPPDATA% 底下）
 pub const DATA_DIR_NAME: &str = "Stillfeather";
-/// v0.1.0～v0.1.2 用的資料夾名稱（沿用 C# 雛形的 FeatherFiles）。啟動時把設定搬到 [`DATA_DIR_NAME`]，
+/// 舊版（0.1.0 與 2026-11-22 最初發佈的 0.1.1）用的資料夾名稱（沿用 C# 雛形的 FeatherFiles）。啟動時把設定搬到 [`DATA_DIR_NAME`]，
 /// 剩下的（記錄、舊的取代元件）在取代元件不再登記在那裡之後刪掉；解除安裝時兩個都刪。
 pub const OLD_DATA_DIR_NAME: &str = "FeatherFiles";
 /// 從舊資料夾搬過來的檔案（新資料夾已經有同名檔案時不蓋掉）。記錄檔、資訊清單與取代元件會重新產生，不必搬。
@@ -35,7 +35,7 @@ pub fn data_dir(local_app_data: &str) -> String {
     paths::join(local_app_data, DATA_DIR_NAME)
 }
 
-/// v0.1.x 的資料夾：%LOCALAPPDATA%\FeatherFiles
+/// 舊版的資料夾：%LOCALAPPDATA%\FeatherFiles
 pub fn old_data_dir(local_app_data: &str) -> String {
     paths::join(local_app_data, OLD_DATA_DIR_NAME)
 }

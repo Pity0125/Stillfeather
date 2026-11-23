@@ -1,6 +1,6 @@
 [package]
 name = "stillfeather-picker"
-version = "0.1.3"
+version = "0.1.1"
 edition = "2021"
 description = "Stillfeather：讓其他程式的「開啟檔案」視窗改用 Stillfeather（取代元件）"
 license = "GPL-3.0-or-later"

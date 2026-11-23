@@ -4,7 +4,7 @@
 //! - [`rescue_if_crash_loop`]：前面一分鐘內已經有三次沒能正常啟動時，不開 Stillfeather，而是改回 Windows 檔案總管
 //!   （預設檔案總管、Win+E 的背景攔截、其他程式的開啟檔案視窗），用它開啟這次要開的位置，並說明怎麼重新開啟。
 //!   使用者連資料夾都打不開的情況就不會發生；選擇記成「關」，修好之後在設定重新勾選即可。
-//! - [`migrate_data_dir`]／[`remove_old_data_dir`]：v0.1.x 的 %LOCALAPPDATA%\FeatherFiles 搬到 %LOCALAPPDATA%\Stillfeather。
+//! - [`migrate_data_dir`]／[`remove_old_data_dir`]：舊版（0.1.0 與最初發佈的 0.1.1）的 %LOCALAPPDATA%\FeatherFiles 搬到 %LOCALAPPDATA%\Stillfeather。
 
 use super::shellreg;
 use super::util::*;
@@ -153,7 +153,7 @@ fn open_in_explorer(targets: &[String]) {
     }
 }
 
-/// v0.1.x 的 %LOCALAPPDATA%\FeatherFiles → %LOCALAPPDATA%\Stillfeather：把設定類的檔案搬過去（新資料夾已經有的不蓋掉）。
+/// 舊版的 %LOCALAPPDATA%\FeatherFiles → %LOCALAPPDATA%\Stillfeather：把設定類的檔案搬過去（新資料夾已經有的不蓋掉）。
 /// 主程式與選擇器都在讀設定之前呼叫；重複呼叫沒有影響。
 pub fn migrate_data_dir() {
     let Some(base) = local_app_data() else { return };

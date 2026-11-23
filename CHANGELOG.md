@@ -1,6 +1,13 @@
 # 更新紀錄
 
-## 0.1.3（尚未發佈）
+## 0.1.1（2026-11-24 重新發佈）
+
+2026-11-22 最初發佈的 0.1.1 只有下面「Win+E」一節；這次以同一個版本號重新發佈，加上其餘的內容。裝了最初那一版的電腦不會自動收到這次更新，請到 Releases 下載 `StillfeatherSetup.exe` 重新安裝（設定會保留）。
+
+### Win+E
+- 新版 Windows 11（25H2／26H2，2026 年 10 月起陸續推出）按 Win+E 會直接開 Windows 檔案總管，不看預設檔案總管的設定。設定裡新增「攔截 Win+E 按鍵，改開 Stillfeather」（預設開啟）：在背景執行一個沒有視窗的小程式（登入時自動啟動），接住 Win+E 改開 Stillfeather；不想要背景程式可以取消勾選。
+- 安裝、更新與解除安裝會一併啟動或停止這個背景程式。
+- 新增 `DiagnoseWinE.cmd`：Win+E 還是開 Windows 檔案總管時，在那台電腦上雙擊，會把相關設定寫到桌面的 `Stillfeather-WinE.txt`。
 
 ### 更安全的預設
 - 「其他程式開啟檔案時也用 Stillfeather」改成**預設關閉**，想用的話在安裝畫面或設定勾選。之前已經勾選的使用者維持開啟。
@@ -22,12 +29,6 @@
 - 設定與記錄改放在 `%LOCALAPPDATA%\Stillfeather`（原本是 `%LOCALAPPDATA%\FeatherFiles`），第一次開啟時自動搬過去。
 - 開啟檔案視窗元件（StillfeatherPicker.dll）加上版本資訊。
 - 以 GPL-3.0 授權公開原始碼。
-
-## 0.1.1（2026-11-22）
-
-- 新版 Windows 11（25H2／26H2，2026 年 10 月起陸續推出）按 Win+E 會直接開 Windows 檔案總管，不看預設檔案總管的設定。設定裡新增「攔截 Win+E 按鍵，改開 Stillfeather」（預設開啟）：在背景執行一個沒有視窗的小程式（登入時自動啟動），接住 Win+E 改開 Stillfeather；不想要背景程式可以取消勾選。
-- 安裝、更新與解除安裝會一併啟動或停止這個背景程式。
-- 新增 `DiagnoseWinE.cmd`：Win+E 還是開 Windows 檔案總管時，在那台電腦上雙擊，會把相關設定寫到桌面的 `Stillfeather-WinE.txt`。
 
 ## 0.1.0（2026-11-22）
 

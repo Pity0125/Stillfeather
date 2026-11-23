@@ -151,7 +151,7 @@ pub fn entry() -> i32 {
     if args.first().map(String::as_str) == Some(feather_core::wine::WIN_E_ARG) {
         return wine::run();
     }
-    // v0.1.x 的設定在 %LOCALAPPDATA%\FeatherFiles：讀設定之前搬到 %LOCALAPPDATA%\Stillfeather
+    // 舊版的設定在 %LOCALAPPDATA%\FeatherFiles：讀設定之前搬到 %LOCALAPPDATA%\Stillfeather
     rescue::migrate_data_dir();
     activate_visual_styles();
     if let Err(e) = unsafe { load_comctl() } {

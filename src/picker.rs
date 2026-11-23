@@ -494,7 +494,7 @@ mod tests {
         assert_eq!(back.types.len(), 2);
     }
 
-    /// v0.1.0～v0.1.2 的取代元件寫出的請求（原樣保留，不要改）：之後的 Stillfeather 都必須讀得懂，
+    /// 舊版（0.1.0 與 2026-11-22 最初發佈的 0.1.1）的取代元件寫出的請求（原樣保留，不要改）：之後的 Stillfeather 都必須讀得懂，
     /// 因為已經開著的程式會一直用舊的元件。
     const REQUEST_V0_1: &str = "stillfeather-pick=1\nmode=files\nmulti=1\ntitle=選擇要上傳的檔案\nok=&Open\nlabel=File &name:\nfolder=\ndefault_folder=C:\\Users\\me\\Pictures\nfile_name=\ntype_index=2\ndefault_ext=png\nmust_exist=1\nshow_hidden=0\nowner=263690\nenable_owner=1\nhost_pid=4321\nhost=chrome.exe\nout=C:\\Temp\\Stillfeather-pick-4321-99-out.txt\ntype=All Files\t*.*\ntype=Images\t*.png;*.jpg\n";
     /// 同一時期的 Stillfeather 寫出的結果：舊版元件只認得這個樣子。

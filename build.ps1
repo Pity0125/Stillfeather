@@ -261,7 +261,7 @@ try {
                 Write-Host ''
                 Write-Host 'update.json 還沒簽章：插上存放私鑰的隨身碟後執行' -ForegroundColor Yellow
                 Write-Host '  .\tools\Sign-Update.ps1 -KeyPath <私鑰的位置>' -ForegroundColor Yellow
-                Write-Host '沒有 update.json.sig 的話，已安裝的 Stillfeather（0.1.3 起）不會接受這次更新。' -ForegroundColor Yellow
+                Write-Host '沒有 update.json.sig 的話，已安裝的 Stillfeather 不會接受這次更新。' -ForegroundColor Yellow
             }
 
             # 救援腳本：Stillfeather 打不開、或安裝資料夾被直接刪掉時，用它改回 Windows 檔案總管
