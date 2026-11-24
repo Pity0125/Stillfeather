@@ -9,13 +9,13 @@
 </p>
 <p align="center">Windows 10 / 11 · GPL-3.0 · <a href="README.md">繁體中文</a> · <b>English</b></p>
 
-![Project files on the left and image thumbnails on the right in Stillfeather’s dark theme](docs/main-window.png)
+![Project files on the left and image thumbnails on the right in Stillfeather’s dark theme](docs/main-window-en.png)
 
 ## Copy between folders in one window
 
 Press **Ctrl+Shift+D** to split the window. Open the destination on the right, select a file on the left, and click **Copy to other pane**. Both folders stay in view.
 
-![An example checklist being copied from the project folder into Brand assets](docs/demo.gif)
+![An example checklist being copied from the project folder into Brand assets](docs/demo-en.gif)
 
 ## How it compares with Windows File Explorer
 
@@ -90,7 +90,7 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 
 Hover over a file and a preview appears beside it. Hold Space to enlarge it in the middle of the window, release to close, and use the arrow keys while holding to move to the next item. If you'd rather not have previews pop up on hover, turn on **Preview with Space** (`按空白鍵預覽`) in Settings.
 
-![Hold Space to preview a Word document, press the Down arrow to browse a presentation, text file and image, then release Space to return to the list](docs/space-preview.gif)
+![Hold Space to preview a Word document, press the Down arrow to browse a presentation, text file and image, then release Space to return to the list](docs/space-preview-en.gif)
 
 | Type | Preview |
 |---|---|
