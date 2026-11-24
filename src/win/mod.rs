@@ -1,5 +1,6 @@
 //! Windows 介面層（原生 Win32，無第三方套件）。
 
+pub mod access;
 pub mod anim;
 pub mod app;
 pub mod chips;
@@ -22,6 +23,7 @@ pub mod rescue;
 pub mod settings_dialog;
 pub mod shellmenu;
 pub mod shellreg;
+pub mod shellwin;
 pub mod sys;
 pub mod tabs;
 pub mod theme;
@@ -214,13 +216,37 @@ pub fn entry() -> i32 {
     // 這次啟動的記號：正常結束（離開這個函式）或撐過 20 秒時拿掉；當掉就留著，下次啟動據此判斷
     let _startup = rescue::Marker::start();
     let instance = instance::Instance::acquire();
+    let full: Vec<String> = paths.iter().map(|p| if p == feather_core::install::HOME_MARKER { p.clone() } else { full_path(p).unwrap_or_else(|_| p.clone()) }).collect();
+    // 「在資料夾中顯示」（瀏覽器的下載等）：其他程式以單一資料夾啟動時，先登記這個資料夾等 Windows 交來要選取的檔案，
+    // 收到就改成開啟那個檔案（開它所在的資料夾並選取）。要在開始處理訊息之前做（見 shellwin.rs 的 Handshake）。
+    let mut handshake = shellwin::Handshake::wanted(&full).and_then(|folder| shellwin::Handshake::begin(&folder));
+    let mut selected = Vec::new();
+    if let Some(h) = handshake.as_mut() {
+        selected = h.wait(std::time::Duration::from_millis(500));
+        if !selected.is_empty() {
+            handshake = None;
+        }
+    }
     if !instance.primary {
-        let full: Vec<String> = paths.iter().map(|p| if p == feather_core::install::HOME_MARKER { p.clone() } else { full_path(p).unwrap_or_else(|_| p.clone()) }).collect();
-        if !instance.send_to_primary(&full) {
-            message_box(0, tr!("無法連線至已開啟的 Stillfeather。請稍後重試。", "Couldn't connect to the Stillfeather that's already open. Try again later."), MB_OK | MB_ICONINFORMATION);
+        let target = if selected.is_empty() { &full } else { &selected };
+        if !instance.send_to_primary(target) {
+            // 已開啟的 Stillfeather 沒有回應（例如卡在第三方的右鍵選單擴充）：不要讓使用者什麼都打不開，
+            // 這次的位置改用 Windows 檔案總管開。救援只算當掉的次數，卡住不會觸發，所以在這裡處理。
+            rescue::open_in_explorer(target);
+            return 0;
+        }
+        // 還沒收到選取：資料夾已經交出去了，再等一下（最多 10 秒），晚到的選取也交給原本的 Stillfeather
+        if let Some(mut h) = handshake.take() {
+            let late = h.wait(std::time::Duration::from_secs(10));
+            if !late.is_empty() {
+                instance.send_to_primary(&late);
+            }
         }
         return 0;
     }
+    // 主程式：交接結束（之後由主視窗自己的登記接手）；收到選取時改成開啟那個檔案
+    drop(handshake);
+    let paths = if selected.is_empty() { paths } else { selected };
     crashlog::install();
     unsafe {
         CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);

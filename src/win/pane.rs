@@ -4,9 +4,9 @@ use super::anim;
 use super::shellmenu::{self, Cmd, Part, Pick};
 
 /// 選取項目的 Windows 右鍵選單中，Stillfeather 已經有同樣命令的項目（藏起來，避免重複）。
-pub(super) const ITEM_HIDDEN_VERBS: &[&str] = &["open", "explore", "opennewwindow", "opennewprocess", "opennewtab", "cut", "copy", "paste", "delete", "rename", "properties", "copyaspath"];
+pub(super) const ITEM_HIDDEN_VERBS: &[&str] = &["open", "explore", "opennewwindow", "opennewprocess", "opennewtab", "cut", "copy", "paste", "delete", "rename", "properties", "copyaspath", "powershell"];
 /// 資料夾空白處的 Windows 右鍵選單中，Stillfeather 已經有的項目。
-pub(super) const BACKGROUND_HIDDEN_VERBS: &[&str] = &["paste", "properties", "refresh"];
+pub(super) const BACKGROUND_HIDDEN_VERBS: &[&str] = &["paste", "properties", "refresh", "powershell"];
 use super::app::{self, id, App, NavKind, WM_APP_RENAME};
 use super::preview;
 use super::sys::*;
@@ -931,6 +931,10 @@ impl App {
             if !dirs.is_empty() {
                 open.push(Cmd::new(id::OPEN_NEW_TAB, tr!("在新分頁開啟", "Open in new tab"), glyph::OPEN_NEW_TAB));
             }
+            // 只選了一個資料夾：在它裡面開 PowerShell（同檔案總管）
+            if entries.len() == 1 && entries[0].is_dir {
+                open.push(Cmd::new(id::OPEN_POWERSHELL, powershell_text(), glyph::TERMINAL));
+            }
             if tab_search {
                 open.push(Cmd::new(id::OPEN_LOCATION, tr!("開啟所在位置", "Open file location"), glyph::FOLDER));
             }
@@ -958,6 +962,10 @@ impl App {
                 Cmd::new(id::NEW_FOLDER, tr!("新增資料夾", "New folder"), glyph::NEW_FOLDER).enabled(!tab_search),
             ];
             organize.push(Cmd::new(id::COPY_PATH, tr!("複製目前資料夾路徑", "Copy current folder path"), glyph::LINK));
+            // 在目前的資料夾開 PowerShell（搜尋結果、首頁沒有單一的資料夾）
+            if !tab_search && !folder.is_empty() {
+                organize.push(Cmd::new(id::OPEN_POWERSHELL, powershell_text(), glyph::TERMINAL));
+            }
             let shell = (!tab_search && !folder.is_empty()).then(|| shellmenu::ShellMenu::for_background(self.hwnd, &folder)).flatten();
             let last = vec![Cmd::new(id::PROPERTIES, tr!("內容", "Properties"), glyph::PROPERTIES)];
             ([Part::Ours(view), Part::Ours(edit), Part::Ours(organize), Part::Shell, Part::Ours(last)], shell, BACKGROUND_HIDDEN_VERBS)
@@ -1476,3 +1484,7 @@ unsafe extern "system" fn list_subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lp
     (comctl().def_subclass_proc)(hwnd, msg, wparam, lparam)
 }
 
+/// 右鍵選單的「在這裡開啟 PowerShell 視窗」（和檔案總管的同名項目相同；資料夾樹的選單也用）
+pub(super) fn powershell_text() -> &'static str {
+    tr!("在這裡開啟 PowerShell 視窗", "Open PowerShell window here")
+}

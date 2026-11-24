@@ -44,6 +44,18 @@ pub fn is_file(path: &str) -> bool {
     attributes(path).is_some_and(|a| a & FILE_ATTRIBUTE_DIRECTORY == 0)
 }
 
+/// 本機的硬碟、隨身碟或 RAM 磁碟上的路徑（只看路徑與磁碟機類型，不碰那個位置本身）。
+/// 網路位置（UNC、對應的網路磁碟機）離線時，連 [`is_file`]、[`is_dir`] 都要等到 SMB 逾時（約 20 秒）；
+/// 光碟機也要等轉起來。這些位置不要在介面執行緒上檢查，交給背景讀取（見 [`read_dir_or_file`]）。
+pub fn on_local_drive(path: &str) -> bool {
+    if paths::is_unc(path) {
+        return false;
+    }
+    let Some(root) = paths::drive_root(path) else { return false };
+    let w = wide(&root);
+    matches!(unsafe { GetDriveTypeW(w.as_ptr()) }, DRIVE_FIXED | DRIVE_REMOVABLE | DRIVE_RAMDISK)
+}
+
 /// 屬性、大小與修改時間（FILETIME）。預覽前檢查，以及判斷快取的預覽是否還是同一份檔案。
 pub fn attributes_size_modified(path: &str) -> Option<(u32, u64, u64)> {
     let w = wide(&paths::to_long_path(path));
@@ -163,7 +175,12 @@ impl Drop for Finder {
 }
 
 fn require_dir(path: &str, reject_reparse: bool) -> Result<u32, FsError> {
-    let a = match attributes(path) {
+    check_dir(path, attributes(path), reject_reparse)
+}
+
+/// `attrs`：剛用 [`attributes`] 取得的屬性（失敗時的原因還在 GetLastError 裡）
+fn check_dir(path: &str, attrs: Option<u32>, reject_reparse: bool) -> Result<u32, FsError> {
+    let a = match attrs {
         Some(a) => a,
         None => {
             let code = unsafe { GetLastError() };
@@ -190,6 +207,21 @@ pub struct Listing {
 /// 讀取單一資料夾，不開啟檔案內容；根目錄的列舉錯誤會回報給呼叫端，不以空清單掩蓋。
 pub fn read_dir(path: &str, show_hidden: bool, sort_col: usize, desc: bool, folders_on_top: bool, cancel: &AtomicBool) -> Result<Listing, FsError> {
     require_dir(path, false)?;
+    list_dir(path, show_hidden, sort_col, desc, folders_on_top, cancel)
+}
+
+/// 同 [`read_dir`]，但 `path` 其實是檔案時回傳 `Ok(None)`，讓呼叫端改開它所在的資料夾並選取它。
+/// 給還不知道是檔案還是資料夾的網路位置用：只碰一次那個位置就同時知道是哪一種，離線時也只等一次逾時。
+pub fn read_dir_or_file(path: &str, show_hidden: bool, sort_col: usize, desc: bool, folders_on_top: bool, cancel: &AtomicBool) -> Result<Option<Listing>, FsError> {
+    let attrs = attributes(path);
+    if attrs.is_some_and(|a| a & FILE_ATTRIBUTE_DIRECTORY == 0) {
+        return Ok(None);
+    }
+    check_dir(path, attrs, false)?;
+    list_dir(path, show_hidden, sort_col, desc, folders_on_top, cancel).map(Some)
+}
+
+fn list_dir(path: &str, show_hidden: bool, sort_col: usize, desc: bool, folders_on_top: bool, cancel: &AtomicBool) -> Result<Listing, FsError> {
     let dir: Arc<str> = Arc::from(path);
     let mut entries = Vec::new();
     let skipped = 0usize;

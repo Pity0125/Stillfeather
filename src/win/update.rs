@@ -344,7 +344,7 @@ impl App {
             .footnote(&foot)
             .buttons(vec![Button::primary(1, tr!("更新", "Update")).key('U'), Button::normal(2, tr!("略過這個版本", "Skip this version")), Button::normal(0, tr!("稍後", "Later"))], 0)
             .width(480);
-        let notes = notes_preview(&m.notes);
+        let notes = notes_preview(m.notes_for(feather_core::i18n::english()));
         if !notes.is_empty() {
             spec = spec.body(&notes);
         }

@@ -2,7 +2,7 @@
 //!
 //! - 沒有視窗（只有一個訊息視窗），同一使用者、同一工作階段只執行一份（互斥鎖）。
 //! - 低階鍵盤攔截（WH_KEYBOARD_LL）掛在這個執行緒：攔截程序只做判斷、送出遮罩鍵，開啟 Stillfeather 交給另一個執行緒，
-//!   不拖慢鍵盤（太慢的話 Windows 會悄悄拿掉攔截）。每分鐘確認還要不要攔截（不要就結束），每 10 分鐘重新掛上一次。
+//!   不拖慢鍵盤（太慢的話 Windows 會悄悄拿掉攔截）。每分鐘確認還要不要攔截（不要就結束），並重新掛上一次。
 //! - 主程式（每次啟動、設定改變）與安裝程式以訊息視窗的類別名稱找到它，送 WM_CLOSE 請它結束（見 shellreg::stop_win_e）。
 
 use super::instance;
@@ -13,18 +13,15 @@ use feather_core::install;
 use feather_core::wine::{self, KeyAction, KeyEvent, WinE};
 use std::cell::RefCell;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicIsize, Ordering};
 
 /// 攔截到 Win+E：開啟 Stillfeather
 const WM_OPEN: u32 = WM_APP + 1;
 const TIMER_CHECK: usize = 1;
 const CHECK_MS: u32 = 60 * 1000;
-/// 每幾次檢查重新掛上一次攔截（10 分鐘）
-const REHOOK_EVERY: u32 = 10;
 
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 static HOOK: AtomicIsize = AtomicIsize::new(0);
-static CHECKS: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     static KEYS: RefCell<WinE> = RefCell::new(WinE::default());
@@ -132,8 +129,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             // 選項關掉、預設檔案總管換成別的程式（或另一份 Stillfeather）：結束
             if !should_run() {
                 DestroyWindow(hwnd);
-            } else if CHECKS.fetch_add(1, Ordering::Relaxed) % REHOOK_EVERY == REHOOK_EVERY - 1 {
-                // Windows 在攔截逾時後會悄悄拿掉它：定期重新掛上（失敗時舊的仍在）
+            } else {
+                // Windows 在攔截逾時後會悄悄拿掉它（不會通知）：每次檢查都重新掛上，失效最多一分鐘。
+                // 重掛幾乎沒有成本：先掛新的再拿掉舊的，失敗時舊的仍在
                 hook();
             }
             0

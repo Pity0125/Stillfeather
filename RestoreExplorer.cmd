@@ -17,9 +17,20 @@ exit /b
 #   4. 把其他程式的「開啟檔案」視窗改回 Windows 原本的
 #   5. Stillfeather 的程式已經不在時，也拿掉「已安裝的應用程式」裡留下的項目
 # 和 Stillfeather 的解除安裝（src/win/shellreg.rs 的 restore_default_file_manager、disable_picker）寫的是同樣的登錄位置。
+# 訊息依 Stillfeather 設定的語言（settings.json 的 Language），沒有設定時依 Windows 的顯示語言：中文用中文，其他用英文。
 
 $ErrorActionPreference = 'Continue'
 $hkcu = [Microsoft.Win32.Registry]::CurrentUser
+
+$english = -not ((Get-UICulture).Name -like 'zh*')
+try {
+    $settingsFile = Join-Path $env:LOCALAPPDATA 'Stillfeather\settings.json'
+    if (Test-Path -LiteralPath $settingsFile) {
+        $language = (Get-Content -LiteralPath $settingsFile -Raw -Encoding UTF8 | ConvertFrom-Json).Language
+        if ($language -eq 'en') { $english = $true } elseif ($language -eq 'zh-TW') { $english = $false }
+    }
+} catch { }
+function T([string]$zh, [string]$en) { if ($english) { $en } else { $zh } }
 
 function Get-Val([string]$key, [string]$name) {
     $k = $hkcu.OpenSubKey($key)
@@ -36,7 +47,7 @@ function Remove-Val([string]$key, [string]$name) {
     try { $k.DeleteValue($name, $false) } finally { $k.Close() }
 }
 function Remove-Tree([string]$key) {
-    try { $hkcu.DeleteSubKeyTree($key, $false) } catch { Write-Host "  無法刪除 HKCU\$key：$($_.Exception.Message)" }
+    try { $hkcu.DeleteSubKeyTree($key, $false) } catch { Write-Host (T "  無法刪除 HKCU\$key：$($_.Exception.Message)" "  Couldn't delete HKCU\$key`: $($_.Exception.Message)") }
 }
 function Remove-IfEmpty([string]$key) {
     $k = $hkcu.OpenSubKey($key)
@@ -57,21 +68,21 @@ $saveKey   = 'Software\Classes\CLSID\{C0B4E2F3-BA21-4773-8DBA-335EC946EB8B}'
 $runKey    = 'Software\Microsoft\Windows\CurrentVersion\Run'
 $uninstKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\Stillfeather'
 
-Write-Host '== Stillfeather：還原 Windows 檔案總管 =='
+Write-Host (T '== Stillfeather：還原 Windows 檔案總管 ==' '== Stillfeather: restore Windows File Explorer ==')
 Write-Host ''
 
 # 1. 結束執行中的 Stillfeather（背景攔截 Win+E 也是 Stillfeather.exe）
 $procs = @(Get-Process -Name 'Stillfeather', 'FeatherFiles' -ErrorAction SilentlyContinue)
 if ($procs.Count -gt 0) {
     $procs | Stop-Process -Force -ErrorAction SilentlyContinue
-    Write-Host "已結束 $($procs.Count) 個 Stillfeather 程序。"
+    Write-Host (T "已結束 $($procs.Count) 個 Stillfeather 程序。" "Closed $($procs.Count) Stillfeather process(es).")
 }
 
 # 2. 登入時啟動的背景攔截 Win+E（只拿掉 Stillfeather 自己的）
 $run = Get-Val $runKey 'Stillfeather'
 if ((Test-Ours $run) -and ([string]$run -match '--win-e')) {
     Remove-Val $runKey 'Stillfeather'
-    Write-Host '已拿掉登入時啟動的背景攔截 Win+E。'
+    Write-Host (T '已拿掉登入時啟動的背景攔截 Win+E。' 'Removed the background Win+E helper that started at sign-in.')
 }
 
 # 3. 預設檔案總管：先判斷每個值是不是 Stillfeather 寫的，再一起還原（DelegateExecute 要看改之前的命令）
@@ -101,22 +112,26 @@ foreach ($k in @($wineKey, "$wineClsid\shell\opennewwindow", "$wineClsid\shell",
     Remove-IfEmpty $k
 }
 Remove-Tree $backupKey
-if ($changed) { Write-Host '開啟資料夾、磁碟與 Win+E 已改回 Windows 檔案總管。' } else { Write-Host '開啟資料夾與 Win+E 原本就不是 Stillfeather。' }
+if ($changed) {
+    Write-Host (T '開啟資料夾、磁碟與 Win+E 已改回 Windows 檔案總管。' 'Folders, drives and Win+E open in Windows File Explorer again.')
+} else {
+    Write-Host (T '開啟資料夾與 Win+E 原本就不是 Stillfeather。' "Folders and Win+E weren't using Stillfeather.")
+}
 
 # 4. 其他程式的「開啟檔案」與「另存新檔」視窗
 $dll = Get-Val "$pickerKey\InprocServer32" ''
 if (($null -ne $dll) -and ([string]$dll -match '(?i)StillfeatherPicker\.dll')) {
     Remove-Tree "$pickerKey\InprocServer32"
     Remove-IfEmpty $pickerKey
-    Write-Host '其他程式的開啟檔案視窗已改回 Windows 原本的（已經開著的程式要重新開啟才會套用）。'
+    Write-Host (T '其他程式的開啟檔案視窗已改回 Windows 原本的（已經開著的程式要重新開啟才會套用）。' "Other programs' Open dialog is back to the standard Windows one (programs that are already open need to be restarted).")
 } else {
-    Write-Host '其他程式的開啟檔案視窗原本就是 Windows 的。'
+    Write-Host (T '其他程式的開啟檔案視窗原本就是 Windows 的。' "Other programs' Open dialog was already the standard Windows one.")
 }
 $dll = Get-Val "$saveKey\InprocServer32" ''
 if (($null -ne $dll) -and ([string]$dll -match '(?i)Stillfeather(Save)?Picker\.dll')) {
     Remove-Tree "$saveKey\InprocServer32"
     Remove-IfEmpty $saveKey
-    Write-Host '其他程式的另存新檔視窗已改回 Windows 原本的。'
+    Write-Host (T '其他程式的另存新檔視窗已改回 Windows 原本的。' "Other programs' Save As dialog is back to the standard Windows one.")
 }
 
 # 記下「關」：Stillfeather 下次啟動不會自己又設回去（之後可以在它的設定重新勾選）
@@ -135,7 +150,7 @@ $location = Get-Val $uninstKey 'InstallLocation'
 if (($null -ne $location) -and -not (Test-Path -LiteralPath (Join-Path ([string]$location) 'Stillfeather.exe'))) {
     Remove-Tree $uninstKey
     if (-not $programThere) { Remove-Tree $appKey }
-    Write-Host '已拿掉「已安裝的應用程式」裡留下的 Stillfeather 項目（程式已經不在）。'
+    Write-Host (T '已拿掉「已安裝的應用程式」裡留下的 Stillfeather 項目（程式已經不在）。' 'Removed the leftover Stillfeather entry from Installed apps (the program is gone).')
 }
 
 # 讓檔案總管重新讀取關聯（不重新啟動檔案總管）
@@ -145,8 +160,8 @@ try {
 } catch { }
 
 Write-Host ''
-Write-Host '完成。現在雙擊資料夾與 Win+E 都會開 Windows 檔案總管。'
+Write-Host (T '完成。現在雙擊資料夾與 Win+E 都會開 Windows 檔案總管。' 'Done. Double-clicking folders and Win+E now open Windows File Explorer.')
 $data = Join-Path $env:LOCALAPPDATA 'Stillfeather'
 if (Test-Path -LiteralPath $data) {
-    Write-Host "Stillfeather 的設定與記錄還留在 $data；不再使用的話可以直接刪掉這個資料夾。"
+    Write-Host (T "Stillfeather 的設定與記錄還留在 $data；不再使用的話可以直接刪掉這個資料夾。" "Stillfeather's settings and logs are still in $data. If you no longer use Stillfeather, you can delete that folder.")
 }

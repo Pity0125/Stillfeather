@@ -228,6 +228,18 @@ pub fn command_program(cmd: &str) -> &str {
 }
 
 /// 兩個 Windows 路徑是否相同（不分大小寫，斜線方向與結尾分隔符號不計）。
+/// 更新時還在執行的舊 exe（例如其他程式裡開著的 Stillfeather 選擇器）改名讓位後的名稱：`Stillfeather.exe.old-<時間>`。
+/// Windows 允許改名執行中的 exe，所以安裝程式先改名再寫入新的；舊檔在它結束後由主程式啟動時、下次安裝或解除安裝刪掉。
+pub fn old_exe_name(stamp: u128) -> String {
+    format!("{EXE_NAME}.old-{stamp}")
+}
+
+/// 是不是改名讓位的舊 exe（見 [`old_exe_name`]）
+pub fn is_old_exe_name(name: &str) -> bool {
+    let prefix = format!("{EXE_NAME}.old-");
+    name.len() > prefix.len() && name[..prefix.len()].eq_ignore_ascii_case(&prefix)
+}
+
 pub fn same_path(a: &str, b: &str) -> bool {
     let n = |p: &str| paths::trim_end_sep(&paths::normalize_separators(p.trim())).to_lowercase();
     n(a) == n(b)
@@ -437,6 +449,18 @@ pub fn delayed_delete_command(files: &[&str], dirs: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_exe_names() {
+        let name = old_exe_name(1795464684324);
+        assert_eq!(name, "Stillfeather.exe.old-1795464684324");
+        assert!(is_old_exe_name(&name));
+        assert!(is_old_exe_name("STILLFEATHER.EXE.old-1"));
+        assert!(!is_old_exe_name("Stillfeather.exe"));
+        assert!(!is_old_exe_name("Stillfeather.exe.old-"));
+        assert!(!is_old_exe_name("Stillfeather.exe.new"));
+        assert!(!is_old_exe_name("Uninstall.exe.old-1"));
+    }
 
     const EXE: &str = r"C:\Users\pity0\AppData\Local\Programs\Stillfeather\Stillfeather.exe";
 

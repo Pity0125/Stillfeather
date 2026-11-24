@@ -879,7 +879,7 @@ unsafe fn run_picker(d: &Dialog, owner: HWND, options: u32) -> Outcome {
     if disable {
         EnableWindow(root, 0);
     }
-    wait_pumping(pi.process);
+    let finished = wait_pumping(pi.process);
     let mut code = 2u32;
     GetExitCodeProcess(pi.process, &mut code);
     CloseHandle(pi.thread);
@@ -889,6 +889,9 @@ unsafe fn run_picker(d: &Dialog, owner: HWND, options: u32) -> Outcome {
         SetForegroundWindow(root);
     }
     let outcome = match code as i32 {
+        // 沒等到選擇器結束（程式正在結束，或等待失敗）：當作取消。選擇器還在執行（結束代碼是 STILL_ACTIVE），
+        // 不能落到下面的「改用 Windows 的視窗」，否則程式結束前又多跳出一個開檔視窗。選擇器發現程式結束會自己關閉。
+        _ if !finished || code == STILL_ACTIVE => Outcome::Cancelled,
         protocol::EXIT_OK => match std::fs::read_to_string(&out_path).ok().and_then(|t| Response::parse(&t)) {
             Some(r) if !r.paths.is_empty() => Outcome::Picked(r),
             _ => Outcome::UseSystem,
@@ -901,23 +904,27 @@ unsafe fn run_picker(d: &Dialog, owner: HWND, options: u32) -> Outcome {
     outcome
 }
 
+/// GetExitCodeProcess：程序還在執行
+const STILL_ACTIVE: u32 = 259;
+
 /// 等選擇器結束；期間處理這個執行緒的視窗訊息（程式的畫面才不會卡住，也不會顯示「沒有回應」）。
+/// 回傳 false：沒等到選擇器結束就返回（收到 WM_QUIT，或等待失敗）。
 /// MWMO_INPUTAVAILABLE：佇列裡已經有、但之前被看過而沒取走的訊息也算，不會因此一直等下去。
-unsafe fn wait_pumping(process: HANDLE) {
+unsafe fn wait_pumping(process: HANDLE) -> bool {
     loop {
         let r = MsgWaitForMultipleObjectsEx(1, &process, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if r == WAIT_OBJECT_0 {
-            return;
+            return true;
         }
         if r != WAIT_OBJECT_0 + 1 {
-            return;
+            return false;
         }
         let mut msg: Msg = std::mem::zeroed();
         while PeekMessageW(&mut msg, 0, 0, 0, PM_REMOVE) != 0 {
             if msg.message == WM_QUIT {
                 // 程式正在結束：把結束訊息放回去，不再等（選擇器發現程式結束會自己關閉）
                 PostQuitMessage(msg.wparam as i32);
-                return;
+                return false;
             }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);

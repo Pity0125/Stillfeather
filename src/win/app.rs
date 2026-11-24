@@ -93,6 +93,8 @@ pub mod id {
     pub const SELECT_ALL: u16 = 206;
     /// 拖放到側欄「常用位置」後，稍後加入（見 dragdrop.rs）
     pub const PIN_DROPPED: u16 = 207;
+    /// 右鍵選單的「在這裡開啟 PowerShell 視窗」
+    pub const OPEN_POWERSHELL: u16 = 208;
     pub const TAB_NEW: u16 = 220;
     pub const TAB_DUPLICATE: u16 = 221;
     pub const TAB_MOVE_LEFT: u16 = 222;
@@ -162,6 +164,8 @@ pub(super) fn folder_status(count: usize, skipped: usize) -> String {
 /// 背景工作把結果交回 UI 執行緒。
 pub enum WorkerMsg {
     Dir { tab: TabId, generation: u64, path: String, kind: NavKind, result: Result<Listing, FsError> },
+    /// [`App::navigate_or_reveal`] 要開的位置其實是檔案：改開它所在的資料夾並選取它
+    NotFolder { tab: TabId, generation: u64, path: String, kind: NavKind },
     /// 自動重新整理的重新讀取（見 watch.rs）；`gone_to`：資料夾已不在時，還在的上一層
     AutoDir { tab: TabId, generation: u64, path: String, result: Result<Listing, FsError>, gone_to: Option<String> },
     SearchBatch { tab: TabId, generation: u64, entries: Vec<Entry>, scanned: usize, skipped: usize },
@@ -904,12 +908,17 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         a.schedule_update_check();
         // 「設為預設檔案總管」（預設開啟）：沒選過時設為預設
         maintain_default_file_manager();
+        // 「在資料夾中顯示」（瀏覽器的下載等）找得到這個視窗並選取檔案（見 shellwin.rs）；
+        // 是不是預設檔案總管會影響要不要登記，所以放在上一行之後
+        super::shellwin::start(a.hwnd);
         // 「攔截 Win+E」（預設開啟）：新版 Windows 11 的 Win+E 不看登錄，在背景攔截按鍵改開 Stillfeather
         super::wine::maintain();
         // 「其他程式開啟或儲存檔案時也用 Stillfeather」（預設關閉）：依使用者的選擇登記或取消，並更新登記的取代元件
         super::picker::maintain();
         // 舊版的資料夾（%LOCALAPPDATA%\FeatherFiles）：設定已經搬走、取代元件也換到新資料夾之後刪掉
         super::rescue::remove_old_data_dir();
+        // 更新時還在執行而改名讓位的舊 exe（見 install::old_exe_name）：結束後就刪得掉
+        std::thread::spawn(remove_old_exes);
     }
 
     let mut msg: MSG = unsafe { std::mem::zeroed() };
@@ -923,6 +932,17 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         }
     }
     msg.wParam as i32
+}
+
+/// 刪掉 exe 旁邊改名讓位的舊 exe（還在執行的刪不掉，下次啟動再試）
+fn remove_old_exes() {
+    let Some(dir) = current_exe_path().and_then(|p| paths::parent(&p)) else { return };
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    for e in entries.flatten() {
+        if feather_core::install::is_old_exe_name(&e.file_name().to_string_lossy()) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 /// 主程式啟動時依使用者對「設為預設檔案總管」的選擇處理（沒選過時預設開啟，見 install::default_fm_on_start）。
@@ -1692,6 +1712,11 @@ impl App {
         controls::set_enabled(self.forward_btn, can_fwd);
         controls::set_enabled(self.up_btn, can_up);
         controls::set_enabled(self.refresh_btn, !path.is_empty());
+        // 殼層視窗清單登記的位置：作用中分頁顯示的資料夾（讀取新資料夾時 path 還是舊的，讀好才換）；搜尋結果、首頁不登記
+        if self.picker.is_none() {
+            let location = self.tabs.get(&tab_id).filter(|t| !t.search_mode && !t.path.is_empty()).map(|t| t.path.as_str());
+            super::shellwin::set_location(location);
+        }
         self.sync_search();
         show(self.clear_btn, self.clear_shown());
         controls::set_checked(self.dual_btn, self.ws.dual);
@@ -1889,6 +1914,17 @@ impl App {
     // ------------------------------------------------------------ 導覽
 
     pub(super) fn navigate(&mut self, tab_id: TabId, input: &str, kind: NavKind, select: Vec<String>) {
+        self.navigate_with(tab_id, input, kind, select, false);
+    }
+
+    /// 開啟還不知道是檔案還是資料夾的位置（網路上的位置）：先當成資料夾在背景讀取，畫面顯示「正在讀取資料夾…」；
+    /// 其實是檔案時改開它所在的資料夾並選取它（見 on_not_folder）。不在介面執行緒上先檢查，
+    /// 因為網路位置離線時連檢查都要等到 SMB 逾時（約 20 秒），這段時間整個視窗會凍住。
+    pub(super) fn navigate_or_reveal(&mut self, tab_id: TabId, input: &str, kind: NavKind) {
+        self.navigate_with(tab_id, input, kind, vec![], true);
+    }
+
+    fn navigate_with(&mut self, tab_id: TabId, input: &str, kind: NavKind, select: Vec<String>, reveal: bool) {
         let show_hidden = self.show_hidden;
         let path = match full_path(input) {
             Ok(p) => p,
@@ -1915,7 +1951,15 @@ impl App {
         let folders_on_top = self.settings.folders_on_top;
         let p = path.clone();
         std::thread::spawn(move || {
-            let result = fs::read_dir(&p, show_hidden, sort_col, desc, folders_on_top, &cancel);
+            let result = if reveal {
+                match fs::read_dir_or_file(&p, show_hidden, sort_col, desc, folders_on_top, &cancel) {
+                    Ok(Some(listing)) => Ok(listing),
+                    Ok(None) => return post(WorkerMsg::NotFolder { tab: tab_id, generation, path: p, kind }),
+                    Err(e) => Err(e),
+                }
+            } else {
+                fs::read_dir(&p, show_hidden, sort_col, desc, folders_on_top, &cancel)
+            };
             post(WorkerMsg::Dir { tab: tab_id, generation, path: p, kind, result });
         });
         if self.ws.side_of(tab_id).is_some_and(|s| self.bound[s.index()] == Some(tab_id)) {
@@ -2031,6 +2075,15 @@ impl App {
                 }
             }
         }
+    }
+
+    /// [`navigate_or_reveal`](Self::navigate_or_reveal) 的位置其實是檔案：同一個分頁改開它所在的資料夾並選取它
+    fn on_not_folder(&mut self, tab_id: TabId, generation: u64, path: String, kind: NavKind) {
+        if self.tabs.get(&tab_id).is_none_or(|t| t.generation != generation) {
+            return;
+        }
+        let folder = paths::parent(&path).unwrap_or_else(|| path.clone());
+        self.navigate(tab_id, &folder, kind, vec![path]);
     }
 
     pub(super) fn go_back(&mut self) {
@@ -2208,17 +2261,22 @@ impl App {
     // ------------------------------------------------------------ 分頁與雙欄
 
     pub(super) fn new_tab(&mut self, side: Side, path: &str) -> TabId {
+        self.new_tab_with(side, path, false)
+    }
+
+    /// `reveal`：`path` 還不知道是檔案還是資料夾（見 navigate_or_reveal）
+    fn new_tab_with(&mut self, side: Side, path: &str, reveal: bool) -> TabId {
         // 選擇器沒有分頁：「在新分頁開啟」就是在原地開啟
         if self.picker_mode() {
             let id = self.active_tab_id();
-            self.navigate(id, path, NavKind::Normal, vec![]);
+            self.navigate_with(id, path, NavKind::Normal, vec![], reveal);
             return id;
         }
         let side = if self.ws.dual { side } else { Side::Left };
         let _fade = self.crossfade(self.content_fade_areas(side), anim::CROSSFADE_MS);
         let id = self.ws.add_tab(side);
         self.tabs.insert(id, Tab::new());
-        self.navigate(id, path, NavKind::NoHistory, vec![]);
+        self.navigate_with(id, path, NavKind::NoHistory, vec![], reveal);
         self.bind(side);
         self.update_chrome();
         id
@@ -2544,7 +2602,10 @@ impl App {
         let mut first = startup && !restored;
         for raw in requested {
             let full = full_path(&raw).unwrap_or(raw);
-            let (path, select) = if fs::is_file(&full) {
+            // 網路上的位置：在這裡（介面執行緒）判斷是不是檔案，離線時要等到 SMB 逾時（約 20 秒），整個視窗凍住；
+            // 改成先當資料夾在背景讀取，其實是檔案時再改開它所在的資料夾並選取（見 navigate_or_reveal）
+            let reveal = !fs::on_local_drive(&full);
+            let (path, select) = if !reveal && fs::is_file(&full) {
                 (paths::parent(&full).unwrap_or_else(|| full.clone()), vec![full.clone()])
             } else {
                 (full.clone(), vec![])
@@ -2557,10 +2618,10 @@ impl App {
                 }
             } else if first {
                 let id = self.ws.current(Side::Left).unwrap_or(0);
-                self.navigate(id, &path, NavKind::NoHistory, select);
+                self.navigate_with(id, &path, NavKind::NoHistory, select, reveal);
             } else {
                 let side = self.active_side();
-                let id = self.new_tab(side, &path);
+                let id = self.new_tab_with(side, &path, reveal);
                 if !select.is_empty() {
                     self.navigate(id, &path, NavKind::NoHistory, select);
                 }
@@ -2669,6 +2730,7 @@ impl App {
             id::OPEN => self.open_selection(self.active_side()),
             id::OPEN_NEW_TAB => self.open_in_new_tab(),
             id::OPEN_LOCATION => self.open_location(),
+            id::OPEN_POWERSHELL => self.open_powershell_here(),
             id::COPY_PATH => self.copy_path(),
             id::SELECT_ALL => self.select_all(self.active_side()),
             id::PIN_DROPPED => {
@@ -3015,6 +3077,25 @@ impl App {
         self.new_tab(side, &path);
     }
 
+    /// 清單右鍵選單的「在這裡開啟 PowerShell 視窗」：選了一個資料夾時開在它裡面，否則開在目前的資料夾
+    fn open_powershell_here(&mut self) {
+        let side = self.active_side();
+        let entries = self.selected_entries(side);
+        let folder = match entries.as_slice() {
+            [e] if e.is_dir => Some(e.full_path()),
+            _ => self.active_tab().filter(|t| !t.search_mode && !t.path.is_empty()).map(|t| t.path.clone()),
+        };
+        if let Some(folder) = folder {
+            self.open_powershell(&folder);
+        }
+    }
+
+    pub(super) fn open_powershell(&mut self, folder: &str) {
+        if let Err(e) = super::fileops::open_powershell(self.hwnd, folder) {
+            self.show_error(&e);
+        }
+    }
+
     fn open_location(&mut self) {
         let side = self.active_side();
         let Some(entry) = self.selected_entries(side).into_iter().next() else { return };
@@ -3243,6 +3324,54 @@ impl App {
         self.after_settings_closed();
     }
 
+    /// 其他程式的「在資料夾中顯示」要選取 `path`（見 shellwin.rs）：作用中的分頁就是它所在的資料夾時在這個分頁選取
+    /// （清單上已經有它就直接選取；剛下載好、清單還沒更新到時重新讀取資料夾再選取），否則照一般的開啟要求
+    /// （開它所在的資料夾並選取）。`replace`：取消其他的選取。視窗拉到前面。
+    pub(super) fn shell_select(&mut self, path: String, replace: bool) {
+        let side = self.active_side();
+        let id = self.active_tab_id();
+        let Some(folder) = paths::parent(&path) else { return };
+        let here = self.tabs.get(&id).is_some_and(|t| !t.search_mode && paths::same_path(&folder, &t.path));
+        if !here {
+            super::shellwin::log(&format!("選取 {path}：不在作用中的資料夾，照一般的開啟要求"));
+            self.open_paths(vec![path], false, false);
+            return;
+        }
+        let front = unsafe {
+            if IsIconic(self.hwnd) != 0 {
+                ShowWindow(self.hwnd, SW_RESTORE);
+            }
+            SetForegroundWindow(self.hwnd) != 0
+        };
+        if !front {
+            super::shellwin::log("無法把視窗拉到前面（Windows 不允許）");
+        }
+        let Some(t) = self.tabs.get(&id) else { return };
+        // 同一次要求選取好幾個時會連續呼叫：讀取中就接在還沒套用的選取後面
+        let mut selected = if replace {
+            Vec::new()
+        } else if t.loading {
+            t.pending_select.clone()
+        } else {
+            self.selected_paths(side)
+        };
+        if !selected.iter().any(|p| paths::same_path(p, &path)) {
+            selected.push(path.clone());
+        }
+        let shown = !t.loading && (0..t.row_count()).any(|i| t.row(i).is_some_and(|e| paths::same_path(&e.full_path(), &path)));
+        super::shellwin::log(&format!("選取 {path}（{}）", if shown { "清單上已經有" } else { "重新讀取資料夾再選取" }));
+        if shown {
+            if let Some(t) = self.tabs.get_mut(&id) {
+                t.pending_select = selected;
+            }
+            self.refresh_list(side, true);
+        } else {
+            let folder = self.tabs[&id].path.clone();
+            self.navigate(id, &folder, NavKind::NoHistory, selected);
+        }
+        self.focus_list(side);
+    }
+
     /// 問要不要現在重新開啟，套用新的語言。問題用新的語言寫（使用者剛選了它）。
     fn offer_language_restart(&mut self, english: bool) {
         let old = feather_core::i18n::english();
@@ -3300,6 +3429,7 @@ impl App {
         } else {
             shellreg::restore_default_file_manager()
         };
+        super::shellwin::refresh();
         match result {
             Ok(()) if on => self.set_footer(tr!("已設為預設檔案總管：Win+E 與開啟資料夾都會使用 Stillfeather", "Set as the default file manager: Win+E and opening folders both use Stillfeather").into()),
             Ok(()) => self.set_footer(tr!("已改回 Windows 檔案總管", "Switched back to File Explorer").into()),
@@ -3670,7 +3800,9 @@ Not available yet: indexed search."),
                         // 相對路徑（..、子資料夾名稱、\Windows）以目前的資料夾為準
                         let here = self.active_tab().map(|t| t.path.clone()).unwrap_or_default();
                         // 輸入的是檔案路徑：開啟所在資料夾並選取該檔案（不直接執行）。
+                        // 網路上的位置不在這裡檢查（離線時要等 SMB 逾時、視窗凍住），交給背景讀取時再判斷（見 navigate_or_reveal）
                         match full_path_in(&text, Some(&here)) {
+                            Ok(full) if !fs::on_local_drive(&full) => self.navigate_or_reveal(id, &full, NavKind::Normal),
                             Ok(full) if fs::is_file(&full) => {
                                 let parent = paths::parent(&full).unwrap_or_else(|| full.clone());
                                 self.navigate(id, &parent, NavKind::Normal, vec![full]);
@@ -3999,6 +4131,10 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
     if let Some(r) = super::shellmenu::handle_menu_msg(msg, wparam, lparam) {
         return r;
     }
+    // 檔案總管重新啟動了：重新登記到殼層視窗清單（見 shellwin.rs）
+    if msg >= 0xC000 && msg == super::shellwin::taskbar_created_msg() {
+        super::shellwin::on_taskbar_created();
+    }
     match msg {
         WM_SIZE => {
             a.relayout();
@@ -4153,6 +4289,20 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
             }
             return 0;
         }
+        super::shellwin::WM_SHELL_SELECT => {
+            let sel = Box::from_raw(lparam as *mut super::shellwin::Select);
+            a.shell_select(sel.path, sel.replace);
+            return 0;
+        }
+        super::shellwin::WM_SHELL_FRONT => {
+            if IsIconic(hwnd) != 0 {
+                ShowWindow(hwnd, SW_RESTORE);
+            }
+            if SetForegroundWindow(hwnd) == 0 {
+                super::shellwin::log("無法把視窗拉到前面（Windows 不允許）");
+            }
+            return 0;
+        }
         super::thumbs::WM_APP_THUMB => {
             let done = Box::from_raw(lparam as *mut super::thumbs::Done);
             a.thumbs.on_result(hwnd, *done);
@@ -4166,6 +4316,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
             let msg = Box::from_raw(lparam as *mut WorkerMsg);
             match *msg {
                 WorkerMsg::Dir { tab, generation, path, kind, result } => a.on_dir(tab, generation, path, kind, result),
+                WorkerMsg::NotFolder { tab, generation, path, kind } => a.on_not_folder(tab, generation, path, kind),
                 WorkerMsg::AutoDir { tab, generation, path, result, gone_to } => a.on_auto_dir(tab, generation, path, result, gone_to),
                 WorkerMsg::SearchBatch { tab, generation, entries, scanned, skipped } => a.on_search_batch(tab, generation, entries, scanned, skipped),
                 WorkerMsg::SearchDone { tab, generation, result } => a.on_search_done(tab, generation, result),
@@ -4291,6 +4442,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
         }
         WM_DESTROY => {
             super::crashlog::crumb("主視窗：WM_DESTROY");
+            super::shellwin::stop();
             a.stop_watching();
             for h in [a.lists[0], a.lists[1], a.tree, a.crumbs, a.strips[0], a.strips[1]] {
                 dragdrop::revoke(h);

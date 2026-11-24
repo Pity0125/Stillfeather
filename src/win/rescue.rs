@@ -133,10 +133,17 @@ fn restore_windows() {
     let _ = shellreg::disable_picker();
 }
 
-/// 用 Windows 檔案總管開啟這次要開的位置：資料夾直接開、檔案開它所在的資料夾、首頁就開檔案總管的首頁。
-fn open_in_explorer(targets: &[String]) {
-    let windows = std::env::var("SystemRoot").or_else(|_| std::env::var("windir")).unwrap_or_else(|_| r"C:\Windows".into());
-    let explorer = paths::join(&windows, "explorer.exe");
+/// 用 Windows 檔案總管開啟這次要開的位置：資料夾直接開、檔案開它所在的資料夾、首頁就開「本機」。
+/// 也用在已開啟的 Stillfeather 沒有回應時（見 win::entry）。
+///
+/// 這時 Stillfeather 可能仍是預設檔案總管，所以明確用系統的「開啟」（open）動詞：Stillfeather 只新增自己的動詞並設為預設，
+/// 沒有改 open，open 一定由檔案總管處理。若用預設動詞（或可能照預設動詞轉手的方式）開，會又啟動 Stillfeather、
+/// 再等它沒有回應，一直循環。open 失敗時才直接執行 explorer.exe。
+pub(super) fn open_in_explorer(targets: &[String]) {
+    // 殼層的 open 動詞可能透過 COM（DelegateExecute）執行
+    unsafe {
+        CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    }
     let mut opened = false;
     for t in targets.iter().take(8) {
         let folder = if t == install::HOME_MARKER {
@@ -146,15 +153,28 @@ fn open_in_explorer(targets: &[String]) {
         } else {
             paths::parent(t).filter(|p| std::path::Path::new(p).is_dir())
         };
-        let mut cmd = std::process::Command::new(&explorer);
-        if let Some(f) = &folder {
-            cmd.arg(f);
-        }
-        opened |= cmd.spawn().is_ok();
+        opened |= open_with_explorer(folder.as_deref());
     }
     if !opened {
-        let _ = std::process::Command::new(&explorer).spawn();
+        open_with_explorer(None);
     }
+}
+
+/// 以 open 動詞在檔案總管開 `folder`（None：「本機」）；不行就直接執行 explorer.exe
+fn open_with_explorer(folder: Option<&str>) -> bool {
+    const THIS_PC: &str = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+    let verb = wide("open");
+    let file = wide(folder.unwrap_or(THIS_PC));
+    let rc = unsafe { ShellExecuteW(0, verb.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+    if rc > 32 {
+        return true;
+    }
+    let windows = std::env::var("SystemRoot").or_else(|_| std::env::var("windir")).unwrap_or_else(|_| r"C:\Windows".into());
+    let mut cmd = std::process::Command::new(paths::join(&windows, "explorer.exe"));
+    if let Some(f) = folder {
+        cmd.arg(f);
+    }
+    cmd.spawn().is_ok()
 }
 
 /// 舊版的 %LOCALAPPDATA%\FeatherFiles → %LOCALAPPDATA%\Stillfeather：把設定類的檔案搬過去（新資料夾已經有的不蓋掉）。

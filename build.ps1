@@ -2,12 +2,13 @@
 #   .\build.ps1          沒有 Rust 時會詢問是否自動安裝
 #   .\build.ps1 -Yes     不詢問，直接安裝並建置
 #   .\build.ps1 -Setup   另外產生安裝程式 dist\StillfeatherSetup.exe（內含剛建置好的 Stillfeather），
-#                        以及發佈到 GitHub Releases 用的 dist\update.json（更新說明取自 -Notes 或 release-notes.txt）、
+#                        以及發佈到 GitHub Releases 用的 dist\update.json（更新說明取自 -Notes 或 release-notes.txt，
+#                        英文的取自 -NotesEn 或 release-notes.en.txt）、
 #                        update.json.sig（私鑰在 %USERPROFILE%\Stillfeather-signing\update-signing.key 或
 #                        STILLFEATHER_SIGNING_KEY 指定的位置時自動簽章，見 tools\Sign-Update.ps1）與 RestoreExplorer.cmd
 # 另外建置 app\StillfeatherPicker.dll（picker-dll\：讓其他程式的「開啟檔案」視窗改用 Stillfeather，在「設定」開啟）。
 # 完整的編譯輸出會寫到 build.log，方便回報問題。
-param([switch]$Yes, [switch]$Setup, [string]$Notes = '')
+param([switch]$Yes, [switch]$Setup, [string]$Notes = '', [string]$NotesEn = '')
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $root = $PSScriptRoot
@@ -241,12 +242,20 @@ try {
         if ($repo -match '^https://github\.com/[^/]+/[^/]+$') {
             $notesFile = Join-Path $root 'release-notes.txt'
             $releaseNotes = if ($Notes) { $Notes } elseif (Test-Path -LiteralPath $notesFile) { (Get-Content -LiteralPath $notesFile -Raw -Encoding UTF8).Trim() } else { '' }
+            # 英文介面的更新提醒顯示這一段（沒有時顯示中文的）；0.1.2 以前的版本不認得 notes_en，會直接略過
+            $notesEnFile = Join-Path $root 'release-notes.en.txt'
+            $releaseNotesEn = if ($NotesEn) { $NotesEn } elseif (Test-Path -LiteralPath $notesEnFile) { (Get-Content -LiteralPath $notesEnFile -Raw -Encoding UTF8).Trim() } else { '' }
             $manifest = [ordered]@{
                 version = $version
                 url     = "$repo/releases/download/v$version/StillfeatherSetup.exe"
                 sha256  = (Get-FileHash -LiteralPath $setupExe -Algorithm SHA256).Hash.ToLowerInvariant()
                 size    = (Get-Item -LiteralPath $setupExe).Length
                 notes   = $releaseNotes
+            }
+            if ($releaseNotesEn) {
+                $manifest['notes_en'] = $releaseNotesEn
+            } else {
+                Write-Host '沒有英文的更新說明（release-notes.en.txt）：英文介面的使用者會看到中文的。' -ForegroundColor Yellow
             }
             $manifestPath = Join-Path $dist 'update.json'
             [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))

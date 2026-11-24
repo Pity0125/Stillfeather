@@ -27,7 +27,7 @@
 
 如果 PowerShell 不允許執行腳本，改用 `powershell -ExecutionPolicy Bypass -File .\build.ps1`。
 
-可以把資料夾或檔案路徑當參數傳給 `Launch.cmd` 或 `app\FeatherFiles.exe`。傳入檔案路徑時，會開啟它所在的資料夾並選取該檔案。`--open-home` 會開首頁（設為預設檔案總管時 Win+E 用它；已經開著就開新分頁）。
+可以把資料夾或檔案路徑當參數傳給 `Launch.cmd` 或 `app\FeatherFiles.exe`。傳入檔案路徑時，會開啟它所在的資料夾並選取該檔案。是檔案還是資料夾只在本機硬碟、隨身碟與 RAM 磁碟上先檢查（`fs::on_local_drive`）；網路位置（UNC、對應的網路磁碟機）與光碟機離線時連檢查都要等到 SMB 逾時（約 20 秒），在介面執行緒上檢查會讓整個視窗凍住，所以先當資料夾開、在背景讀取（顯示「正在讀取資料夾…」），讀的時候發現是檔案再改開它所在的資料夾並選取（`App::navigate_or_reveal`、`fs::read_dir_or_file`，只碰那個位置一次）。路徑列輸入網路位置也一樣。`--open-home` 會開首頁（設為預設檔案總管時 Win+E 用它；已經開著就開新分頁）。已經開著的 Stillfeather 5 秒內沒有回應（例如卡在其他程式的右鍵選單擴充）時，改用 Windows 檔案總管開這次要開的位置（`rescue::open_in_explorer`），不會什麼都打不開；救援只算當掉的次數，卡住不會觸發。這時 Stillfeather 可能仍是預設檔案總管，所以明確用系統的 `open` 動詞開（Stillfeather 只新增自己的動詞並設為預設，沒有改 `open`）：用預設動詞會又啟動 Stillfeather、再等它沒有回應，一直循環；首頁開「本機」。
 
 ## 安裝程式（setup.exe）與上架
 
@@ -39,7 +39,7 @@
 2. 選項：**設為預設檔案總管**（Win+E 與開啟資料夾都改用 Stillfeather，預設勾選）、**其他程式開啟或儲存檔案時也用 Stillfeather**（網頁上傳、開啟舊檔、選擇資料夾，**預設不勾**；之前選過的照原本的選擇，見「其他程式的開啟檔案視窗」）、建立桌面捷徑、加入開始功能表。
 3. 選到需要權限的位置（例如 `C:\Program Files`）時，Windows 會詢問是否允許；只有寫入檔案那一步以系統管理員身分執行，裝好後開啟的 Stillfeather 仍是一般權限。
 4. 安裝內容：`Stillfeather.exe`、`StillfeatherPicker.dll`（「其他程式開啟或儲存檔案時也用 Stillfeather」的取代元件，在設定開啟前不會被使用）、`Uninstall.exe`、開始功能表與桌面捷徑、「設定 › 應用程式 › 已安裝的應用程式」裡的項目（名稱、圖示、版本、大小、解除安裝命令）。
-5. 已經裝過時，預設位置就是原本的位置，直接覆蓋升級；Stillfeather 正在執行會先請它關閉。
+5. 已經裝過時，預設位置就是原本的位置，直接覆蓋升級；Stillfeather 正在執行會先請它關閉。關閉後 `Stillfeather.exe` 還是被占用（例如其他程式裡還開著 Stillfeather 的選擇器）時，先把它改名成 `Stillfeather.exe.old-<時間>` 讓出位置（Windows 允許改名執行中的 exe，和取代元件的作法相同），再寫入新的；改名的舊檔在它結束後，由主程式下次啟動、下次安裝或解除安裝刪掉（`install::old_exe_name`）。解除安裝時刪不掉的 exe 移到暫存資料夾，安裝資料夾才刪得乾淨。
 
 畫面跟隨 Windows 的淺色／深色模式，用與 Stillfeather 相同的米白／深灰配色、草書字樣與圓角按鈕，依每個螢幕的 DPI 縮放。鍵盤：Tab／Shift+Tab 移動、空白鍵切換勾選、Enter 安裝、Esc 取消。
 
@@ -57,13 +57,34 @@
   - 關：不動。
   - 從舊版（還沒有記下選擇）更新時，安裝程式照目前的狀態記下選擇，當初沒勾的使用者不會被改成預設。
 
+### 在資料夾中顯示（瀏覽器的下載等）
+
+瀏覽器下載清單的「在資料夾中顯示」、各種程式的「開啟所在資料夾」用的是 `SHOpenFolderAndSelectItems`。它先在 Windows 的殼層視窗清單（`IShellWindows`，檔案總管的每個視窗都登記在這裡）找正在顯示那個資料夾的視窗；找不到就用預設動詞開啟資料夾（Stillfeather 是預設檔案總管時開的是 Stillfeather，但只收到資料夾），再一直等清單裡出現那個資料夾的視窗，等到逾時為止。Stillfeather 原本不在清單裡，所以檔案不會被選取、每次都要等逾時（越點越慢），排隊中的要求還會一個接一個重新開啟視窗。
+
+`src/win/shellwin.rs` 的做法和 Files（files-community/Files 的 `src/Files.App.Launcher/OpenInFolder.cpp`，實際發行、在 Windows 10／11 可用）相同：
+
+- **登記**：主視窗（不是選擇器）開著時，以作用中分頁顯示的資料夾登記到殼層視窗清單：`RegisterPending` → `Register` → `OnNavigate`，`SWC_BROWSER`。換分頁、換資料夾時以 `OnNavigate` 更新；到首頁、搜尋結果時保留上一個資料夾（不必一直取消又重新登記；要選取的檔案不在作用中的資料夾時照一般的開啟要求處理），關閉視窗時取消。只有 Stillfeather 是預設檔案總管時才登記，不是的話「在資料夾中顯示」照常用 Windows 檔案總管；在設定切換預設檔案總管時立即重新確認。
+- **位置的格式**：資料夾的 PIDL 位元組陣列（`VT_ARRAY | VT_UI1`，同 `InitVariantFromBuffer`，Windows 自己用的格式）。第一版傳路徑字串（`VT_BSTR`），登記看起來成功，但 Windows 找不到這個視窗：每次都等到逾時、不會選取。
+- **登記的視窗**：登記執行緒自己的隱藏視窗（同 Files：`WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`、隱形、從不顯示、沒有父視窗），**視窗、物件與登記都在同一個執行緒**。第二版登記的是主視窗（屬於介面執行緒），`RegisterPending` 與 `Register` 的編號也配對，但 Windows 從來沒有找上它（記錄裡沒有任何呼叫）。`IWebBrowserApp::get_HWND` 與 `IOleWindow::GetWindow` 回答主視窗；隱藏視窗被啟用時（Windows 把找到的視窗拉到前面）改成把主視窗拉到前面。
+- **配對與自我檢查**：`RegisterPending` 與 `Register` 是同一次登記的前後兩半，`Register` 以視窗所屬的執行緒（`GetWindowThreadProcessId`）找到先前的 `RegisterPending`；兩次拿到的編號相同就是配對成功，不同時取消準備中的那一筆，位置靠 `OnNavigate`。每次登記與換位置之後，用 Windows 自己找視窗的參數（`FindWindowSW`，`SWC_BROWSER`、`SWFO_INCLUDEPENDING | SWFO_NEEDDISPATCH`；見 ReactOS 的 `shdocvw/winlist.cpp` 的 `WinList_FindFolderWindow`）找一次，結果寫進記錄。
+- **兩種識別碼**：位置的識別碼（PIDL）有兩種取得方式，同一個路徑得到的可能不同：`SHParseDisplayName`（Stillfeather 原本用的、PowerShell 與多數程式）與桌面資料夾的 `IShellFolder::ParseDisplayName`、路徑結尾加 `\`（Chrome、Edge 的「在資料夾中顯示」，見 Chromium 的 `chrome/browser/platform_util_win.cc`）。Windows 比對位置時把不同的識別碼當成不同的資料夾：診斷腳本從 PowerShell 呼叫 `SHOpenFolderAndSelectItems` 時 8 毫秒就選取了檔案，三秒後瀏覽器的呼叫卻找不到同一個視窗、改用預設動詞重新開啟。所以兩種不同時（逐位元組比較），各用一個隱藏視窗登記（記錄裡標「〔Chrome 格式〕」的那一份）；相同時只登記一份。啟動時的交接也一樣。
+- **呼叫者**：每次有其他程序呼叫進來，記下它的執行檔名稱與程序編號（`CoGetCallerTID`）；啟動時的交接也記下啟動這個程序的程式（父程序）。看得出瀏覽器有沒有找上 Stillfeather。
+- **啟動時的交接**（`shellwin::Handshake`，同 Files 的啟動程式）：資料夾還沒有人登記時，Windows 用預設動詞啟動 Stillfeather，等新程序閒下來（開始等候輸入）後找視窗。主視窗的登記要等資料夾讀好才做（啟動後約 0.2 秒），已經開著 Stillfeather 時新程序把位置交給原本的程序就結束，都趕不上（記錄裡自我檢查找得到，瀏覽器卻從來沒有呼叫進來）。所以由其他程式（父程序不是檔案總管）以單一資料夾啟動、Stillfeather 是預設檔案總管時，新程序在開始處理訊息之前，先在主執行緒登記一個隱藏視窗，最多等 0.5 秒選取（收到後再等 0.1 秒收齊）。收到就改成開啟那個檔案（開它所在的資料夾並選取）；沒有收到就照常開資料夾。交給原本的 Stillfeather 時再多等 10 秒，晚到的選取也轉過去。由檔案總管啟動（雙擊資料夾等）時不交接，不必等。這時還沒把位置交給已經開著的 Stillfeather，所以碰那個位置的檢查（是不是資料夾）放在最後：先看父程序與是不是預設檔案總管（不碰磁碟），網路位置（UNC、`GetDriveTypeW` 是 `DRIVE_REMOTE` 的對應磁碟機）與光碟機也不交接，只交接本機硬碟、隨身碟與 RAM 磁碟上的資料夾。離線的網路磁碟或 NAS 若照樣檢查，會卡到 SMB 逾時（數十秒），使用者什麼都看不到；不交接時照常交給主視窗在背景讀取（顯示讀取中，見上面「傳入檔案路徑」）。
+- **檔案總管重新啟動**：殼層視窗清單在 explorer.exe 裡，跟著不見。主視窗收到 `TaskbarCreated` 時重新取得清單再登記；登記失敗時也會重新取得一次。
+- **介面**：和 Files 相同：`IWebBrowserApp`（也是 `IUnknown`、`IDispatch`、`IWebBrowser`；`get_Application`／`get_Document` 等回答物件本身）、`IServiceProvider`（不管要哪一個服務，都照要的介面回答）、`IShellView`（也是 `IOleWindow`）。沒有 `IShellBrowser`、`IFolderView`。`Quit` 不關閉主視窗。
+- **選取**：Windows 呼叫 `IShellView::SelectItem`，給的是相對於資料夾的子項目識別碼（也接受完整的識別碼）；換成完整路徑後轉給介面執行緒，在作用中的那一欄選取並把視窗拉到前面。清單上還沒有這個檔案（剛下載好、自動重新整理還沒更新到）時重新讀取資料夾再選取；要選取的檔案不在作用中的資料夾時照一般的開啟要求處理。
+- **執行緒**：登記與這些物件都在自己的執行緒（STA，有訊息迴圈）：呼叫 explorer.exe 可能要等，檔案總管沒有回應時也不會卡住介面。關閉時最多等 0.5 秒取消登記。
+- **記錄**：每一步（含 HRESULT 與編號）、其他程式呼叫了哪些介面與方法（每種最多記 5 次）、選取的結果都寫進記錄資料夾的 `shell-windows.log`（開發版在 exe 旁；安裝版在 `%LOCALAPPDATA%\Stillfeather\logs`），超過 128 KB 時從頭寫。「在資料夾中顯示」沒有作用時先看這個檔案：有沒有「Register」、編號有沒有配對、自我檢查有沒有找到登記的視窗、有沒有收到 `QueryInterface`／`SelectItem`。
+- **診斷**：`DiagnoseShowInFolder.cmd`（執行 `tools\DiagnoseShowInFolder.ps1`）在另一個程序裡列出殼層視窗清單、用四種參數呼叫 `FindWindowSW` 找「下載」資料夾的視窗，再比較三種方式取得的資料夾識別碼（`SHParseDisplayName`、Chrome 用的桌面 `ParseDisplayName`、Firefox 用的 `ILCreateFromPath`），以兩種識別碼呼叫 `FindWindowSW`，再以和 Chrome 相同的參數呼叫 `SHOpenFolderAndSelectItems` 並計時，最後附上 `shell-windows.log` 的最後幾行，結果寫到桌面的 `Stillfeather-ShowInFolder.txt`。和 `shell-windows.log` 一起看：另一個程序找不找得到 Stillfeather、找到之後有沒有呼叫進來。
+- **關掉**：環境變數 `STILLFEATHER_SHELLWINDOWS=off`（偵錯用）。
+
 ### 攔截 Win+E（新版 Windows 11）
 
 2026 年 10 月起，Windows 11 25H2／26H2（組建 26200／26300）陸續以功能旗標推出新的 Win+E：直接開 Windows 檔案總管，**不看**上面那個 `opennewwindow` 命令，所以登錄的方式對 Win+E 沒有作用（開啟資料夾不受影響；還沒拿到新行為的電腦照舊有效）。Directory Opus、RustyFiles 等也都改成攔截按鍵。
 
 - **選項**：設定裡「設為預設檔案總管」底下的「攔截 Win+E 按鍵，改開 Stillfeather」，**預設開啟**；只在預設檔案總管是 Stillfeather 時有作用（沒勾預設檔案總管時這個選項停用）。選擇記在 `HKCU\Software\Stillfeather` 的 `WinEHook`（`1` 開、`0` 關，沒有這個值視為開啟）。
 - **背景程序** `Stillfeather.exe --win-e`（`src/win/wine.rs`）：沒有視窗、不載入介面，同一使用者、同一工作階段只執行一份。以低階鍵盤攔截（`WH_KEYBOARD_LL`）看到 Win+E（沒有同時按 Ctrl／Alt／Shift）就吃掉，送出一個未指派的按鍵（`vkE8`，避免放開 Win 時跳出開始功能表），再像原本的 Win+E 一樣開 Stillfeather：已經開著就在新分頁開首頁，沒開就以 `--open-home` 啟動。長按只開一次；判斷邏輯在 `feather_core::wine`（有單元測試）。攔截程序只做判斷，開啟交給另一個執行緒，不拖慢鍵盤。
-- **啟動與停止**：登入時由 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Stillfeather`（`"…\Stillfeather.exe" --win-e`）啟動；主程式每次啟動與設定改變時依選項與預設檔案總管啟動、停止或換成正確的那一份（`wine::maintain`），並整理登入啟動命令；背景程序每分鐘確認一次，不再需要就自己結束，每 10 分鐘重新掛上攔截（Windows 會悄悄拿掉逾時的攔截）。安裝程式寫入 exe 前先請它結束（它鎖住 exe），裝好後以一般權限再啟動；解除安裝時結束它並拿掉登入啟動。`build.ps1` 建置前也會結束開發版的背景程序。
+- **啟動與停止**：登入時由 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Stillfeather`（`"…\Stillfeather.exe" --win-e`）啟動；主程式每次啟動與設定改變時依選項與預設檔案總管啟動、停止或換成正確的那一份（`wine::maintain`），並整理登入啟動命令；背景程序每分鐘確認一次，不再需要就自己結束，否則重新掛上攔截（Windows 會悄悄拿掉逾時的攔截，不會通知；每分鐘重掛，失效最多一分鐘）。安裝程式寫入 exe 前先請它結束（它鎖住 exe），裝好後以一般權限再啟動；解除安裝時結束它並拿掉登入啟動。`build.ps1` 建置前也會結束開發版的背景程序。
 - **限制**：以系統管理員身分執行的視窗在最前面時，一般權限的攔截收不到按鍵，Win+E 會開 Windows 檔案總管。防毒軟體可能把鍵盤攔截當成可疑行為（沒有數位簽章時更容易）。
 
 ### 解除安裝
@@ -130,7 +151,7 @@ Stillfeather 打不開、或安裝資料夾被直接刪掉而沒有解除安裝�
 
 ### 發佈新版本
 
-1. 修改 `Cargo.toml` 的 `version`（必須比上一版大），`picker-dll/Cargo.toml` 的版本跟著改；更新說明寫在 `release-notes.txt`（會放進 `update.json`，提醒對話方塊會顯示），也加到 `CHANGELOG.md`。
+1. 修改 `Cargo.toml` 的 `version`（必須比上一版大），`picker-dll/Cargo.toml` 的版本跟著改；更新說明寫在 `release-notes.txt`，英文的寫在 `release-notes.en.txt`（分別放進 `update.json` 的 `notes` 與 `notes_en`，提醒對話方塊依介面語言顯示；沒有英文的就顯示中文的。0.1.2 以前的版本不認得 `notes_en`，會直接略過），也加到 `CHANGELOG.md`。
 2. 執行 `test.ps1`，再執行 `BuildSetup.cmd`（或 `.\build.ps1 -Setup`）：產生 `dist\StillfeatherSetup.exe`、`dist\update.json`（版本、下載網址、大小與 SHA-256）、`dist\update.json.sig`（私鑰在預設位置時）與 `dist\RestoreExplorer.cmd`。有程式碼簽章時，先簽好 exe 再產生 `update.json`（簽完安裝程式後要重新產生，否則 SHA-256 會不符），最後才簽 `update.json`。
 3. **掃毒**：把 `dist\StillfeatherSetup.exe`，以及裝好之後的 `Stillfeather.exe`、`StillfeatherPicker.dll`（在 `%LOCALAPPDATA%\Programs\Stillfeather`）丟到 [VirusTotal](https://www.virustotal.com) 掃一次。有誤判就到 Microsoft 的 [WDSI 檔案提交](https://www.microsoft.com/wdsi/filesubmission) 以「軟體開發人員」身分回報（選 Incorrectly detected as malware），其他防毒廠商也大多有誤判回報頁。
 4. **手動測試**：在乾淨的 Windows（例如 Windows 沙箱或虛擬機器）安裝、更新、解除安裝各一次；有改到開啟檔案視窗元件時，照「其他程式的開啟檔案視窗」的測試清單走一遍。
@@ -199,6 +220,17 @@ Stillfeather 打不開、或安裝資料夾被直接刪掉而沒有解除安裝�
 設定中的重點色與背景色仍可自訂；自訂背景色時，卡片、側欄與個人化卡片的顏色會依背景自動推算。**如果之前在 C# 版或這版設定過重點色／背景色，會繼續沿用舊顏色**；想換成新的預設配色，到設定按「還原預設」再「儲存」即可（常用位置會保留）。
 
 > 與 C# 版的版面不同：C# 版是「上方全寬工具列＋左下樹狀圖＋右下清單」的三區塊布局，這版改成側欄從上到下佔滿左側。
+
+## 螢幕閱讀器
+
+主清單、資料夾樹、選單是原生控制項，朗讀程式（Narrator）、NVDA 讀得到。自繪的部分用 Dynamic Annotation（`IAccPropServices`，`src/win/access.rs`）補上：
+
+- **按鈕**（`controls.rs`）：系統只把這個視窗類別當成一般的窗格（名稱是視窗文字，圖示按鈕的視窗文字就是提示文字）。補上角色：一般按鈕、下拉選單按鈕是「按鈕」，勾選方塊是「核取方塊」，分段選項（主題、語言）是「選項按鈕」；後兩者另外給狀態（勾選、焦點、停用），勾選或啟用改變時通知。
+- **對話方塊**（`dialog.rs`）：標題、內文、資料列與附註都是自己畫的；把完整的文字設成工作區的名稱，角色設成對話方塊，焦點移到按鈕時一起念出來。
+- 只呼叫系統的元件、不實作自己的 COM 物件，任何一步失敗都只是少了這些資訊。視窗結束前清掉覆寫的屬性。
+- 還沒處理：分頁列、路徑列、篩選籤、個人化卡片、快速預覽等自繪的區域。
+
+用朗讀程式（Ctrl+Win+Enter）測試：Tab 走過主視窗上方的按鈕（要念出名稱與「按鈕」）；設定裡的勾選方塊、主題與語言（要念出「已勾選／未勾選」，按空白鍵後要念出新的狀態）；刪除確認、更新提醒等對話方塊（打開時要念出標題與內文，再念焦點所在的按鈕）。
 
 ## 介面語言
 
@@ -295,14 +327,14 @@ Stillfeather 打不開、或安裝資料夾被直接刪掉而沒有解除安裝�
   - 它同時建立一個 Windows 原本的視窗物件（從 HKLM 登記的 `comdlg32.dll` 直接取得，不經過 COM 查表，所以不會繞回自己），程式的每個設定（類型、資料夾、選項、標題、自訂的勾選方塊與下拉選單 `IFileDialogCustomize`）都照樣交給它。
   - 程式呼叫 `Show` 時，把設定寫成請求檔，啟動 `Stillfeather.exe --pick <請求檔>`，等使用者選好（期間照常處理程式的視窗訊息、停用程式的視窗，和 Windows 的視窗一樣），再以 `IShellItem`／`IShellItemArray` 交回，並照 Windows 的做法呼叫程式的 `OnFileOk`（WinForms、WPF 等靠它取得檔名）。只有回傳 `S_FALSE` 才算拒絕（重新選）：Chrome、Edge 與 Electron 程式登記的 `AutoCloseDialogEventHandler` 回傳 `E_NOTIMPL`，Windows 的視窗照樣關閉，當成拒絕的話上傳時會一直重新跳出選擇器。
   - 找不到 Stillfeather、它無法啟動或異常結束、使用者按「使用 Windows 視窗」、要選的不是檔案系統項目（`FOS_ALLNONSTORAGEITEMS`，例如手機、媒體櫃）、程式在視窗裡加了自己的選項（`IFileDialogCustomize` 的 EnableOpenDropDown、AddMenu、AddPushButton、AddComboBox、AddRadioButtonList、AddCheckButton、AddEditBox，例如記事本的「編碼」、Office 的「開啟」下拉選單；Stillfeather 的視窗放不下它們，使用者選不到的話程式只會拿到預設值），或是 Stillfeather 自己的程式與 `explorer.exe` 要開檔時，直接顯示 Windows 原本的視窗：程式永遠選得到檔案。
-  - 等待選擇器時以 `MsgWaitForMultipleObjectsEx`（`MWMO_INPUTAVAILABLE`）照常處理程式的視窗訊息：程式不會顯示「沒有回應」，之前被看過而沒取走的訊息也不會讓它一直等。
+  - 等待選擇器時以 `MsgWaitForMultipleObjectsEx`（`MWMO_INPUTAVAILABLE`）照常處理程式的視窗訊息：程式不會顯示「沒有回應」，之前被看過而沒取走的訊息也不會讓它一直等。收到 `WM_QUIT`（程式正在結束）時放回佇列、不再等，結果當作取消（選擇器還在執行，結束代碼是 `STILL_ACTIVE`，不能當成「改用 Windows 的視窗」，否則程式結束前又跳出一個開檔視窗）；選擇器發現程式結束會自己關閉。
   - 載入在別人的程式裡執行，所以獨立建置成 `panic = "unwind"`，每個 COM 方法都接住 panic、回傳錯誤。只支援 x64：`IFileDialogCustomize` 以「最多三個暫存器參數」原封轉交，這在 x64 的呼叫慣例下才成立。32 位元程式讀另一個登錄位置，照常用 Windows 的視窗；以系統管理員身分執行的程式不讀目前使用者的類別登記，也照常用 Windows 的視窗。
   - 登記的是複製到 `%LOCALAPPDATA%\Stillfeather\Picker` 的那一份（舊版是 `%LOCALAPPDATA%\FeatherFiles\Picker`，新版啟動時換過來），不是程式資料夾裡的：程式資料夾被移走或刪掉時，其他程式的開檔視窗仍然正常（找不到 Stillfeather 就用 Windows 的視窗）。要啟動的 Stillfeather 記在 `HKCU\Software\Stillfeather` 的 `PickerExe`。主程式每次啟動會把登記的那一份更新成這一版（重新建置、更新之後）；舊的還載入在其他程式裡時先改名讓位，下次再刪。
   - 另一個程式已經取代了這個視窗時不覆寫，在設定裡回報。
 - **選擇器**（`Stillfeather.exe --pick`，`src/win/picker.rs`）：和一般的 Stillfeather 是不同的程序，不佔用單一實例、不檢查更新、不寫入設定檔與資料夾檢視記錄（主程式可能同時開著），記錄檔寫成 `picker-trace.log` 等。視窗蓋在要求的程式上（它的視窗是擁有者），置中在那個視窗上，預設 1100×720。
   - 只保留選檔需要的部分：上一頁／下一頁／上一層、重新整理、路徑列、搜尋、新增資料夾、排序與檢視、左側資料夾樹、檔案清單，底部是檔名欄、檔案類型、確定與取消，右上角是「使用 Windows 視窗」。沒有分頁、雙欄、篩選籤、個人化卡片、深淺色與設定按鈕；Ctrl+T 等分頁、雙欄、設定的快捷鍵不作用，「在新分頁開啟」改成在原地開啟。懸停預覽、右鍵選單、拖放、自動重新整理照常。
   - 雙擊或 Enter：資料夾就進去，檔案就選定（選資料夾時是進去，「選擇資料夾」才選定；沒有選取時選目前的資料夾）。只能選一個時清單是單選。
-  - 檔名欄：選取檔案會自動填入（多個以引號分開）；也可以輸入名稱、相對或完整路徑（資料夾就進去）、或 `*.png` 這種萬用字元（當作臨時的類型篩選）。程式要求檔案必須存在時，打的名稱找不到會說明。
+  - 檔名欄：選取檔案會自動填入（多個以引號分開）；也可以輸入名稱、相對或完整路徑（資料夾就進去）、或 `*.png` 這種萬用字元（當作臨時的類型篩選）。程式要求檔案必須存在時，打的名稱找不到會說明。在首頁（沒有目前的資料夾）只接受完整路徑：相對的名稱會提示先選一個資料夾（不交給程式相對路徑，也不拿它檢查是不是資料夾，否則會相對於選擇器程序的目前目錄）；另存新檔也一樣（Windows 的視窗在「本機」也不能存檔）。
   - 另存新檔（`mode=save`）：確定按鈕預設是「存檔」，檔名欄一開始就有焦點並選取主檔名。副檔名的規則照 Windows 的視窗（`picker::save_name`）：程式指定了預設副檔名才會補，補的是選中類型的第一個具體副檔名（「全部檔案」時用程式指定的）；名稱沒有副檔名、或副檔名是系統不認得的（`HKEY_CLASSES_ROOT\.副檔名` 不存在，例如「第 1.2 版」）時補上；`FOS_STRICTFILETYPES` 時副檔名不符合類型也補；加引號或結尾是點就照打的。換類型時檔名欄的副檔名跟著換。換資料夾時保留打好的檔名；雙擊已有的檔案就存成它。不能用的字元、裝置名稱（`CON`、`NUL`…）、資料夾不存在都先提示；檔案已經存在時依 `FOS_OVERWRITEPROMPT` 問要不要取代，唯讀檔案依 `FOS_NOREADONLYRETURN` 拒絕。
   - 檔案類型：依程式給的類型（例如「圖片 (*.jpg;*.png)」）篩選清單，資料夾一律顯示；大標題下方的摘要會標示「顯示 N 項」。
   - 起始資料夾：程式指定一定要用的 → 這個程式上次用的（記在設定檔旁的 `picker-folders.txt`，每個程式一筆、最多 64 筆）→ 程式建議的 → 使用者資料夾。
@@ -393,9 +425,10 @@ Stillfeather 打不開、或安裝資料夾被直接刪掉而沒有解除安裝�
 - **在同一資料夾貼上**：會由 Windows 自動建立「- 複製」副本。C# 版會拒絕這個操作。
 - **內容**：Alt+Enter 或右鍵開啟 Windows「內容」對話方塊。
 - **右鍵選單的版面**：Stillfeather 自己的命令都有圖示，分成幾段放在上面，接著是 Windows 與已安裝程式的項目，「內容」固定在最下面：
-  - 清單項目：開啟、在新分頁開啟（搜尋結果另有開啟所在位置）／剪下、複製、貼上、重新命名、刪除／釘選到常用位置或取消釘選、複製路徑
-  - 資料夾空白處：重新整理、全選／貼上、新增資料夾／釘選或取消釘選這個資料夾、複製目前資料夾路徑
-  - 側欄：開啟、在新分頁開啟／剪下、複製、刪除（磁碟根目錄不能剪下或刪除）／釘選或取消釘選、複製路徑
+  - 清單項目：開啟、在新分頁開啟（搜尋結果另有開啟所在位置；只選了一個資料夾時另有在這裡開啟 PowerShell 視窗）／剪下、複製、貼上、重新命名、刪除／釘選到常用位置或取消釘選、複製路徑
+  - 資料夾空白處：重新整理、全選／貼上、新增資料夾／釘選或取消釘選這個資料夾、複製目前資料夾路徑、在這裡開啟 PowerShell 視窗（搜尋結果沒有）
+  - 側欄：開啟、在新分頁開啟、在這裡開啟 PowerShell 視窗／剪下、複製、刪除（磁碟根目錄不能剪下或刪除）／釘選或取消釘選、複製路徑
+- **在這裡開啟 PowerShell 視窗**（`feather_core::terminal`、`fileops::open_powershell`）：裝了 PowerShell 7 時用它（`%ProgramFiles%\PowerShell\7\pwsh.exe`，或 Microsoft Store 版的應用程式執行別名），否則用內建的 Windows PowerShell 5.1。開在 Windows 終端機還是傳統主控台視窗，由 Windows 的「預設終端機應用程式」設定決定。參數是 `-NoExit -Command "Set-Location -LiteralPath '…'"`：整個命令放在雙引號裡（路徑裡連續的空白不會被壓成一個），單引號（含 ‘ ’ ‚ ‛）重複一次跳脫；路徑不太長時也當作工作目錄。Windows 自己的延伸項目「在這裡開啟 PowerShell 視窗」（Shift+右鍵）因此不再重複出現。
 - **右鍵選單包含已安裝程式的項目**：Windows 提供的那一段與檔案總管「顯示其他選項」相同來源。例如：
   - 在終端中開啟、使用 Visual Studio 開啟、Open Git GUI／Git Bash here、7-Zip
   - 開啟檔案的應用程式、傳送到 ▸、新增 ▸、建立捷徑、授與存取權給
@@ -467,10 +500,10 @@ Stillfeather 打不開、或安裝資料夾被直接刪掉而沒有解除安裝�
 Stillfeather 在 Windows 11 上建置與日常使用，0.1.0 起以安裝程式在 GitHub Releases 發佈。程式碼在 Linux 上也能做大部分的檢查（Win32 宣告以 `cfg_attr(windows, link(...))` 標註，所以整個專案在 Linux 上也能 `cargo check`），GitHub Actions 則在 Windows 上執行全部測試並建置安裝程式（見「GitHub Actions」）。
 
 - 整個專案（含所有 Win32 程式碼、安裝程式與 picker-dll）通過 `cargo check` 與 `cargo clippy` 型別檢查，沒有錯誤。
-- 179 個核心單元測試通過，涵蓋：連續啟動失敗的判斷（一分鐘內三次、太舊或看不懂的記號、時鐘調整）、更新簽章與公鑰的格式（以 Python cryptography 產生的 ECDSA P-256 測試向量）、Base64、資料夾搬移的清單、選擇器（請求與結果的格式與版本、舊版元件寫出的請求與結果仍然讀得懂、比自己新的格式改用 Windows 的視窗、換行與定位字元不會破壞格式、類型的顯示名稱、萬用字元與類型篩選、檔名欄的多個名稱與路徑解析、每個程式上次用的資料夾與上限）、自動重新整理（讀取排程與節流、讀取中又有變更不會漏掉、變更通知對應到哪個資料夾、資料夾改名與搬移後的新路徑、丟進資源回收筒視為刪除、往上找還在的資料夾、清單是否相同、側欄子資料夾的增減）、更新提醒（版本比較含預覽版、`update.json` 的解析與檢查，包括 Windows PowerShell 寫出的格式、https 網址拆解、檢查間隔與略過的版本、SHA-256 與標準測試向量）、安裝程式參數（含更新模式）、Office 文件的內容擷取（以 Python 產生、含真實命名空間與樣式的 .docx／.xlsx／.pptx／.odt／.ods／.odp 測試檔，以及隨機破壞的檔案不會閃退）、DEFLATE 解壓（stored、固定與動態 Huffman，與 zlib 輸出比對；壓縮炸彈會被上限擋下）、ZIP 讀取、容錯的 XML 讀取、Excel 日期序號與數字格式、快速預覽的檔案分類、文字編碼判斷與各語言語法上色、復原紀錄與資源回收筒紀錄檔解析、檢視模式與大圖示縮放、設定檔讀寫（含 C# 版寫出的 `\uXXXX` 跳脫）、路徑處理與麵包屑分段、自然排序、檔案類型分類與篩選統計、動畫補間與列動畫狀態、打字跳轉、.ico 轉資源檔、拖放目標檢查、分頁與雙欄規則、單一實例資料格式、檔案作業前的路徑檢查、路徑列的相對路徑、重新解析點標籤判斷（連結與雲端檔案）、刪除後的選取位置、預覽快取的淘汰規則、自然排序與舊版結果完全相同；設定檔解析另以隨機輸入測試，不會因格式錯誤而閃退。
-- 取代元件（picker-dll）28 個測試通過：哪些 IFileDialogCustomize 方法會讓它改用 Windows 的視窗、COM 結構與函式表的大小（IFileOpenDialog 29 格、IFileDialogCustomize 30 格、STARTUPINFOW、MSG）、HRESULT 與登錄根機碼的值，以及它引入的路徑與選擇器格式測試。實際載入到其他程式、與瀏覽器等的互動都要在 Windows 上才能確認。
-- 8 個 Windows 端測試（`cargo test --bin FeatherFiles`；以 CNG 驗證簽章測試向量的那一個只在 Windows 上執行）：Windows 內建的 CNG 接受和 PowerShell／.NET 相同格式的簽章與公鑰、竄改內容／簽章／公鑰都驗證不過、更新說明的截斷、變更通知的旗標處理，以及 Win32 結構的版面（含變更通知註冊用的 `SHChangeNotifyEntry`）——40 個結構與數位簽章檢查用的 `WINTRUST_DATA`、`GUITHREADINFO`（含清單與樹狀圖自繪用的 `NMLVCUSTOMDRAW`、`NMTVCUSTOMDRAW`）的大小與 x64 Windows SDK 相符，GUID 版面正確。
-- 介面、拖放、預覽、預設檔案總管、Win+E 攔截與開啟檔案視窗的實際行為以手動測試確認（開啟檔案視窗見上方的測試清單）。
+- 204 個核心單元測試通過，涵蓋：連續啟動失敗的判斷（一分鐘內三次、太舊或看不懂的記號、時鐘調整）、更新簽章與公鑰的格式（以 Python cryptography 產生的 ECDSA P-256 測試向量）、Base64、資料夾搬移的清單、選擇器（請求與結果的格式與版本、舊版元件寫出的請求與結果仍然讀得懂、比自己新的格式改用 Windows 的視窗、換行與定位字元不會破壞格式、類型的顯示名稱、萬用字元與類型篩選、檔名欄的多個名稱與路徑解析、每個程式上次用的資料夾與上限）、自動重新整理（讀取排程與節流、讀取中又有變更不會漏掉、變更通知對應到哪個資料夾、資料夾改名與搬移後的新路徑、丟進資源回收筒視為刪除、往上找還在的資料夾、清單是否相同、側欄子資料夾的增減）、更新提醒（版本比較含預覽版、`update.json` 的解析與檢查，包括 Windows PowerShell 寫出的格式、https 網址拆解、檢查間隔與略過的版本、SHA-256 與標準測試向量）、安裝程式參數（含更新模式）、Office 文件的內容擷取（以 Python 產生、含真實命名空間與樣式的 .docx／.xlsx／.pptx／.odt／.ods／.odp 測試檔，以及隨機破壞的檔案不會閃退）、DEFLATE 解壓（stored、固定與動態 Huffman，與 zlib 輸出比對；壓縮炸彈會被上限擋下）、ZIP 讀取、容錯的 XML 讀取、Excel 日期序號與數字格式、快速預覽的檔案分類、文字編碼判斷與各語言語法上色、復原紀錄與資源回收筒紀錄檔解析、檢視模式與大圖示縮放、設定檔讀寫（含 C# 版寫出的 `\uXXXX` 跳脫）、路徑處理與麵包屑分段、自然排序、檔案類型分類與篩選統計、動畫補間與列動畫狀態、打字跳轉、.ico 轉資源檔、拖放目標檢查、分頁與雙欄規則、單一實例資料格式、檔案作業前的路徑檢查、路徑列的相對路徑、重新解析點標籤判斷（連結與雲端檔案）、刪除後的選取位置、預覽快取的淘汰規則、自然排序與舊版結果完全相同；設定檔解析另以隨機輸入測試，不會因格式錯誤而閃退。
+- 取代元件（picker-dll）34 個測試通過：哪些 IFileDialogCustomize 方法會讓它改用 Windows 的視窗、COM 結構與函式表的大小（IFileOpenDialog 29 格、IFileDialogCustomize 30 格、STARTUPINFOW、MSG）、HRESULT 與登錄根機碼的值，以及它引入的路徑與選擇器格式測試。實際載入到其他程式、與瀏覽器等的互動都要在 Windows 上才能確認。
+- 13 個 Windows 端測試（`cargo test --bin FeatherFiles`；以 CNG 驗證簽章測試向量、殼層視窗清單物件的介面與參考計數這兩個只在 Windows 上執行）：殼層視窗清單（`IShellWindows`）、`IWebBrowserApp`、`IShellView` 函式表的大小與方法位置，PIDL 大小、記錄裡的 GUID 名稱，Windows 內建的 CNG 接受和 PowerShell／.NET 相同格式的簽章與公鑰、竄改內容／簽章／公鑰都驗證不過、更新說明的截斷、變更通知的旗標處理，以及 Win32 結構的版面（含變更通知註冊用的 `SHChangeNotifyEntry`）——40 個結構與數位簽章檢查用的 `WINTRUST_DATA`、`GUITHREADINFO`（含清單與樹狀圖自繪用的 `NMLVCUSTOMDRAW`、`NMTVCUSTOMDRAW`）的大小與 x64 Windows SDK 相符，GUID 版面正確。
+- 介面、拖放、預覽、預設檔案總管、Win+E 攔截、在資料夾中顯示與開啟檔案視窗的實際行為以手動測試確認（開啟檔案視窗見上方的測試清單）。
 
 若程式發生未預期的錯誤，會跳出訊息，並把詳細內容寫入 `%LOCALAPPDATA%\Stillfeather\rust-crash.log`，方便回報修正。程式若被系統直接結束而沒有任何訊息（存取違規、堆疊用盡、堆積損壞等），請看記錄資料夾（開發版是 `app\` 資料夾裡 exe 旁邊；用安裝程式裝的是 `%LOCALAPPDATA%\Stillfeather\logs`）：`trace.log` 逐步記下操作經過（最後一行就是出事的位置）、`crash.log` 記下例外代碼與位置、`stderr.log` 收集執行環境的錯誤訊息；每次啟動會重新開始記錄。效能與資源占用可用 `perf.ps1` 量測（見「效能量測」）。
 
@@ -523,6 +556,7 @@ src/
     install.rs      安裝／解除安裝與預設檔案總管的純邏輯：登錄值、備份還原清單、安裝位置檢查、安裝程式參數
     wordmark.rs     側欄的沾水筆草書字樣：筆畫資料與反鋸齒掃描線填色
     sorting.rs      自然排序、資料夾與檔案分開排
+    terminal.rs     「在這裡開啟 PowerShell 視窗」：選哪一個 PowerShell、參數與單引號跳脫
     workspace.rs    左右分頁與雙欄的狀態模型
     plan.rs         複製／移動／刪除前的路徑檢查
     ipc.rs          單一實例的開啟要求格式
@@ -565,6 +599,7 @@ src/
     update.rs       更新提醒：背景檢查、update.json 的簽章驗證（CNG）、提醒對話方塊、WinHTTP 下載、核對與數位簽章、啟動安裝程式更新
     instance.rs     單一實例（具名互斥鎖 + WM_COPYDATA）
     shellreg.rs     登錄（HKCU）讀寫、設為／取消預設檔案總管；安裝程式也共用
+    shellwin.rs     「在資料夾中顯示」：主視窗登記到殼層視窗清單（IShellWindows），提供 IWebBrowserApp／IShellView 選取檔案；記錄寫進 shell-windows.log
     theme.rs        配色、字型、圓角卡片繪製、深色模式
     icons.rs        系統圖示快取（小圖示與大圖示兩份索引一致的清單）、程式圖示載入
   setup/            安裝程式 StillfeatherSetup.exe（--features setup；安裝後也複製成 Uninstall.exe）
@@ -579,12 +614,14 @@ build.ps1           建置並輸出到 app\（含 StillfeatherPicker.dll）；-S
 tools/
   New-UpdateSigningKey.ps1  產生更新簽章的金鑰（只需要一次）：私鑰寫到專案以外的位置，公鑰寫進 assets\update-signing-key.txt
   Sign-Update.ps1   用私鑰簽 dist\update.json，產生 update.json.sig，並用建置好的 exe 驗證
+  DiagnoseShowInFolder.ps1  DiagnoseShowInFolder.cmd 執行的診斷（殼層視窗清單、FindWindowSW、SHOpenFolderAndSelectItems）
 RestoreExplorer.cmd 救援：不需要 Stillfeather 還在，把開啟資料夾、Win+E 與開啟檔案視窗改回 Windows 的（見「救援」）
 .github/workflows/build.yml  GitHub Actions：在 Windows 上測試並建置安裝程式
 LICENSE             GPL-3.0
 CHANGELOG.md        各版本的變更
 BuildSetup.cmd      雙擊產生安裝程式
 DiagnoseWinE.cmd    設為預設檔案總管後 Win+E 仍開 Windows 檔案總管時，在那台電腦上雙擊：把相關設定寫到桌面的 Stillfeather-WinE.txt（只讀取，可選擇重新啟動檔案總管再測）
+DiagnoseShowInFolder.cmd  「在資料夾中顯示」沒有選取檔案時，先在 Stillfeather 開著「下載」再雙擊：測試 Windows 找不找得到 Stillfeather，結果寫到桌面的 Stillfeather-ShowInFolder.txt（只讀取；最後會實際顯示「下載」裡最新的檔案）
 perf.ps1            效能量測（見「效能量測」），結果寫到 app\perf-report.txt
 examples/perf_core.rs  核心邏輯的效能量測
 testdata/           單元測試用的檔案；make_deflate.py、make_zip.py、make_office.py 重新產生（需要 Python 3）

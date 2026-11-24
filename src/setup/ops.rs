@@ -205,6 +205,43 @@ fn replace_file(from: &str, to: &str) -> Result<(), String> {
     })
 }
 
+/// 舊的 exe 還在執行（例如其他程式裡開著的 Stillfeather 選擇器，或剛關閉還沒完全結束的 Stillfeather）：
+/// Windows 允許改名執行中的 exe，所以先改名讓出位置（和取代元件的作法相同），再寫入新的。寫入失敗時改回原本的名稱。
+fn replace_in_use_exe(exe: &str, data: &[u8]) -> Result<(), String> {
+    let old = paths::join(&paths::parent(exe).unwrap_or_default(), &install::old_exe_name(now_ms()));
+    let (e, o) = (w(exe), w(&old));
+    if unsafe { MoveFileExW(e.as_ptr(), o.as_ptr(), 0) } == 0 {
+        return Err(trf!("{exe} 正在使用中。", "{exe} is in use."));
+    }
+    write_file_atomic(exe, data).inspect_err(|_| unsafe {
+        MoveFileExW(o.as_ptr(), e.as_ptr(), 0);
+    })
+}
+
+/// 刪掉之前改名讓位的舊 exe（還在執行的刪不掉，下次再試）
+fn remove_old_exes(dir: &str) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        if install::is_old_exe_name(&e.file_name().to_string_lossy()) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
+fn now_ms() -> u128 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+}
+
+/// 刪不掉（還在執行）的檔案：移到暫存資料夾（Windows 允許改名執行中的檔案），安裝資料夾才刪得乾淨；
+/// 那些程序結束後由系統的磁碟清理處理。暫存資料夾在另一個磁碟時移不過去，就留在原地。
+fn delete_or_move_to_temp(path: &str) -> bool {
+    if delete_file(path) {
+        return true;
+    }
+    let target = std::env::temp_dir().join(format!("Stillfeather-old-{}-{}", now_ms(), paths::file_name(path)));
+    std::fs::rename(path, target).is_ok()
+}
+
 fn delete_file(path: &str) -> bool {
     let p = w(path);
     let deleted = unsafe { DeleteFileW(p.as_ptr()) } != 0;
@@ -269,26 +306,22 @@ pub fn install(opts: &InstallOptions, progress: Progress) -> Result<(), String> 
     progress(15, tr!("寫入 Stillfeather…", "Writing Stillfeather…"));
     // 背景攔截 Win+E 執行中會鎖住 exe：先請它結束（裝好後再啟動，見 start_win_e）
     shellreg::stop_win_e(5000);
-    if let Err(first) = write_file_atomic(&exe, PAYLOAD) {
+    // 上次更新改名讓位、現在已經結束的舊 exe
+    remove_old_exes(dir);
+    if write_file_atomic(&exe, PAYLOAD).is_err() {
         // 正在執行的舊版鎖住了 exe：請它關閉後再寫一次
         if app_running() {
             progress(20, tr!("正在關閉執行中的 Stillfeather…", "Closing the running Stillfeather…"));
             close_app()?;
         }
         // 剛關閉的 Stillfeather（例如更新提醒啟動了這個安裝程式後自己關閉）可能還沒完全結束，exe 仍被占用：稍等再試
-        let mut last = first;
-        let written = (0..20).any(|_| {
+        let written = (0..8).any(|_| {
             std::thread::sleep(Duration::from_millis(250));
-            match write_file_atomic(&exe, PAYLOAD) {
-                Ok(()) => true,
-                Err(e) => {
-                    last = e;
-                    false
-                }
-            }
+            write_file_atomic(&exe, PAYLOAD).is_ok()
         });
+        // 還是被占用（例如其他程式裡還開著 Stillfeather 的選擇器）：舊的改名讓位，新的照樣裝上
         if !written {
-            return Err(last);
+            replace_in_use_exe(&exe, PAYLOAD)?;
         }
     }
 
@@ -489,8 +522,16 @@ pub fn uninstall(dir: &str, progress: Progress) -> Result<Vec<String>, String> {
 
     progress(70, tr!("刪除程式檔案…", "Deleting program files…"));
     let mut later = Vec::new();
-    if !delete_file(&exe) {
+    // 還在執行的（例如其他程式裡開著的 Stillfeather 選擇器）刪不掉：移到暫存資料夾
+    if !delete_or_move_to_temp(&exe) {
         errors.push(trf!("無法刪除 {exe}。", "Couldn't delete {exe}."));
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            if install::is_old_exe_name(&e.file_name().to_string_lossy()) {
+                delete_or_move_to_temp(&e.path().to_string_lossy());
+            }
+        }
     }
     for name in install::GENERATED_FILES {
         delete_file(&paths::join(dir, name));

@@ -537,6 +537,8 @@ pub mod glyph {
     pub const SELECT_ALL: char = '\u{E8B3}';
     pub const UNDO: char = '\u{E7A7}';
     pub const PREVIEW: char = '\u{E8FF}';
+    /// 命令提示字元（「在這裡開啟 PowerShell 視窗」）
+    pub const TERMINAL: char = '\u{E756}';
     // 排序、檢視選單（碼位依 Microsoft Segoe Fluent Icons 文件）
     pub const SORT: char = '\u{E8CB}';
     pub const VIEW_DETAILS: char = '\u{E8FD}';

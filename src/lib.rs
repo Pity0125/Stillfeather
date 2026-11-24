@@ -28,6 +28,7 @@ pub mod quicklook;
 pub mod session;
 pub mod settings;
 pub mod sorting;
+pub mod terminal;
 pub mod thumbs;
 pub mod typeahead;
 pub mod undo;

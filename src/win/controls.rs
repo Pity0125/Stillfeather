@@ -2,6 +2,7 @@
 //! 鍵盤焦點以重點色細框表示。也用作勾選方塊（Toggle）與分段選項（Segment）。
 //! 懸停、按下與勾選狀態都以短動畫淡入淡出。
 
+use super::access;
 use super::anim;
 use super::app;
 use feather_core::anim::Tween;
@@ -114,8 +115,21 @@ pub fn create(parent: HWND, id: u16, kind: Kind, text: &str, surface: Surface, f
             std::ptr::null(),
         );
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as isize);
+        // 螢幕閱讀器：系統只把這個類別當成一般的窗格，補上角色（名稱就是視窗文字）
+        match kind {
+            Kind::Toggle | Kind::Segment => {
+                access::set_role(hwnd, if kind == Kind::Toggle { access::ROLE_CHECKBUTTON } else { access::ROLE_RADIOBUTTON });
+                access::set_check_state(hwnd, false, false);
+            }
+            _ => access::set_role(hwnd, access::ROLE_PUSHBUTTON),
+        }
         hwnd
     }
+}
+
+/// 有勾選狀態的按鈕（核取方塊、分段選項）
+fn checkable(d: &Data) -> bool {
+    matches!(d.kind, Kind::Toggle | Kind::Segment)
 }
 
 unsafe fn data<'a>(hwnd: HWND) -> Option<&'a mut Data> {
@@ -133,6 +147,9 @@ pub fn set_checked(hwnd: HWND, checked: bool) {
                     anim::to(&mut d.check_fx, checked as u8 as f32, anim::TOGGLE_MS);
                 } else {
                     d.check_fx.snap(checked as u8 as f32);
+                }
+                if checkable(d) {
+                    access::set_check_state(hwnd, checked, true);
                 }
                 invalidate(hwnd);
             }
@@ -195,6 +212,7 @@ fn click(hwnd: HWND, d: &mut Data) {
     if matches!(d.kind, Kind::Toggle) {
         d.checked = !d.checked;
         anim::to(&mut d.check_fx, d.checked as u8 as f32, anim::TOGGLE_MS);
+        access::set_check_state(hwnd, d.checked, true);
     }
     invalidate(hwnd);
     unsafe {
@@ -279,10 +297,15 @@ unsafe extern "system" fn button_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         }
         WM_SETFOCUS | WM_KILLFOCUS | WM_ENABLE | WM_SETTEXT => {
             let r = DefWindowProcW(hwnd, msg, wparam, lparam);
+            // 覆寫了狀態的按鈕：焦點與啟用要自己更新（啟用改變時通知）
+            if checkable(d) && msg != WM_SETTEXT {
+                access::set_check_state(hwnd, d.checked, msg == WM_ENABLE);
+            }
             invalidate(hwnd);
             return r;
         }
         WM_NCDESTROY => {
+            access::clear(hwnd);
             let p = SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) as *mut Data;
             if !p.is_null() {
                 drop(Box::from_raw(p));

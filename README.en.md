@@ -101,6 +101,7 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 - **Filter chips**: show only folders, images, documents, media or archives in one click, with a count for each.
 - **Pinned locations**: drag a folder onto the sidebar to pin it, or pin and unpin from the right-click menu.
 - **The full right-click menu**: alongside Stillfeather's own commands, you get the entries installed programs add (Open in Terminal, 7-Zip, Git, Send to…), with no "Show more options" step.
+- **Open PowerShell window here**: right-click empty space in a folder, a folder, or a folder in the sidebar, no Shift needed. Uses PowerShell 7 when it's installed, otherwise the PowerShell built into Windows.
 - **Explorer's drag-and-drop rules**: dragging within a drive moves, dragging across drives copies, and Ctrl/Shift/Alt switch to copy, move or create a shortcut. Hover over a tab while dragging to switch to it.
 - **Live file list**: when another program adds, deletes, renames or changes files in a folder you're viewing, the list and sidebar update by themselves without pressing F5, and your selection and scroll position stay put. If the folder you're in is renamed, Stillfeather follows it; if it's deleted, it goes up one level.
 
@@ -140,7 +141,7 @@ These settings only affect the current user, not other people on the same PC, an
 
 ### Default file manager
 
-**Set as default file manager** (`設為預設檔案總管`): **Win+E** and double-clicking folders or drives on the desktop or in other programs open Stillfeather. If Stillfeather is already open, they open a new tab.
+**Set as default file manager** (`設為預設檔案總管`): **Win+E** and double-clicking folders or drives on the desktop or in other programs open Stillfeather. If Stillfeather is already open, they open a new tab. "Show in folder" in a browser's downloads list and "Open containing folder" in other programs also open Stillfeather, with the file selected.
 
 - Uncheck it in Settings and File Explorer is back immediately.
 - Windows' own "Open" stays in the right-click menu.
@@ -171,6 +172,7 @@ Windows 11 updates rolling out since October 2026 make Win+E open File Explorer 
 ### If folders won't open
 
 - If Stillfeather fails to start three times within a minute, it switches back to File Explorer by itself (default file manager, Win+E and file dialogs all go back to Windows), opens the location you asked for in File Explorer, and tells you how to report it. Once the problem is fixed, check the options again in Settings.
+- If the Stillfeather that's already open stops responding (for example, stuck in another program's right-click menu extension), double-clicking a folder or pressing Win+E opens the location in File Explorer instead.
 - If Stillfeather won't open at all, or its install folder was deleted without uninstalling: download `RestoreExplorer.cmd` from [Releases](https://github.com/Pity0125/Stillfeather/releases/latest) and double-click it. It only changes the current user's settings: it closes Stillfeather, points folders and Win+E back to File Explorer and restores the standard Windows file dialogs. Your files are never touched.
 
 ## Keyboard shortcuts
@@ -199,9 +201,6 @@ Windows 11 updates rolling out since October 2026 make Win+E open File Explorer 
 ## Updates
 
 Stillfeather checks for new versions in the background (at most once every 20 hours). When there is one, it shows the new version, download size and release notes, and you can choose Update, Skip this version, or Later.
-
-> [!IMPORTANT]
-> Version 0.1.1 was re-released under the same version number on 2026-11-24. PCs with the original build from 2026-11-22 won't get this update automatically: download `StillfeatherSetup.exe` from [Releases](https://github.com/Pity0125/Stillfeather/releases/latest) and reinstall once (your settings are kept). After that, updates arrive as usual.
 
 - The release info (`update.json`) is only accepted if it carries Stillfeather's signature. The signing key is kept offline, not on GitHub, so even if the GitHub account were compromised, nobody could publish a fake update that Stillfeather would install.
 - A downloaded installer only runs if its size and SHA-256 exactly match the published release. If your current version is code-signed, the new one must have a valid signature too.

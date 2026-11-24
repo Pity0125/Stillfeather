@@ -211,10 +211,24 @@ pub struct Manifest {
     pub size: u64,
     /// 這一版的更新說明（可以是空的）
     pub notes: String,
+    /// 英文的更新說明（`notes_en`，可以沒有）。0.1.2 以前的版本不認得這個欄位，會直接略過
+    pub notes_en: String,
+}
+
+impl Manifest {
+    /// 要顯示的更新說明：依介面語言選，那個語言沒有寫就用另一個
+    pub fn notes_for(&self, english: bool) -> &str {
+        let (first, other) = if english { (&self.notes_en, &self.notes) } else { (&self.notes, &self.notes_en) };
+        if first.is_empty() {
+            other
+        } else {
+            first
+        }
+    }
 }
 
 /// 解析並檢查 update.json：
-/// `{"version":"0.2.0","url":"https://…/StillfeatherSetup.exe","sha256":"<64 個十六進位字元>","size":1773056,"notes":"…"}`
+/// `{"version":"0.2.0","url":"https://…/StillfeatherSetup.exe","sha256":"<64 個十六進位字元>","size":1773056,"notes":"…","notes_en":"…"}`
 pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
     let bad = |what: &str| trf!("更新資訊格式不正確：{what}。", "The update information is invalid: {what}.");
     if text.len() as u64 > MAX_MANIFEST_BYTES {
@@ -238,12 +252,14 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
         Some(Value::Num(n)) if n.fract() == 0.0 && *n >= 1.0 && *n <= MAX_SETUP_BYTES as f64 => *n as u64,
         _ => return Err(bad(tr!("size 必須是安裝程式的位元組數", "size must be the installer's size in bytes"))),
     };
-    let notes = match root.get("notes") {
-        None | Some(Value::Null) => String::new(),
-        Some(Value::Str(s)) => clean_notes(s),
-        Some(_) => return Err(bad(tr!("notes 必須是文字", "notes must be text"))),
+    let text_field = |key: &str| match root.get(key) {
+        None | Some(Value::Null) => Ok(String::new()),
+        Some(Value::Str(s)) => Ok(clean_notes(s)),
+        Some(_) => Err(bad(&trf!("{key} 必須是文字", "{key} must be text"))),
     };
-    Ok(Manifest { version, url, sha256, size, notes })
+    let notes = text_field("notes")?;
+    let notes_en = text_field("notes_en")?;
+    Ok(Manifest { version, url, sha256, size, notes, notes_en })
 }
 
 /// 更新說明：統一換行、去掉控制字元，太長就截斷
@@ -505,6 +521,17 @@ mod tests {
         assert_eq!(hex(&m.sha256), SHA);
         assert_eq!(m.notes, "新增 Office 預覽\n修正 Win+E");
         assert_eq!(parse_manifest(&format!("\u{FEFF}{ok}")).unwrap(), m, "開頭的 BOM 沒關係");
+        // 沒有英文說明：英文介面也顯示中文的
+        assert_eq!(m.notes_en, "");
+        assert_eq!(m.notes_for(true), "新增 Office 預覽\n修正 Win+E");
+        // 有英文說明：依介面語言選
+        let both = manifest_json("0.2.0", "https://a/b", SHA, "1", r#","notes":"新增 Office 預覽","notes_en":"Office preview\r\nWin+E fix""#);
+        let m = parse_manifest(&both).unwrap();
+        assert_eq!(m.notes_for(false), "新增 Office 預覽");
+        assert_eq!(m.notes_for(true), "Office preview\nWin+E fix");
+        // 只有英文說明：中文介面也顯示英文的（總比沒有好）
+        let en_only = parse_manifest(&manifest_json("0.2.0", "https://a/b", SHA, "1", r#","notes_en":"Office preview""#)).unwrap();
+        assert_eq!(en_only.notes_for(false), "Office preview");
         let bad = [
             manifest_json("x", "https://a/b", SHA, "1", ""),
             manifest_json("0.2.0", "http://github.com/a.exe", SHA, "1", ""),
@@ -515,6 +542,7 @@ mod tests {
             manifest_json("0.2.0", "https://a/b", SHA, "1.5", ""),
             manifest_json("0.2.0", "https://a/b", SHA, "999999999999", ""),
             manifest_json("0.2.0", "https://a/b", SHA, "1", r#","notes":5"#),
+            manifest_json("0.2.0", "https://a/b", SHA, "1", r#","notes_en":["x"]"#),
             r#"{"version":"0.2.0"}"#.to_string(),
             "not json".to_string(),
             "x".repeat(70_000),

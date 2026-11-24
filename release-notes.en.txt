@@ -1,0 +1,7 @@
+Open PowerShell here, and Show in folder fixes:
+• New "Open PowerShell window here" in the right-click menu, no Shift needed
+• "Show in folder" from your browser's downloads now selects the file, and no longer slows down or keeps reopening windows
+• Offline network drives and NAS no longer freeze Stillfeather; the tab tells you why it can't connect
+• If Windows quietly drops the Win+E hook, it's back within a minute
+• Updates install even while Stillfeather's picker is open in another program
+• Update reminders show English notes in the English interface; screen readers announce buttons and dialog text

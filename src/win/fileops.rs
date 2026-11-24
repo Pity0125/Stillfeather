@@ -437,6 +437,39 @@ pub fn shell_open(owner: HWND, path: &str) -> Result<(), String> {
     }
 }
 
+/// 右鍵選單的「在這裡開啟 PowerShell 視窗」：在 `folder` 開一個 PowerShell（選哪一個與參數見 feather_core::terminal）。
+/// 位置同時以工作目錄與參數指定；工作目錄不能用（路徑太長等）或啟動失敗時，只用參數再試一次。
+pub fn open_powershell(owner: HWND, folder: &str) -> Result<(), String> {
+    use feather_core::terminal;
+    let env = |k: &str| std::env::var(k).ok();
+    // Microsoft Store 版的 pwsh.exe 是應用程式執行別名：用不跟隨重新剖析點的方式檢查它在不在
+    let exe = terminal::pick_powershell(env("ProgramFiles").as_deref(), env("LOCALAPPDATA").as_deref(), env("SystemRoot").as_deref(), |p| std::fs::symlink_metadata(p).is_ok());
+    let file = wide(&exe);
+    let params = wide(&terminal::powershell_args(folder));
+    let dir = wide(folder);
+    let launch = |with_dir: bool| -> bool {
+        let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.fMask = SEE_MASK_FLAG_NO_UI;
+        info.hwnd = owner;
+        info.lpFile = file.as_ptr();
+        info.lpParameters = params.as_ptr();
+        if with_dir {
+            info.lpDirectory = dir.as_ptr();
+        }
+        info.nShow = SW_SHOWNORMAL;
+        unsafe { ShellExecuteExW(&mut info) != 0 }
+    };
+    if terminal::usable_as_working_dir(folder) && launch(true) {
+        return Ok(());
+    }
+    if launch(false) {
+        return Ok(());
+    }
+    let e = last_error_text();
+    Err(trf!("無法開啟 PowerShell：{e}", "Couldn't open PowerShell: {e}"))
+}
+
 /// 顯示 Windows 的「內容」對話方塊。
 pub fn show_properties(owner: HWND, path: &str) {
     let verb = wide("properties");

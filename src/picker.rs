@@ -850,6 +850,12 @@ mod tests {
         assert_eq!(resolve("C:\\work\\deep", "\\Windows"), "C:\\Windows");
         assert_eq!(resolve("C:\\", "a.txt"), "C:\\a.txt");
         assert_eq!(resolve("\\\\srv\\share\\x", "\\y"), "\\\\srv\\share\\y");
+        // 首頁（沒有目前的資料夾）：只有完整路徑才是完整的，其他都是相對路徑，呼叫的地方要擋下來
+        assert_eq!(resolve("", "報告.txt"), "報告.txt");
+        assert!(!paths::is_fully_qualified(&resolve("", "報告.txt")));
+        assert_eq!(paths::parent(&resolve("", "報告.txt")), None);
+        assert!(!paths::is_fully_qualified(&resolve("", "\\報告.txt")));
+        assert!(paths::is_fully_qualified(&resolve("", "D:\\文件\\報告.txt")));
     }
 
     #[test]

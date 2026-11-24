@@ -6,6 +6,7 @@
 //! Ctrl+C 複製對話方塊文字（與 MessageBox 相同）。
 //! 開啟與關閉沿用 Windows 視窗原生的淡入縮放動畫。
 
+use super::access;
 use super::anim;
 use super::app;
 use super::clipboard;
@@ -336,6 +337,9 @@ fn show(owner: HWND, spec: Spec) -> i32 {
             move_window(h, layout.buttons[i]);
             buttons.push(h);
         }
+        // 螢幕閱讀器：標題、內文都是自己畫的，讀不到；把完整的文字設成工作區的名稱，角色設成對話方塊
+        access::set_role(dlg, access::ROLE_DIALOG);
+        access::set_name(dlg, &spec.plain_text());
         let default_index = spec.buttons.iter().position(|b| b.primary).unwrap_or(0);
         let mut pop = Tween::new(0.0).with_ease(Ease::OutBack);
         pop.retarget(1.0, anim::now(), anim::dur(POP_MS));
@@ -373,6 +377,7 @@ fn show(owner: HWND, spec: Spec) -> i32 {
             SetActiveWindow(owner);
         }
         SetWindowLongPtrW(dlg, GWLP_USERDATA, 0);
+        access::clear(dlg);
         DestroyWindow(dlg);
         let st = Box::from_raw(raw);
         if let Some(code) = quit {

@@ -526,6 +526,23 @@ pub struct FILETIME {
     pub dwHighDateTime: u32,
 }
 
+/// CreateToolhelp32Snapshot 列舉的程序（x64 是 568 位元組）
+#[repr(C)]
+pub struct PROCESSENTRY32W {
+    pub dwSize: u32,
+    pub cntUsage: u32,
+    pub th32ProcessID: u32,
+    pub th32DefaultHeapID: usize,
+    pub th32ModuleID: u32,
+    pub cntThreads: u32,
+    pub th32ParentProcessID: u32,
+    pub pcPriClassBase: i32,
+    pub dwFlags: u32,
+    pub szExeFile: [u16; 260],
+}
+
+pub const TH32CS_SNAPPROCESS: u32 = 0x2;
+
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct SYSTEMTIME {
@@ -1072,6 +1089,7 @@ pub const I_IMAGENONE: i32 = -2;
 pub const DRIVE_FIXED: u32 = 3;
 pub const DRIVE_REMOTE: u32 = 4;
 pub const DRIVE_CDROM: u32 = 5;
+pub const DRIVE_RAMDISK: u32 = 6;
 
 pub const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
 pub const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
@@ -1408,6 +1426,8 @@ extern "system" {
     pub fn OpenProcess(access: u32, inherit: BOOL, pid: u32) -> HANDLE;
     pub fn WaitForSingleObject(h: HANDLE, ms: u32) -> u32;
     pub fn QueryFullProcessImageNameW(process: HANDLE, flags: u32, name: *mut u16, size: *mut u32) -> BOOL;
+    pub fn OpenThread(access: u32, inherit: BOOL, tid: u32) -> HANDLE;
+    pub fn GetProcessIdOfThread(thread: HANDLE) -> u32;
     pub fn GetFileAttributesExW(name: *const u16, level: i32, info: *mut WIN32_FILE_ATTRIBUTE_DATA) -> BOOL;
     pub fn GetFullPathNameW(name: *const u16, len: u32, buf: *mut u16, part: *mut *mut u16) -> u32;
     pub fn ExpandEnvironmentStringsW(src: *const u16, dst: *mut u16, size: u32) -> u32;
@@ -1434,6 +1454,9 @@ extern "system" {
     pub fn SetStdHandle(which: u32, handle: HANDLE) -> BOOL;
     pub fn AddVectoredExceptionHandler(first: u32, handler: unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32) -> *mut c_void;
     pub fn GetCurrentThreadId() -> u32;
+    pub fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> HANDLE;
+    pub fn Process32FirstW(snapshot: HANDLE, entry: *mut PROCESSENTRY32W) -> BOOL;
+    pub fn Process32NextW(snapshot: HANDLE, entry: *mut PROCESSENTRY32W) -> BOOL;
     pub fn GetModuleFileNameW(module: HMODULE, buf: *mut u16, len: u32) -> u32;
     pub fn GetLocalTime(st: *mut SYSTEMTIME);
     pub fn MultiByteToWideChar(code_page: u32, flags: u32, src: *const u8, src_len: i32, dst: *mut u16, dst_len: i32) -> i32;
@@ -1454,6 +1477,7 @@ extern "system" {
 
 #[cfg_attr(windows, link(name = "user32", kind = "raw-dylib"))]
 extern "system" {
+    pub fn NotifyWinEvent(event: u32, hwnd: HWND, id_object: i32, id_child: i32);
     pub fn RegisterClassExW(wc: *const WNDCLASSEXW) -> u16;
     pub fn CreateWindowExW(
         ex: u32,
@@ -1471,6 +1495,9 @@ extern "system" {
     ) -> HWND;
     pub fn DefWindowProcW(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT;
     pub fn GetMessageW(msg: *mut MSG, hwnd: HWND, min: u32, max: u32) -> BOOL;
+    pub fn PeekMessageW(msg: *mut MSG, hwnd: HWND, min: u32, max: u32, remove: u32) -> BOOL;
+    pub fn PostThreadMessageW(thread: u32, msg: u32, w: WPARAM, l: LPARAM) -> BOOL;
+    pub fn RegisterWindowMessageW(name: *const u16) -> u32;
     pub fn TranslateMessage(msg: *const MSG) -> BOOL;
     pub fn DispatchMessageW(msg: *const MSG) -> LRESULT;
     pub fn IsDialogMessageW(dlg: HWND, msg: *mut MSG) -> BOOL;
@@ -1539,6 +1566,7 @@ extern "system" {
     pub fn WindowFromPoint(pt: POINT) -> HWND;
     pub fn FlashWindow(hwnd: HWND, invert: BOOL) -> BOOL;
     pub fn SetTimer(hwnd: HWND, id: usize, ms: u32, func: *const c_void) -> usize;
+    pub fn GetShellWindow() -> HWND;
     pub fn KillTimer(hwnd: HWND, id: usize) -> BOOL;
     pub fn TrackMouseEvent(tme: *mut TRACKMOUSEEVENT) -> BOOL;
     pub fn GetCursorPos(pt: *mut POINT) -> BOOL;
@@ -1634,13 +1662,17 @@ extern "system" {
 extern "system" {
     pub fn ShellExecuteW(hwnd: HWND, op: *const u16, file: *const u16, params: *const u16, dir: *const u16, show: i32) -> HINSTANCE;
     pub fn ShellExecuteExW(info: *mut SHELLEXECUTEINFOW) -> BOOL;
+    pub fn ILCombine(parent: *const c_void, child: *const c_void) -> *mut c_void;
+    pub fn SHGetPathFromIDListEx(pidl: *const c_void, path: *mut u16, cch: u32, flags: u32) -> BOOL;
     pub fn SHFileOperationW(op: *mut SHFILEOPSTRUCTW) -> i32;
     pub fn SHGetFileInfoW(path: *const u16, attrs: u32, info: *mut SHFILEINFOW, size: u32, flags: u32) -> usize;
     pub fn SHGetStockIconInfo(id: i32, flags: u32, info: *mut SHSTOCKICONINFO) -> HRESULT;
     pub fn SHGetKnownFolderPath(id: *const GUID, flags: u32, token: HANDLE, path: *mut *mut u16) -> HRESULT;
     pub fn SHCreateItemFromParsingName(path: *const u16, bc: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT;
     pub fn SHParseDisplayName(name: *const u16, bc: *mut c_void, pidl: *mut *mut c_void, sfgao_in: u32, sfgao_out: *mut u32) -> HRESULT;
+    pub fn IsUserAnAdmin() -> BOOL;
     pub fn SHBindToParent(pidl: *const c_void, riid: *const GUID, out: *mut *mut c_void, last: *mut *const c_void) -> HRESULT;
+    pub fn SHGetDesktopFolder(out: *mut *mut c_void) -> HRESULT;
     pub fn SHBindToObject(folder: *mut c_void, pidl: *const c_void, bc: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT;
     pub fn SHChangeNotify(event: i32, flags: u32, item1: *const c_void, item2: *const c_void);
     pub fn SHGetPropertyStoreFromParsingName(path: *const u16, bind: *mut c_void, flags: u32, iid: *const GUID, out: *mut *mut c_void) -> HRESULT;
@@ -1651,12 +1683,23 @@ extern "system" {
     pub fn DragFinish(drop: HANDLE);
 }
 
+#[cfg_attr(windows, link(name = "oleaut32", kind = "raw-dylib"))]
+extern "system" {
+    pub fn SysAllocString(s: *const u16) -> *mut u16;
+    pub fn SafeArrayCreateVector(vt: u16, lower: i32, count: u32) -> *mut c_void;
+    pub fn SafeArrayAccessData(psa: *mut c_void, data: *mut *mut c_void) -> HRESULT;
+    pub fn SafeArrayUnaccessData(psa: *mut c_void) -> HRESULT;
+    pub fn SafeArrayDestroy(psa: *mut c_void) -> HRESULT;
+    pub fn SysFreeString(s: *mut u16);
+}
+
 #[cfg_attr(windows, link(name = "ole32", kind = "raw-dylib"))]
 extern "system" {
     pub fn PropVariantClear(pv: *mut PROPVARIANT) -> HRESULT;
     pub fn CoInitializeEx(reserved: *const c_void, flags: u32) -> HRESULT;
     pub fn CoUninitialize();
     pub fn CoTaskMemFree(p: *mut c_void);
+    pub fn CoGetCallerTID(tid: *mut u32) -> HRESULT;
     pub fn CoCreateInstance(clsid: *const GUID, outer: *mut c_void, ctx: u32, iid: *const GUID, out: *mut *mut c_void) -> HRESULT;
     pub fn OleInitialize(reserved: *mut c_void) -> HRESULT;
     pub fn RegisterDragDrop(hwnd: HWND, target: *mut c_void) -> HRESULT;

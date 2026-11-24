@@ -6,7 +6,7 @@ use super::anim;
 use super::shellmenu::{self, Cmd, Part, Pick};
 
 /// 側欄的 Windows 右鍵選單中藏起來的項目：Stillfeather 已有的命令，以及在側欄無法使用的「重新命名」。
-const TREE_HIDDEN_VERBS: &[&str] = &["open", "explore", "opennewwindow", "opennewprocess", "opennewtab", "rename", "properties", "copyaspath", "cut", "copy", "delete"];
+const TREE_HIDDEN_VERBS: &[&str] = &["open", "explore", "opennewwindow", "opennewprocess", "opennewtab", "rename", "properties", "copyaspath", "cut", "copy", "delete", "powershell"];
 use super::clipboard;
 use super::fileops;
 use super::fs::{self, FolderListing, FsError};
@@ -589,7 +589,11 @@ impl App {
         let pinned = self.is_pinned(&path);
         let is_root = paths::parent(&path).is_none();
         // 版面同清單的右鍵選單：開啟／編輯／整理，接著是 Windows 與已安裝程式的項目，最後是內容
-        let open = vec![Cmd::new(id::OPEN, tr!("開啟", "Open"), glyph::OPEN), Cmd::new(id::OPEN_NEW_TAB, tr!("在新分頁開啟", "Open in new tab"), glyph::OPEN_NEW_TAB)];
+        let open = vec![
+            Cmd::new(id::OPEN, tr!("開啟", "Open"), glyph::OPEN),
+            Cmd::new(id::OPEN_NEW_TAB, tr!("在新分頁開啟", "Open in new tab"), glyph::OPEN_NEW_TAB),
+            Cmd::new(id::OPEN_POWERSHELL, super::pane::powershell_text(), glyph::TERMINAL),
+        ];
         let edit = vec![
             Cmd::new(id::CUT, tr!("剪下", "Cut"), glyph::CUT).enabled(!is_root),
             Cmd::new(id::COPY, tr!("複製", "Copy"), glyph::COPY),
@@ -629,6 +633,7 @@ impl App {
                 let side = self.active_side();
                 self.new_tab(side, &path);
             }
+            id::OPEN_POWERSHELL => self.open_powershell(&path),
             id::ADD_FAVORITE => self.add_favorites(vec![path]),
             id::REMOVE_FAVORITE => self.remove_favorite(&path),
             id::CUT | id::COPY => self.clipboard_paths(vec![path], cmd == id::CUT),

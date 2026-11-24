@@ -403,6 +403,12 @@ impl App {
                 None => picker::resolve(&folder, n),
             })
             .collect();
+        // 在首頁（沒有目前的資料夾）打的名稱不是完整路徑：不能交給程式（會變成相對於程式目前目錄的位置），
+        // 也不能拿去檢查是不是資料夾（同樣會相對於目前目錄）
+        if full.iter().any(|f| !paths::is_fully_qualified(f)) {
+            self.picker_needs_folder(false);
+            return;
+        }
         // 一個名稱而且是資料夾：進去（選資料夾時則是選定它）
         if full.len() == 1 && fs::is_dir(&full[0]) {
             if mode == Mode::Folders {
@@ -464,7 +470,7 @@ impl App {
         let edit = p.name_edit;
         // 打的是資料夾（例如 `..`、`D:\工作`）：進去，檔名欄換回原本的檔名
         let raw = picker::resolve(folder, text.trim_matches('"'));
-        if fs::is_dir(&raw) {
+        if paths::is_fully_qualified(&raw) && fs::is_dir(&raw) {
             let id = self.active_tab_id();
             self.navigate(id, &raw, NavKind::Normal, vec![]);
             set_window_text(edit, &original);
@@ -488,6 +494,11 @@ impl App {
             return;
         }
         let full = picker::resolve(folder, &name);
+        // 在首頁（沒有目前的資料夾）：不是完整路徑，存不了（Windows 的視窗在「本機」也不能存檔）
+        if !paths::is_fully_qualified(&full) {
+            self.picker_needs_folder(true);
+            return;
+        }
         if let Some(parent) = paths::parent(&full).filter(|d| !fs::is_dir(d)) {
             dialog::Spec::new(Icon::Warning, tr!("找不到資料夾", "Folder not found")).body(&trf!("{parent}\n\n請確認路徑是否正確。", "{parent}\n\nCheck that the path is correct.")).show(self.hwnd);
             self.picker_focus_name();
@@ -501,6 +512,15 @@ impl App {
             return;
         }
         self.picker_save(full);
+    }
+
+    /// 在首頁打了名稱：要先進到一個資料夾，或打完整路徑
+    fn picker_needs_folder(&mut self, saving: bool) {
+        let heading = if saving { tr!("這裡不能存檔，請選一個資料夾", "You can't save here. Choose a folder") } else { tr!("請先選一個資料夾", "Choose a folder first") };
+        dialog::Spec::new(Icon::Warning, heading)
+            .body(tr!("首頁不是資料夾。請先進到一個資料夾再輸入名稱，或輸入完整路徑（例如 D:\\文件\\報告.txt）。", "Home isn't a folder. Open a folder before typing a name, or type a full path (for example D:\\Documents\\Report.txt)."))
+            .show(self.hwnd);
+        self.picker_focus_name();
     }
 
     /// 存成 `path`：已經存在時先問要不要取代（程式要求時），唯讀的檔案不能選（程式要求時）。

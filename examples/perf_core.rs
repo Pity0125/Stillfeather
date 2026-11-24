@@ -123,7 +123,7 @@ fn main() {
         let base = entries(n, 42);
         let budget = if n <= 10_000 { 16.0 } else { 100.0 };
         for (col, label) in [(sorting::COL_NAME, "名稱"), (sorting::COL_SIZE, "大小"), (sorting::COL_TYPE, "類型"), (sorting::COL_MODIFIED, "修改日期")] {
-            let ms = time_ms_with(5, || base.clone(), |v| sorting::sort_entries(v, col, false));
+            let ms = time_ms_with(5, || base.clone(), |v| sorting::sort_entries(v, col, false, false));
             row(&format!("排序 {n:>7} 項（依{label}）"), ms, budget);
         }
     }

@@ -9,6 +9,23 @@ pub fn is_extended(p: &str) -> bool {
     p.starts_with("\\\\?\\") || p.starts_with("\\\\.\\")
 }
 
+/// 網路共用的路徑：`\\server\share\...` 或 `\\?\UNC\server\share\...`（裝置路徑 `\\.\` 不算）。
+pub fn is_unc(p: &str) -> bool {
+    if p.len() >= 8 && p.is_char_boundary(8) && p[..8].eq_ignore_ascii_case("\\\\?\\UNC\\") {
+        return true;
+    }
+    let b = p.as_bytes();
+    b.len() >= 2 && is_sep(b[0] as char) && is_sep(b[1] as char) && !is_extended(p)
+}
+
+/// 磁碟機路徑（`C:\...`、`\\?\C:\...`）的根目錄（`C:\`，給 GetDriveTypeW 用）；
+/// 網路共用、裝置路徑、不完整的路徑回傳 None。
+pub fn drive_root(p: &str) -> Option<String> {
+    let p = p.strip_prefix("\\\\?\\").unwrap_or(p);
+    let b = p.as_bytes();
+    (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':').then(|| format!("{}:\\", (b[0] as char).to_ascii_uppercase()))
+}
+
 pub fn normalize_separators(p: &str) -> String {
     p.replace('/', "\\")
 }
@@ -326,6 +343,27 @@ pub fn segments(path: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_and_drive_roots() {
+        assert!(is_unc("\\\\nas\\share\\下載"));
+        assert!(is_unc("//nas/share"));
+        assert!(is_unc("\\\\?\\UNC\\nas\\share\\x"));
+        assert!(is_unc("\\\\?\\unc\\nas\\share"));
+        assert!(!is_unc("\\\\?\\C:\\x"));
+        assert!(!is_unc("\\\\.\\PhysicalDrive0"));
+        assert!(!is_unc("C:\\Users"));
+        assert!(!is_unc("\\"));
+        assert!(!is_unc(""));
+        assert_eq!(drive_root("C:\\Users\\a").as_deref(), Some("C:\\"));
+        assert_eq!(drive_root("z:").as_deref(), Some("Z:\\"));
+        assert_eq!(drive_root("\\\\?\\D:\\很長的路徑").as_deref(), Some("D:\\"));
+        assert_eq!(drive_root("\\\\nas\\share"), None);
+        assert_eq!(drive_root("\\\\?\\UNC\\nas\\share"), None);
+        assert_eq!(drive_root("\\\\?\\Volume{1234}\\"), None);
+        assert_eq!(drive_root("relative\\x"), None);
+        assert_eq!(drive_root("下載"), None);
+    }
 
     #[test]
     fn roots() {
