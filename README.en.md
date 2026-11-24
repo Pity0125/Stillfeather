@@ -1,56 +1,35 @@
-<p align="center">
-  <img src="assets/FeatherFiles-1024.png" width="128" alt="Stillfeather icon">
-</p>
+<p align="center"><img src="assets/FeatherFiles-1024.png" width="72" alt=""></p>
 
 <h1 align="center">Stillfeather</h1>
 
-<p align="center">
-  A quiet, lightweight file manager for Windows
-</p>
+<p align="center">A lightweight Windows file manager with independent tabs in two panes and quick file previews.</p>
 
 <p align="center">
-  <a href="https://github.com/Pity0125/Stillfeather/releases/latest"><img src="https://img.shields.io/github/v/release/Pity0125/Stillfeather?label=latest" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4" alt="Windows 10 | 11">
-  <img src="https://img.shields.io/badge/Rust-native%20Win32-B7410E" alt="Rust, native Win32">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0"></a>
+  <a href="https://github.com/Pity0125/Stillfeather/releases/latest"><img src="https://img.shields.io/badge/Download-Windows%20x64-24654e?style=for-the-badge" alt="Download for Windows"></a>
 </p>
+<p align="center">Windows 10 / 11 · GPL-3.0 · <a href="README.md">繁體中文</a> · <b>English</b></p>
 
-<p align="center">
-  <a href="https://github.com/Pity0125/Stillfeather/releases/latest"><b>Download</b></a> ·
-  <a href="#install">Install</a> ·
-  <a href="#keyboard-shortcuts">Shortcuts</a> ·
-  <a href="https://github.com/Pity0125/Stillfeather/issues">Report a bug</a>
-</p>
+![Project files on the left and image thumbnails on the right in Stillfeather’s dark theme](docs/main-window.png)
 
-<p align="center">
-  <a href="README.md">繁體中文</a> · <b>English</b>
-</p>
+## Copy between folders in one window
 
-<!-- Screenshots: save them as docs/screenshot-light.png and docs/screenshot-dark.png (about 1600×1000),
-     and a short demo GIF as docs/demo.gif, then remove this comment wrapper.
-<p align="center"><img src="docs/screenshot-light.png" width="820" alt="Stillfeather in light mode"></p>
-<p align="center"><img src="docs/screenshot-dark.png" width="820" alt="Stillfeather in dark mode"></p>
-<p align="center"><img src="docs/demo.gif" width="820" alt="Tabs, dual-pane drag and drop, and quick preview"></p>
--->
+Press **Ctrl+Shift+D** to split the window. Open the destination on the right, select a file on the left, and click **Copy to other pane**. Both folders stay in view.
 
----
+![An example checklist being copied from the project folder into Brand assets](docs/demo.gif)
 
-Stillfeather is a file manager built to replace Windows File Explorer. Everything you already know still works the same way: the same shortcuts, the same drag-and-drop rules, the same right-click menu entries. On top of that you get tabs, dual panes, quick preview and Ctrl+Z undo, in a soft off-white and charcoal interface.
+## How it compares with Windows File Explorer
 
-It's written in Rust on native Win32, with no web engine, no .NET and no third-party packages. It stops redrawing once an animation ends, so it uses no CPU while idle.
+| Task | Windows File Explorer | Stillfeather |
+| --- | --- | --- |
+| Work in two folders | Snap two windows side by side | Split one window into two panes, each with its own tabs |
+| Preview a file | Toggle the preview pane with Alt+P | Hover to preview, then hold Space to enlarge |
+| Use a shell extension | Some classic commands are under **Show more options** in Windows 11 | Open the classic menu directly, including supported installed extensions |
 
-> [!NOTE]
-> The interface is currently in **Traditional Chinese** only. Where this page mentions a setting, the Chinese label is shown next to it so you can find it.
+## Install, switch back, or uninstall
 
-## Highlights
-
-- **Tabs and dual panes**: each pane has its own tabs, and you can drag files straight between them. Your tabs come back the next time you open it.
-- **Photo thumbnails**: photo folders open in large icons with thumbnails, and videos and PDFs get them too.
-- **Quick preview**: images, video, PDF, code, plus Word, Excel and PowerPoint, with no Office required.
-- **Ctrl+Z undo**: your last 30 renames, moves and deletes can be reversed.
-- **Whole-PC search**: multi-threaded, with results appearing as they're found.
-- **Takes over from Windows**: Win+E, double-clicking folders, and file pickers for web uploads can all use Stillfeather.
-- **Quiet**: its own dialogs, no system "ding", subtle animations.
+- **Try it alongside File Explorer.** Download `StillfeatherSetup.exe` from the button above. Clear **Set as default file manager** during setup to keep your current defaults. [Installation options](#install)
+- **Switch back.** In Stillfeather Settings, turn off the default file manager option. If you enabled replacement Open and Save dialogs, turn that option off too. If Stillfeather cannot start, run `RestoreExplorer.cmd` from the [latest release](https://github.com/Pity0125/Stillfeather/releases/latest).
+- **Uninstall.** Open Windows Settings → Apps, select Stillfeather from the installed apps list, and choose **Uninstall**. The uninstaller restores the previous folder-opening settings. [Uninstall details](#uninstall)
 
 ## Install
 

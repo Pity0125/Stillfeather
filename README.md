@@ -1,53 +1,35 @@
-<p align="center">
-  <img src="assets/FeatherFiles-1024.png" width="128" alt="Stillfeather 圖示">
-</p>
+<p align="center"><img src="assets/FeatherFiles-1024.png" width="72" alt=""></p>
 
 <h1 align="center">Stillfeather</h1>
 
-<p align="center">
-  安靜、輕巧的 Windows 檔案管理程式
-</p>
+<p align="center">免費、開源的 Windows 檔案管理器。左右兩欄各有分頁，搬檔案、看預覽都能在同一個視窗完成。</p>
 
 <p align="center">
-  <a href="https://github.com/Pity0125/Stillfeather/releases/latest"><img src="https://img.shields.io/github/v/release/Pity0125/Stillfeather?label=%E6%9C%80%E6%96%B0%E7%89%88" alt="最新版"></a>
-  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4" alt="Windows 10 | 11">
-  <img src="https://img.shields.io/badge/Rust-%E5%8E%9F%E7%94%9F%20Win32-B7410E" alt="Rust 原生 Win32">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/%E6%8E%88%E6%AC%8A-GPL--3.0-blue" alt="授權 GPL-3.0"></a>
+  <a href="https://github.com/Pity0125/Stillfeather/releases/latest"><img src="https://img.shields.io/badge/Download-Windows%20x64-24654e?style=for-the-badge" alt="下載 Windows 版"></a>
 </p>
+<p align="center">Windows 10 / 11 · GPL-3.0 · <b>繁體中文</b> · <a href="README.en.md">English</a></p>
 
-<p align="center">
-  <a href="https://github.com/Pity0125/Stillfeather/releases/latest"><b>下載最新版</b></a> ·
-  <a href="#安裝">安裝</a> ·
-  <a href="#快捷鍵">快捷鍵</a> ·
-  <a href="https://github.com/Pity0125/Stillfeather/issues">回報問題</a>
-</p>
+![Stillfeather 深色主畫面：左欄列出專案檔案，右欄顯示品牌素材縮圖](docs/main-window.png)
 
-<p align="center">
-  <b>繁體中文</b> · <a href="README.en.md">English</a>
-</p>
+## 在同一個視窗整理兩個資料夾
 
-<!-- 截圖：把截圖存成 docs/screenshot-light.png、docs/screenshot-dark.png（建議 1600×1000 左右），
-     錄好的操作 GIF 存成 docs/demo.gif，再把下面三行的註解拿掉。
-<p align="center"><img src="docs/screenshot-light.png" width="820" alt="Stillfeather 淺色模式"></p>
-<p align="center"><img src="docs/screenshot-dark.png" width="820" alt="Stillfeather 深色模式"></p>
-<p align="center"><img src="docs/demo.gif" width="820" alt="分頁、雙欄拖放與快速預覽"></p>
--->
+按 **Ctrl+Shift+D** 開啟雙欄，在右欄打開目的地，再從左欄選取檔案，按工具列的「複製到另一欄」。複製完成後，兩邊的檔案都看得到。
 
----
+![從左欄選取核對清單，複製到右欄的品牌素材資料夾](docs/demo.gif)
 
-Stillfeather 是用來取代 Windows 檔案總管的檔案管理程式。你已經熟悉的操作都還在：同樣的快捷鍵、同樣的拖放規則、同樣的右鍵選單項目。它再加上分頁、雙欄、快速預覽和 Ctrl+Z 復原，放進一個米白與深灰的柔和介面裡。
+## 與 Windows 檔案總管比較
 
-它用 Rust 搭配原生 Win32 撰寫，沒有網頁引擎、不需要 .NET，也不依賴任何第三方套件。動畫結束後就停止重畫，閒置時不耗 CPU。
+| 日常操作 | Windows 檔案總管 | Stillfeather |
+| --- | --- | --- |
+| 同時整理兩個資料夾 | 將兩個視窗並排 | 一個視窗分成兩欄，每欄各有自己的分頁 |
+| 看一眼檔案內容 | 按 Alt+P 開關預覽窗格 | 游標停在檔案上即可預覽，按住空白鍵放大 |
+| 使用右鍵擴充功能 | Windows 11 的部分傳統指令收在「顯示其他選項」 | 直接開啟傳統選單，列出已安裝且支援的擴充指令 |
 
-## 重點
+## 安裝、切回原版與解除安裝
 
-- **分頁與雙欄**：兩欄各有自己的分頁，檔案直接在兩欄之間拖放；下次開啟時還原上次的分頁。
-- **相片縮圖**：相片資料夾直接以大圖示顯示縮圖，影片、PDF 也有。
-- **快速預覽**：圖片、影片、PDF、程式碼，還有 Word、Excel、PowerPoint，不需要安裝 Office。
-- **Ctrl+Z 復原**：最近 30 個重新命名、移動與刪除都能還原。
-- **搜尋整台電腦**：多執行緒，結果邊找邊出現。
-- **接手 Windows**：Win+E、雙擊資料夾、網頁上傳的選檔視窗都可以改用 Stillfeather。
-- **安靜**：自己的對話方塊、沒有「叮」聲、細緻的動畫。
+- **先試用。** 點上方 Download，到最新版下載 `StillfeatherSetup.exe`。若想保留目前開啟資料夾的方式，安裝時取消勾選「設為預設檔案總管」。[完整安裝選項](#安裝)
+- **切回 Windows 檔案總管。** 在 Stillfeather「設定」取消勾選「設為預設檔案總管」。若也開啟了「開啟／另存新檔」視窗接管，一併關閉該選項。若程式已無法啟動，可從[最新版發行頁](https://github.com/Pity0125/Stillfeather/releases/latest)下載並執行 `RestoreExplorer.cmd`。
+- **解除安裝。** 到 Windows「設定 → 應用程式」，從已安裝的清單找到 Stillfeather，選「解除安裝」。解除安裝程式會還原先前開啟資料夾的設定。[解除安裝細節](#解除安裝)
 
 ## 安裝
 
