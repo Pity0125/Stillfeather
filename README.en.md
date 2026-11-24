@@ -90,6 +90,8 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 
 Hover over a file and a preview appears beside it. Hold Space to enlarge it in the middle of the window, release to close, and use the arrow keys while holding to move to the next item. If you'd rather not have previews pop up on hover, turn on **Preview with Space** (`按空白鍵預覽`) in Settings.
 
+![Hold Space to preview a Word document, press the Down arrow to browse a presentation, text file and image, then release Space to return to the list](docs/space-preview.gif)
+
 | Type | Preview |
 |---|---|
 | Images | All common formats; WebP, HEIC and others too if the system has the codec |
