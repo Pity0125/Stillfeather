@@ -72,6 +72,7 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 
 ### Familiar, but smoother
 
+- **Desktop folders open in tabs.** Set Stillfeather as your default file manager, then double-click different folders on your desktop. Each folder opens in its own tab in the same window.
 - **Tabs and dual panes**: the left and right panes each have their own tabs and back/forward history. Ctrl+Shift+D toggles single/dual pane. Drag files between panes, or use "Copy to other pane".
 - **Restore your tabs**: next time you open Stillfeather, both panes' tabs, the selected tabs, and dual-pane mode come back as you left them. The visible tabs load right away; the others load when you switch to them. When you open it with Win+E or by double-clicking a folder, that location opens in a new tab (or switches to it if it's already open). To turn this off, untick "還原上次的分頁" (restore tabs) in Settings.
 - **Breadcrumb path bar**: click any level to jump there. Press Ctrl+L to switch to a text box and type a full path, a relative path (`..`, a subfolder name), or a file path (opens its folder with the file selected).
