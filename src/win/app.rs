@@ -538,6 +538,8 @@ pub struct App {
     mouse_tracked: bool,
     /// 拖放中標示的放置位置：清單的資料夾列、整欄、側欄「常用位置」
     pub(super) drop_row: Option<(Side, usize)>,
+    /// 詳細資料檢視的框選（按下後到放開；見 marquee.rs）
+    pub(super) marquee: Option<super::marquee::Marquee>,
     pub(super) drop_pane: Option<Side>,
     pub(super) drop_pin: bool,
     pub(super) pending_pins: Vec<String>,
@@ -854,6 +856,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         promo_hot: false,
         mouse_tracked: false,
         drop_row: None,
+        marquee: None,
         drop_pane: None,
         drop_pin: false,
         pending_pins: Vec::new(),

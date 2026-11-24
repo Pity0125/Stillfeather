@@ -102,6 +102,7 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 - **Pinned locations**: drag a folder onto the sidebar to pin it, or pin and unpin from the right-click menu.
 - **The full right-click menu**: alongside Stillfeather's own commands, you get the entries installed programs add (Open in Terminal, 7-Zip, Git, Send to…), with no "Show more options" step.
 - **Open PowerShell window here**: right-click empty space in a folder, a folder, or a folder in the sidebar, no Shift needed. Uses PowerShell 7 when it's installed, otherwise the PowerShell built into Windows.
+- **Box selection and empty space**: like File Explorer, the selection highlight stops at the last column. Press on the empty space beside the items or below the last one and drag to draw a box and select several items (hold Ctrl to toggle, or Shift to add to what's already selected); click the empty space to clear the selection. To drag files, drag them from the items as before.
 - **Explorer's drag-and-drop rules**: dragging within a drive moves, dragging across drives copies, and Ctrl/Shift/Alt switch to copy, move or create a shortcut. Hover over a tab while dragging to switch to it.
 - **Live file list**: when another program adds, deletes, renames or changes files in a folder you're viewing, the list and sidebar update by themselves without pressing F5, and your selection and scroll position stay put. If the folder you're in is renamed, Stillfeather follows it; if it's deleted, it goes up one level.
 

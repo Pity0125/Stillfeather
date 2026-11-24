@@ -19,6 +19,7 @@ pub mod install;
 pub mod ipc;
 pub mod json;
 pub mod lru;
+pub mod marquee;
 pub mod namematch;
 pub mod office;
 pub mod paths;

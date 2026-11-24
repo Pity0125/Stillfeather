@@ -1,7 +1,5 @@
-Open PowerShell here, and Show in folder fixes:
-• New "Open PowerShell window here" in the right-click menu, no Shift needed
-• "Show in folder" from your browser's downloads now selects the file, and no longer slows down or keeps reopening windows
-• Offline network drives and NAS no longer freeze Stillfeather; the tab tells you why it can't connect
-• If Windows quietly drops the Win+E hook, it's back within a minute
-• Updates install even while Stillfeather's picker is open in another program
-• Update reminders show English notes in the English interface; screen readers announce buttons and dialog text
+Box selection and empty space, just like File Explorer:
+• In Details view, the selection highlight stops at the last column, with space left of the icons and right of the last column
+• Press on the empty space beside the items or below the last one and drag to box-select several items; hold Ctrl to toggle, or Shift to add to what's already selected
+• Drag past the top or bottom edge to scroll automatically; the box keeps up with the mouse without lag
+• Click the empty space to clear the selection, or right-click it for the folder menu; drag files from the items as before

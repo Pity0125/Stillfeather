@@ -980,6 +980,9 @@ pub const IDC_SIZEWE: usize = 32644;
 pub const IDC_HAND: usize = 32649;
 
 pub const SM_CXSMICON: i32 = 49;
+/// 按住滑鼠移動多遠才算拖曳
+pub const SM_CXDRAG: i32 = 68;
+pub const SM_CYDRAG: i32 = 69;
 pub const SM_CXICON: i32 = 11;
 pub const IMAGE_ICON: u32 = 1;
 pub const LR_DEFAULTCOLOR: u32 = 0;
@@ -990,6 +993,7 @@ pub const SM_CYSMICON: i32 = 50;
 pub const SM_CXVSCROLL: i32 = 2;
 
 pub const MONITOR_DEFAULTTONEAREST: u32 = 2;
+pub const LWA_COLORKEY: u32 = 0x1;
 pub const LWA_ALPHA: u32 = 0x2;
 pub const SMTO_ABORTIFHUNG: u32 = 0x2;
 
@@ -1239,6 +1243,7 @@ pub const LVM_GETSELECTEDCOUNT: u32 = 0x1032;
 pub const LVM_SETEXTENDEDLISTVIEWSTYLE: u32 = 0x1036;
 /// 清單自己的提示視窗（截斷的名稱滑鼠停上去時顯示完整名稱）
 pub const LVM_GETTOOLTIPS: u32 = 0x104E;
+pub const LVM_GETSELECTIONMARK: u32 = 0x1042;
 pub const LVM_SETSELECTIONMARK: u32 = 0x1043;
 pub const LVM_INSERTCOLUMNW: u32 = 0x1061;
 pub const LVM_EDITLABELW: u32 = 0x1076;
@@ -1265,6 +1270,8 @@ pub const LVTVIF_FIXEDWIDTH: u32 = 0x1;
 pub const LVIF_TEXT: u32 = 0x1;
 pub const LVIF_IMAGE: u32 = 0x2;
 pub const LVIF_STATE: u32 = 0x8;
+/// 項目往右縮排（單位是小圖示的寬度；詳細資料檢視才有作用）
+pub const LVIF_INDENT: u32 = 0x10;
 pub const LVIS_FOCUSED: u32 = 0x1;
 pub const LVIS_SELECTED: u32 = 0x2;
 pub const LVNI_ALL: u32 = 0x0;
@@ -1282,6 +1289,7 @@ pub const LVFI_PARTIAL: u32 = 0x8;
 pub const LVFI_WRAP: u32 = 0x20;
 pub const LVIR_BOUNDS: i32 = 0;
 pub const LVIR_ICON: i32 = 1;
+pub const LVIR_LABEL: i32 = 2;
 
 pub const HDM_GETITEMW: u32 = 0x120B;
 pub const HDM_SETITEMW: u32 = 0x120C;

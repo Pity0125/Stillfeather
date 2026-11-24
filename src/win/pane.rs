@@ -30,6 +30,11 @@ const COLUMNS: [(&str, &str, i32, i32); 5] = [
     ("所在位置", "Location", 260, LVCFMT_LEFT),
 ];
 
+/// 名稱欄最寬多少（邏輯像素，含左邊的縮排）；再寬的空間留白
+const NAME_MAX: i32 = 320;
+/// 最後一欄右邊至少留多少空白（邏輯像素）
+const RIGHT_BLANK: i32 = 32;
+
 /// 欄位標題（依介面語言）
 fn column_title(c: &(&'static str, &'static str, i32, i32)) -> &'static str {
     tr!(c.0, c.1)
@@ -164,6 +169,7 @@ impl App {
         }
         let slot = side.index();
         let mode = self.view[slot];
+        self.cancel_marquee(side);
         // 縮圖大小跟著檢視：還沒做的要求作廢，畫面上的項目重畫時再要求
         self.thumbs.forget_queue();
         let old_big = mode.big_icon_px().and_then(|base| self.icons.ensure_big(slot, view::scaled_icon_px(base, self.theme.dpi)));
@@ -276,6 +282,7 @@ impl App {
 
     /// 同步清單筆數；reset 時重新套用選取與捲動位置。
     pub(super) fn refresh_list(&mut self, side: Side, reset: bool) {
+        self.cancel_marquee(side);
         let list = self.lists[side.index()];
         let Some(id) = self.bound[side.index()] else {
             send(list, LVM_SETITEMCOUNT, 0, 0);
@@ -443,7 +450,9 @@ impl App {
         let date = if wide_mode { self.s(140) } else { self.s(112) };
         let kind = if wide_mode { self.s(118) } else { 0 };
         let location = if (search && avail >= self.s(600)) || avail >= self.s(800) { self.s(280).min(avail / 3) } else { 0 };
-        let name = (avail - size - date - kind - location).max(self.s(60));
+        // 名稱欄不撐滿整個寬度：右邊留下沒有資訊的空白（同檔案總管），選取的底色只到最後一欄，
+        // 可以從那裡框選、點一下取消選取（見 marquee.rs）。視窗窄時才縮小名稱欄。
+        let name = (avail - size - date - kind - location - self.s(RIGHT_BLANK)).min(self.s(NAME_MAX)).max(self.s(80));
         for (i, w) in [name, size, kind, date, location].iter().enumerate() {
             send(list, LVM_SETCOLUMNWIDTH, i, *w as LPARAM);
         }
@@ -663,6 +672,10 @@ impl App {
                         };
                         copy_to_buffer(&text, info.item.pszText, info.item.cchTextMax);
                     }
+                    if info.item.mask & LVIF_INDENT != 0 && info.item.iSubItem == 0 {
+                        // 詳細資料檢視：圖示不貼著左緣，左邊留出空白處（框選、點一下取消選取，見 marquee.rs）
+                        info.item.iIndent = if self.view[side.index()] == ViewMode::Details { super::marquee::INDENT } else { 0 };
+                    }
                     if info.item.mask & LVIF_IMAGE != 0 && info.item.iSubItem == 0 {
                         // 已經有縮圖：圖示用透明的那一格，縮圖在自繪的最後畫上去
                         let thumb = self.thumb_edge(side).is_some_and(|edge| self.thumbs.has(e, edge));
@@ -794,19 +807,16 @@ impl App {
                 let index = cd.nmcd.dwItemSpec;
                 let p = self.theme.pal;
                 let selected = send(list, LVM_GETITEMSTATE, index, LVIS_SELECTED as LPARAM) as u32 & LVIS_SELECTED != 0;
-                let hot = cd.nmcd.uItemState & CDIS_HOT != 0;
+                // 詳細資料檢視：滑鼠在這一列旁邊的空白處時不算懸停（見 marquee.rs）
+                let hot = cd.nmcd.uItemState & CDIS_HOT != 0 && !self.pointer_outside_items(side);
                 let (sv, hv) = self.list_fx[si].observe(index, selected, hot, anim::now(), anim::dur(anim::ROW_MS), anim::dur(anim::HOVER_MS));
                 if self.drop_row == Some((side, index)) {
                     // 拖放到這個資料夾：重點色外框
-                    let mut r = RECT { left: LVIR_BOUNDS, ..Default::default() };
-                    if send(list, LVM_GETITEMRECT, index, &mut r as *mut RECT as LPARAM) != 0 {
-                        let r = RECT { left: r.left.max(0) + self.s(2), top: r.top + 1, right: r.right - self.s(2), bottom: r.bottom - 1 };
+                    if let Some(r) = self.item_capsule(side, index) {
                         theme::round_rect(cd.nmcd.hdc, &r, self.s(12), Some(p.selected_tint), Some(p.accent));
                     }
                 } else if sv > 0.001 || hv > 0.001 {
-                    let mut r = RECT { left: LVIR_BOUNDS, ..Default::default() };
-                    if send(list, LVM_GETITEMRECT, index, &mut r as *mut RECT as LPARAM) != 0 {
-                        let r = RECT { left: r.left.max(0) + self.s(2), top: r.top + 1, right: r.right - self.s(2), bottom: r.bottom - 1 };
+                    if let Some(r) = self.item_capsule(side, index) {
                         let focused = GetFocus() == list;
                         let sel_color = if focused { p.selected_tint } else { theme::blend(p.selected_tint, p.surface, 0.6) };
                         let fill = anim::mix(anim::mix(p.surface, p.hover, hv), sel_color, sv);
@@ -861,7 +871,7 @@ impl App {
         }
     }
 
-    fn selection_changed(&mut self, side: Side) {
+    pub(super) fn selection_changed(&mut self, side: Side) {
         if self.updating_list {
             return;
         }
@@ -1061,12 +1071,13 @@ impl App {
 
     // ------------------------------------------------------------ 懸停預覽
 
-    /// 滑鼠（清單用戶區座標）下的列；不在項目上時是 -1。詳細資料檢視中任一欄都算。
+    /// 滑鼠（清單用戶區座標）下的列；不在項目上時是 -1。詳細資料檢視中任一欄都算，項目旁邊的空白不算。
     fn hover_row(&self, side: Side, pt: POINT) -> i32 {
         let list = self.lists[side.index()];
         let mut ht = LVHITTESTINFO { pt, flags: 0, iItem: -1, iSubItem: 0, iGroup: 0 };
         let index = send(list, LVM_SUBITEMHITTEST, 0, &mut ht as *mut LVHITTESTINFO as LPARAM) as i32;
-        if index >= 0 && ht.flags & LVHT_ONITEM != 0 {
+        // 詳細資料檢視中項目旁邊的空白不算（見 marquee.rs）
+        if index >= 0 && ht.flags & LVHT_ONITEM != 0 && !self.outside_items(side, pt) {
             index
         } else {
             -1
@@ -1145,6 +1156,7 @@ impl App {
             return;
         }
         self.hover.last = Some((side, pt.x, pt.y));
+        self.track_pointer(side, pt);
         let list = self.lists[side.index()];
         if !self.hover.tracking[side.index()] {
             let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: list, dwHoverTime: 0 };
@@ -1379,7 +1391,9 @@ impl App {
                         .unwrap_or((false, false));
                     let title = COLUMNS.get(col).map(column_title).unwrap_or("");
                     let right_align = COLUMNS.get(col).is_some_and(|c| c.3 == LVCFMT_RIGHT);
-                    let mut tr = RECT { left: r.left + self.s(12), right: r.right - self.s(10), ..r };
+                    // 名稱欄的項目往右縮排了一個圖示寬（見 marquee.rs），標題跟著對齊
+                    let indent = if col == 0 { self.icons.icon_px * super::marquee::INDENT } else { 0 };
+                    let mut tr = RECT { left: r.left + self.s(12) + indent, right: r.right - self.s(10), ..r };
                     if sorted {
                         let g = if desc { glyph::SORT_DOWN } else { glyph::SORT_UP };
                         let gw = self.s(14);
@@ -1463,12 +1477,39 @@ unsafe extern "system" fn list_subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lp
     let side = Side::from_index(sub_id);
     if let Some(a) = app::app_opt() {
         match msg {
-            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
                 a.cancel_hover();
                 a.activate(side);
+                // 詳細資料檢視按在空白處（項目旁邊、最後一列下面）：框選、點一下取消選取、右鍵是空白處的選單（見 marquee.rs）
+                if (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONDBLCLK) && a.marquee_press(side, wparam, lparam) {
+                    return 0;
+                }
+                if msg == WM_RBUTTONDOWN && a.blank_rpress(side, wparam, lparam) {
+                    return 0;
+                }
+            }
+            WM_RBUTTONUP => {
+                if a.blank_rrelease(side, lparam) {
+                    return 0;
+                }
             }
             WM_XBUTTONDOWN => a.cancel_hover(),
-            WM_MOUSEMOVE => a.on_list_mouse_move(side, lparam),
+            WM_MOUSEMOVE => {
+                if a.marquee_move(side, lparam) {
+                    return 0;
+                }
+                a.on_list_mouse_move(side, lparam)
+            }
+            WM_LBUTTONUP => {
+                if a.marquee_release(side) {
+                    return 0;
+                }
+            }
+            WM_CAPTURECHANGED => a.marquee_lost(side),
+            WM_TIMER if wparam == super::marquee::SCROLL_TIMER => {
+                a.marquee_tick(side);
+                return 0;
+            }
             WM_MOUSELEAVE => a.on_list_mouse_leave(side),
             WM_SETFOCUS => a.activate(side),
             WM_NOTIFY => {
