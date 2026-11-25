@@ -58,7 +58,9 @@ impl App {
         send(self.tree, TVM_SETBKCOLOR, 0, p.sidebar as LPARAM);
         send(self.tree, TVM_SETTEXTCOLOR, 0, p.sidebar_ink as LPARAM);
         send(self.tree, TVM_SETLINECOLOR, 0, p.sidebar_muted as LPARAM);
-        send(self.tree, TVM_SETITEMHEIGHT, self.s(36) as usize, 0);
+        // 列高至少容得下內容文字（文字調大時跟著加高）
+        let item_h = self.s(36).max(self.theme.fonts.body_height + self.s(16));
+        send(self.tree, TVM_SETITEMHEIGHT, item_h as usize, 0);
         invalidate(self.tree);
     }
 
@@ -437,11 +439,11 @@ impl App {
                 // 拖曳資料夾到這裡：標題變成重點色並提示放開即可釘選
                 let pill = RECT { left: row.left + self.s(4), top: row.top + self.s(4), right: row.right - self.s(4), bottom: row.bottom };
                 theme::round_rect(hdc, &pill, self.s(12), Some(theme::blend(p.accent, p.sidebar, 0.14)), Some(p.accent));
-                theme::draw_text(hdc, tr!("放開即可釘選到常用位置", "Release to pin to Favorites"), &tr, f.small_bold, p.accent, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                theme::draw_text(hdc, tr!("放開即可釘選到常用位置", "Release to pin to Favorites"), &tr, f.body_small_bold, p.accent, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                 return;
             }
-            theme::draw_text(hdc, &label, &tr, f.small_bold, p.sidebar_muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            let w = theme::text_width(hdc, &label, f.small_bold);
+            theme::draw_text(hdc, &label, &tr, f.body_small_bold, p.sidebar_muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            let w = theme::text_width(hdc, &label, f.body_small_bold);
             let cr = RECT { left: x + w + self.s(4), right: x + w + self.s(20), ..tr };
             let g = if expanded { glyph::SORT_DOWN } else { glyph::CHEVRON_RIGHT };
             let c = if hot { p.sidebar_ink } else { theme::blend(p.sidebar_muted, p.sidebar, 0.75) };
@@ -462,7 +464,7 @@ impl App {
 
         if kind == Some(NodeKind::Info) {
             let r = RECT { left: icon.left, right: row.right - self.s(8), ..row };
-            theme::draw_text(hdc, &label, &r, f.small, p.sidebar_muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            theme::draw_text(hdc, &label, &r, f.body_small, p.sidebar_muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             return;
         }
 
@@ -497,7 +499,7 @@ impl App {
         }
 
         let text = RECT { left: tr.left + self.s(2), right: row.right - self.s(10), ..row };
-        let font = if selected { f.ui_bold } else { f.ui };
+        let font = if selected { f.body_bold } else { f.body };
         theme::draw_text(hdc, &label, &text, font, p.sidebar_ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 

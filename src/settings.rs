@@ -74,6 +74,10 @@ pub const SIDEBAR_MAX: i32 = 500;
 pub const SPLIT_MIN: i32 = 25;
 pub const SPLIT_MAX: i32 = 75;
 pub const MAX_FAVORITES: usize = 100;
+/// 文字大小（百分比）：檔名、欄位、側欄與狀態列的字跟著放大；100 是標準大小（9 點）
+pub const TEXT_SIZES: [u32; 4] = [100, 115, 130, 150];
+pub const TEXT_SIZE_MIN: u32 = 100;
+pub const TEXT_SIZE_MAX: u32 = 200;
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -107,6 +111,8 @@ pub struct Settings {
     pub language: Language,
     /// 排序時資料夾一律在最前面（Rust 版專用）。關著時和檔案總管相同：遞增在前、遞減在後。
     pub folders_on_top: bool,
+    /// 文字大小（百分比，Rust 版專用；見 [`TEXT_SIZES`]）
+    pub text_size: u32,
 }
 
 impl Default for Settings {
@@ -131,6 +137,7 @@ impl Default for Settings {
             media_folder_icons: true,
             language: Language::System,
             folders_on_top: false,
+            text_size: 100,
         }
     }
 }
@@ -162,6 +169,9 @@ impl Settings {
             if parse_color(c).is_none() {
                 return Err(tr!("自訂顏色必須是 #RRGGBB，或留白使用預設。", "Custom colors must be #RRGGBB, or leave them blank to use the default.").to_string());
             }
+        }
+        if !(TEXT_SIZE_MIN..=TEXT_SIZE_MAX).contains(&self.text_size) {
+            return Err(trf!("文字大小需介於 {TEXT_SIZE_MIN}% 與 {TEXT_SIZE_MAX}%。", "The text size must be between {TEXT_SIZE_MIN}% and {TEXT_SIZE_MAX}%."));
         }
         if self.favorites.len() > MAX_FAVORITES {
             return Err(trf!("常用位置最多 {MAX_FAVORITES} 個。", "Up to {MAX_FAVORITES} favorites are allowed."));
@@ -204,6 +214,9 @@ impl Settings {
         }
         if let Some(n) = opt_int(&root, "SplitPercent")? {
             s.split_percent = n;
+        }
+        if let Some(n) = opt_int(&root, "TextSize")? {
+            s.text_size = n.max(0) as u32;
         }
         for (key, slot) in [
             ("CompactRows", &mut s.compact_rows),
@@ -260,7 +273,7 @@ impl Settings {
             format!("[\n{}\n  ]", items.join(",\n"))
         };
         format!(
-            "{{\n  \"ThemeMode\": {},\n  \"AccentColor\": {},\n  \"BackgroundColor\": {},\n  \"SidebarWidth\": {},\n  \"SplitPercent\": {},\n  \"CompactRows\": {},\n  \"ShowExtensions\": {},\n  \"ShowHidden\": {},\n  \"ImagePreview\": {},\n  \"PdfPreview\": {},\n  \"SpacePreview\": {},\n  \"PersonalizeCollapsed\": {},\n  \"ViewMode\": {},\n  \"UpdateReminders\": {},\n  \"RestoreTabs\": {},\n  \"MediaFolderIcons\": {},\n  \"Language\": {},\n  \"FoldersOnTop\": {},\n  \"Favorites\": {}\n}}",
+            "{{\n  \"ThemeMode\": {},\n  \"AccentColor\": {},\n  \"BackgroundColor\": {},\n  \"SidebarWidth\": {},\n  \"SplitPercent\": {},\n  \"CompactRows\": {},\n  \"ShowExtensions\": {},\n  \"ShowHidden\": {},\n  \"ImagePreview\": {},\n  \"PdfPreview\": {},\n  \"SpacePreview\": {},\n  \"PersonalizeCollapsed\": {},\n  \"ViewMode\": {},\n  \"UpdateReminders\": {},\n  \"RestoreTabs\": {},\n  \"MediaFolderIcons\": {},\n  \"Language\": {},\n  \"FoldersOnTop\": {},\n  \"TextSize\": {},\n  \"Favorites\": {}\n}}",
             json::quote(self.theme_mode.as_str()),
             opt(&self.accent_color),
             opt(&self.background_color),
@@ -279,6 +292,7 @@ impl Settings {
             self.media_folder_icons,
             json::quote(self.language.as_str()),
             self.folders_on_top,
+            self.text_size,
             favorites
         )
     }
@@ -334,6 +348,7 @@ mod tests {
             media_folder_icons: false,
             language: Language::English,
             folders_on_top: true,
+            text_size: 130,
         };
         let text = s.to_json();
         assert!(text.contains("專案"));
@@ -351,6 +366,20 @@ mod tests {
         assert_eq!(s.language, Language::System);
         // 舊的設定檔沒有 FoldersOnTop：和檔案總管相同（遞減時資料夾在後面）
         assert!(!s.folders_on_top);
+        // 舊的設定檔沒有 TextSize：標準大小
+        assert_eq!(s.text_size, 100);
+    }
+
+    /// 設定視窗的「不要啟用更新提醒」改成正向的「啟動時提醒更新」：存的一直是 UpdateReminders，
+    /// 以前勾了「不要啟用」的人（false）在新的勾選方塊上就是沒勾，選擇不會變。
+    #[test]
+    fn update_reminder_choice_is_kept() {
+        assert!(!Settings::from_json("{\"UpdateReminders\": false}").unwrap().update_reminders);
+        assert!(Settings::from_json("{\"UpdateReminders\": true}").unwrap().update_reminders);
+        // 沒有這個欄位（更早的版本）：提醒
+        assert!(Settings::from_json("{}").unwrap().update_reminders);
+        let s = Settings { update_reminders: false, ..Settings::default() };
+        assert!(!Settings::from_json(&s.to_json()).unwrap().update_reminders);
     }
 
     #[test]
@@ -379,6 +408,9 @@ mod tests {
             "{\"CompactRows\":\"yes\"}",
             "{\"ViewMode\":\"Huge\"}",
             "{\"ViewMode\":3}",
+            "{\"TextSize\":90}",
+            "{\"TextSize\":250}",
+            "{\"TextSize\":\"big\"}",
             "[1,2]",
         ];
         for b in bad {

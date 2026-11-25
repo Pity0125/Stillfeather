@@ -5,11 +5,12 @@
 use super::anim;
 use super::chips;
 use super::controls::{self, Kind, Surface};
+use super::crumbmenu;
 use super::crumbs;
 use super::dialog::{self, Icon};
 use super::dragdrop;
 use super::fileops::{self, OpReport};
-use super::fs::{self, FolderListing, FsError, Listing, SearchSummary};
+use super::fs::{self, FolderListing, FsError, Listing, MenuFolders, SearchSummary};
 use super::icons::{self, Icons};
 use super::instance;
 use super::preview;
@@ -117,6 +118,8 @@ pub mod id {
     pub const VIEW_APPLY_ALL: u16 = 262;
     /// 「檢視 › 顯示 › 相片資料夾用大圖示」
     pub const SHOW_MEDIA_ICONS: u16 = 263;
+    /// 「檢視 › 文字大小」：TEXT_SIZE_FIRST + 0～3（順序同 feather_core::settings::TEXT_SIZES）
+    pub const TEXT_SIZE_FIRST: u16 = 264;
     /// 選擇器（見 picker.rs）：確定、取消、改用 Windows 視窗、檔案類型選單、檔名欄
     pub const PICK_OK: u16 = 270;
     pub const PICK_CANCEL: u16 = 271;
@@ -171,6 +174,8 @@ pub enum WorkerMsg {
     SearchBatch { tab: TabId, generation: u64, entries: Vec<Entry>, scanned: usize, skipped: usize },
     SearchDone { tab: TabId, generation: u64, result: Result<SearchSummary, FsError> },
     Tree { item: HTREEITEM, token: u64, result: Result<FolderListing, FsError> },
+    /// 麵包屑的子資料夾選單讀好了（見 crumbmenu.rs）
+    CrumbMenu { token: u64, result: Result<MenuFolders, FsError> },
     Preview { generation: u64, path: String, result: Result<preview::Loaded, FsError> },
     FileOp(OpReport),
     Update(super::update::Event),
@@ -197,19 +202,16 @@ pub fn tab_model(side: Side) -> tabs::Model {
 }
 
 pub fn chip_model() -> chips::Model {
-    match app().active_tab() {
-        Some(t) => chips::Model {
-            counts: t.summary.counts,
-            filter: t.filter,
-            sort: chips::Sort::from_column(t.sort_col, t.desc),
-            recursive: t.recursive,
-        },
-        None => chips::Model { counts: [0; category::COUNT], filter: Category::All, sort: Some(chips::Sort::Name), recursive: true },
-    }
+    app().chips_model()
 }
 
 pub fn crumb_model() -> Vec<(String, String)> {
     app().active_tab().map(|t| paths::segments(&t.display_path())).unwrap_or_default()
+}
+
+/// 麵包屑哪一段的子資料夾選單開著（那一段的箭頭朝下）
+pub fn crumb_menu_segment() -> Option<usize> {
+    app_opt().and_then(|a| crumbmenu::segment(&a.crumb_menu))
 }
 
 // ---------------------------------------------------------------- 分頁狀態
@@ -265,6 +267,8 @@ pub(super) struct Tab {
     pub media: bool,
     /// 還原的分頁還沒讀取：第一次顯示時才讀（`requested` 是要開的資料夾）
     pub restored: bool,
+    /// 讀資料夾時無法讀取而略過的項目數（狀態列顯示）
+    pub skipped: usize,
 }
 
 impl Tab {
@@ -297,6 +301,7 @@ impl Tab {
             pick: None,
             media: false,
             restored: false,
+            skipped: 0,
         }
     }
 
@@ -396,15 +401,25 @@ pub(super) struct Layout {
     pub crumbs: RECT,
     /// 搜尋膠囊目前的外框（收合時是圓形按鈕的位置）
     pub search: RECT,
-    pub title: RECT,
-    pub subtitle: RECT,
     pub strips: [RECT; 2],
     pub chips: RECT,
+    /// 動作列哪些按鈕顯示文字；篩選籤放不下時依序拿掉
+    pub action_labels: ActionLabels,
     /// 檔案清單卡片
     pub panes: [RECT; 2],
     pub pane_splitter: Option<RECT>,
-    /// 底部浮動狀態列
+    /// 底部的單行狀態列（選擇器是檔名欄與按鈕）
     pub footer: RECT,
+}
+
+/// 動作列的按鈕要不要帶文字。空間不夠時先拿掉「排序」「檢視」的文字（圖示和箭頭就認得出來），
+/// 再拿掉「新增資料夾」的；文字仍是提示與螢幕閱讀器名稱。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ActionLabels {
+    #[default]
+    All,
+    NewFolderOnly,
+    None,
 }
 
 /// 第一列中段的計算結果：路徑列、搜尋外框，以及要搬動的子視窗。
@@ -441,10 +456,9 @@ enum Drag {
     Split,
 }
 
-/// 浮動狀態列左側：選取項目的圖示、名稱與細節。
+/// 底部狀態列左側：主要文字（項目數或「已選取 N 個項目」）與細節。
 #[derive(Default)]
 struct FooterInfo {
-    icon: i32,
     title: String,
     detail: String,
 }
@@ -510,6 +524,8 @@ pub struct App {
     pub(super) layout: Layout,
     drag: Option<Drag>,
     pub(super) preview: preview::State,
+    /// 麵包屑的子資料夾選單
+    pub(super) crumb_menu: crumbmenu::State,
     /// 更新提醒（上次檢查、略過的版本、等待提醒的新版本）
     pub(super) updates: super::update::Ui,
     /// 滑鼠停在清單項目上的預覽
@@ -568,6 +584,8 @@ pub struct App {
     pub(super) watch: super::watch::Watches,
     /// 清單縮圖（見 thumbs.rs）
     pub(super) thumbs: super::thumbs::Thumbs,
+    /// 捷徑、程式等每個檔案各自的圖示（見 fileicons.rs）
+    pub(super) file_icons: super::fileicons::FileIcons,
     /// 選擇器模式（其他程式要開啟檔案時）；一般視窗是 None
     pub(super) picker: Option<super::picker::Picker>,
 }
@@ -732,6 +750,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
     tabs::register(hinst);
     chips::register(hinst);
     crumbs::register(hinst);
+    crumbmenu::register(hinst);
     preview::register(hinst);
     settings_dialog::register(hinst);
 
@@ -783,7 +802,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
     let (ws, first) = Workspace::new();
     let mut tabs_map = HashMap::new();
     tabs_map.insert(first, Tab::new());
-    let icons = Icons::new(theme.dpi, settings.compact_rows);
+    let icons = Icons::new(theme.dpi, settings.compact_rows, theme.fonts.body_height);
     // 程式要求一律顯示隱藏的項目（FOS_FORCESHOWHIDDEN）
     let show_hidden = settings.show_hidden || pick.as_ref().is_some_and(|p| p.req.show_hidden);
     let default_view = settings.view_mode;
@@ -837,6 +856,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         layout: Layout::default(),
         drag: None,
         preview: preview::State::new(),
+        crumb_menu: crumbmenu::State::new(0),
         updates: super::update::Ui::load(),
         hover: Default::default(),
         default_path: fs::profile_dir(),
@@ -872,6 +892,7 @@ pub(super) fn run(paths_in: Vec<String>, pick: Option<super::picker::Picker>) ->
         search_open: Tween::new(0.0),
         watch: Default::default(),
         thumbs: Default::default(),
+        file_icons: Default::default(),
         picker: pick,
     });
     APP.store(Box::into_raw(boxed), Ordering::Release);
@@ -1056,6 +1077,7 @@ impl App {
         self.lists = [self.create_list(id::LIST_LEFT, Side::Left), self.create_list(id::LIST_RIGHT, Side::Right)];
         self.pane_status = [create_static(hwnd), create_static(hwnd)];
         self.preview.popup = preview::create_popup(hwnd);
+        self.crumb_menu.popup = crumbmenu::create_popup(hwnd);
 
         unsafe {
             let class = wide("tooltips_class32");
@@ -1103,14 +1125,21 @@ impl App {
 
     fn apply_fonts(&self) {
         let ui = self.theme.fonts.ui as WPARAM;
-        for h in [self.address, self.query, self.tree, self.lists[0], self.lists[1], self.tooltip] {
+        for h in [self.address, self.query, self.tooltip] {
             if h != 0 {
                 send(h, WM_SETFONT, ui, 1);
             }
         }
+        // 檔名、欄位與側欄用內容文字（跟著「檢視 › 文字大小」放大）；欄位標題的高度跟著清單的字型
+        let body = self.theme.fonts.body as WPARAM;
+        for h in [self.tree, self.lists[0], self.lists[1]] {
+            if h != 0 {
+                send(h, WM_SETFONT, body, 1);
+            }
+        }
         for h in self.pane_status {
             if h != 0 {
-                send(h, WM_SETFONT, self.theme.fonts.small as WPARAM, 1);
+                send(h, WM_SETFONT, self.theme.fonts.body_small as WPARAM, 1);
             }
         }
         if let Some(p) = self.picker.as_ref() {
@@ -1167,6 +1196,44 @@ impl App {
     }
 
     // ------------------------------------------------------------ 布局
+
+    /// 篩選籤列的內容（作用中分頁的各類型數量與篩選）。「搜尋含子資料夾」只在搜尋時顯示：
+    /// 搜尋框展開，或這個分頁正在搜尋、顯示搜尋結果。
+    pub(super) fn chips_model(&self) -> chips::Model {
+        let searching = self.search_open.target() > 0.5 || self.active_tab().is_some_and(|t| t.search_mode || t.searching);
+        match self.active_tab() {
+            Some(t) => chips::Model { counts: t.summary.counts, filter: t.filter, recursive: t.recursive, show_recursive: searching },
+            None => chips::Model { counts: [0; category::COUNT], filter: Category::All, recursive: true, show_recursive: searching },
+        }
+    }
+
+    /// 動作列右邊（動作按鈕、排序、檢視）的寬度
+    fn actions_width(&self, labels: ActionLabels) -> i32 {
+        let s = |v: i32| self.theme.s(v);
+        let act = s(34);
+        let round_actions = if self.picker_mode() { 0 } else { self.action_buttons.len() as i32 - 1 };
+        let pill_w = if labels == ActionLabels::None { act } else { s(126) };
+        let menu_w = if labels == ActionLabels::All { s(92) } else { s(54) };
+        pill_w + s(10) + round_actions * (act + s(6)) + s(8) + 2 * menu_w + s(6)
+    }
+
+    /// 動作列的按鈕能帶多少文字：篩選籤（搜尋時含「搜尋含子資料夾」）全部放得下為準，
+    /// 篩選籤不被省略
+    fn action_labels_fit(&self, cl: i32, cr: i32) -> ActionLabels {
+        let need = chips::natural_width(self.chips, &self.chips_model());
+        let room = cr - cl - self.s(16);
+        [ActionLabels::All, ActionLabels::NewFolderOnly].into_iter().find(|l| room - self.actions_width(*l) >= need).unwrap_or(ActionLabels::None)
+    }
+
+    /// 篩選籤的數量、搜尋狀態變了：動作按鈕要不要帶文字可能跟著變，變了才重排
+    fn sync_action_labels(&mut self) {
+        if self.picker_mode() || self.layout.content_right <= self.layout.content_left {
+            return;
+        }
+        if self.action_labels_fit(self.layout.content_left, self.layout.content_right) != self.layout.action_labels {
+            self.relayout();
+        }
+    }
 
     fn clear_visible(&self) -> bool {
         self.active_tab().is_some_and(|t| t.working() || !t.query.is_empty())
@@ -1253,6 +1320,9 @@ impl App {
             }
         }
         self.place_top_row();
+        // 「搜尋含子資料夾」跟著搜尋框出現、收起
+        invalidate(self.chips);
+        self.sync_action_labels();
     }
 
     /// 依目前狀態展開或收合搜尋。
@@ -1303,7 +1373,7 @@ impl App {
         let s = |v: i32| self.theme.s(v);
         let w = rc.width();
         let h = rc.height();
-        let m = s(14);
+        let m = s(10);
         let mut l = Layout::default();
         let mut pos: Vec<(HWND, RECT, bool)> = Vec::new();
 
@@ -1327,9 +1397,9 @@ impl App {
         l.content_left = cl;
         l.content_right = cr;
 
-        // ---- 第一列：導覽、麵包屑、搜尋膠囊、圓形按鈕
+        // ---- 第一列：導覽、路徑列、搜尋膠囊、圓形按鈕。路徑列最後一段（目前資料夾）用較大的字，取代原本的大標題
         let row_top = m;
-        let row_h = s(42);
+        let row_h = s(40);
         let nav = s(34);
         let nav_y = row_top + (row_h - nav) / 2;
         for (i, b) in [self.back_btn, self.forward_btn, self.up_btn, self.refresh_btn].iter().enumerate() {
@@ -1356,15 +1426,15 @@ impl App {
         l.search = row.search;
         pos.extend(row.windows);
 
-        // ---- 大標題與摘要；右側是動作按鈕
-        let title_top = row_top + row_h + s(20);
-        let act = s(36);
-        let pill_w = s(126);
-        let round_actions = if pick { 0 } else { self.action_buttons.len() as i32 - 1 };
-        let base_w = pill_w + s(10) + round_actions * (act + s(6));
-        // 視窗窄到標題剩不到 240 時，排序、檢視只顯示圖示與箭頭
-        let menu_w = if cr - cl - base_w - (s(14) + 2 * s(92)) - s(20) >= s(240) { s(92) } else { s(54) };
-        let actions_w = base_w + s(8) + 2 * menu_w + s(6);
+        // ---- 第二列（動作列）：左邊是類型篩選籤，右邊是動作按鈕、排序、檢視。
+        // 篩選籤放不下時，「新增資料夾」「排序」「檢視」只顯示圖示（文字仍是提示）
+        let bar_top = row_top + row_h + s(6);
+        let act = s(34);
+        let labels = if pick { ActionLabels::All } else { self.action_labels_fit(cl, cr) };
+        l.action_labels = labels;
+        let pill_w = if labels == ActionLabels::None { act } else { s(126) };
+        let menu_w = if labels == ActionLabels::All { s(92) } else { s(54) };
+        let actions_w = self.actions_width(labels);
         let mut ax = cr - actions_w;
         for (i, b) in self.action_buttons.iter().enumerate() {
             if pick && i > 0 {
@@ -1372,30 +1442,31 @@ impl App {
                 continue;
             }
             let bw = if i == 0 { pill_w } else { act };
-            pos.push((*b, RECT::new(ax, title_top + s(6), bw, act), true));
+            pos.push((*b, RECT::new(ax, bar_top, bw, act), true));
             ax += bw + if i == 0 { s(10) } else { s(6) };
         }
         ax += s(8);
         for b in [self.sort_btn, self.view_btn] {
-            pos.push((b, RECT::new(ax, title_top + s(6), menu_w, act), true));
+            pos.push((b, RECT::new(ax, bar_top, menu_w, act), true));
             ax += menu_w + s(6);
         }
-        l.title = RECT { left: cl, top: title_top, right: cr - actions_w - s(20), bottom: title_top + s(44) };
-        l.subtitle = RECT { left: cl + s(2), top: l.title.bottom, right: l.title.right, bottom: l.title.bottom + s(22) };
-
-        // ---- 分頁、篩選籤（選擇器沒有：清單卡片直接接在標題下）
-        let strip_top = l.subtitle.bottom + s(14);
-        let strip_h = s(40);
-        l.chips = RECT { left: cl, top: strip_top + strip_h + s(10), right: cr, bottom: strip_top + strip_h + s(10) + s(36) };
+        l.chips = RECT { left: cl, top: bar_top, right: (cr - actions_w - s(16)).max(cl), bottom: bar_top + act };
         pos.push((self.chips, l.chips, !pick));
 
-        // ---- 底部浮動狀態列（選擇器是檔名欄、類型與確定／取消）與清單卡片
-        l.footer = RECT { left: cl, top: h - m - s(if pick { 62 } else { 54 }), right: cr, bottom: h - m };
+        // ---- 分頁（選擇器沒有：清單卡片直接接在動作列下）
+        let strip_top = bar_top + act + s(4);
+        // 分頁列：標題跟著文字大小放大，列高也跟著加高
+        let strip_h = s(32).max(self.theme.fonts.body_height + s(14));
+
+        // ---- 底部的單行狀態列（選擇器是檔名欄、類型與確定／取消）與清單卡片
+        // 狀態列的字跟著文字大小放大，高度至少容得下一行
+        let status_h = if pick { s(62) } else { s(26).max(self.theme.fonts.body_height + s(8)) };
+        l.footer = RECT { left: cl, top: h - m - status_h, right: cr, bottom: h - m };
         if pick {
             pos.extend(self.picker_bar_layout(l.footer));
         }
-        let cards_top = if pick { strip_top } else { l.chips.bottom + s(14) };
-        let cards_bottom = l.footer.top - s(14);
+        let cards_top = if pick { bar_top + act + s(10) } else { strip_top + strip_h + s(4) };
+        let cards_bottom = l.footer.top - s(if pick { 14 } else { 6 });
         if self.ws.dual {
             let gap = s(16);
             let left_w = ((cr - cl - gap) * self.settings.split_percent / 100).max(1);
@@ -1410,13 +1481,16 @@ impl App {
         l.strips[1] = RECT { left: l.panes[1].left, top: strip_top, right: cr, bottom: strip_top + strip_h };
         pos.push((self.strips[0], l.strips[0], !pick));
         pos.push((self.strips[1], l.strips[1], self.ws.dual && !pick));
+        // 單欄時清單直接填滿卡片（項目數、選取資訊都在底部狀態列）；雙欄時每張卡片底部各有一行自己的狀態
+        let pane_status = self.ws.dual && !pick;
         for i in 0..2 {
             let visible = i == 0 || self.ws.dual;
             let pane = l.panes[i];
-            let list = RECT { left: pane.left + s(10), top: pane.top + s(10), right: pane.right - s(10), bottom: pane.bottom - s(32) };
-            let status = RECT { left: pane.left + s(20), top: list.bottom + s(4), right: pane.right - s(20), bottom: pane.bottom - s(6) };
+            let status_h = if pane_status { s(22).max(self.theme.fonts.body_height + s(6)) } else { 0 };
+            let list = RECT { left: pane.left + s(10), top: pane.top + s(6), right: pane.right - s(10), bottom: pane.bottom - s(6) - status_h };
+            let status = RECT { left: pane.left + s(20), top: list.bottom + s(2), right: pane.right - s(20), bottom: pane.bottom - s(4) };
             pos.push((self.lists[i], list, visible));
-            pos.push((self.pane_status[i], status, visible));
+            pos.push((self.pane_status[i], status, visible && pane_status));
         }
         self.layout = l;
         move_windows(&pos);
@@ -1473,18 +1547,20 @@ impl App {
         }
     }
 
-    /// 大標題與其下的摘要文字。
-    fn title_texts(&self) -> (String, String) {
-        let Some(t) = self.active_tab() else { return ("Stillfeather".into(), String::new()) };
+    /// 沒有選取時狀態列的文字（主要文字、細節）：資料夾的項目總數與摘要（資料夾、檔案數與大小）；
+    /// 搜尋時是搜尋的字與進度；讀取中、讀不到、取消時是那個狀態。原本放在大標題底下。
+    fn folder_status_line(&self) -> (String, String) {
+        let Some(t) = self.active_tab() else { return (String::new(), String::new()) };
         if t.search_mode {
             let title = if t.search_global { trf!("在整台電腦搜尋「{}」", "Searching the whole PC for “{}”", t.query.trim()) } else { trf!("搜尋「{}」", "Search “{}”", t.query.trim()) };
             return (title, t.status.clone());
         }
-        let title = paths::tab_title(&t.display_path());
-        if t.loading || t.status.starts_with(tr!("無法", "Couldn't")) || t.status.starts_with(tr!("已取消", "Cancelled")) {
-            return (title, t.status.clone());
+        if t.loading || t.restored || t.path.is_empty() || t.status.starts_with(tr!("無法", "Couldn't")) || t.status.starts_with(tr!("已取消", "Cancelled")) {
+            return (t.status.clone(), String::new());
         }
         let s = &t.summary;
+        let total = s.folders + s.files;
+        let title = trn!(total; "{} 個項目", "{} item", "{} items", group_digits(total as u64));
         let mut parts = vec![trn!(s.folders; "{} 個資料夾", "{} folder", "{} folders", group_digits(s.folders as u64)), trn!(s.files; "{} 個檔案", "{} file", "{} files", group_digits(s.files as u64))];
         if s.files > 0 {
             parts.push(format_size(Some(s.bytes)));
@@ -1494,6 +1570,9 @@ impl App {
         } else if t.pick.as_ref().is_some_and(|p| !p.is_all()) {
             // 選擇器的檔案類型藏起了一些檔案
             parts.push(trf!("顯示 {} 項", "Showing {}", group_digits(t.row_count() as u64)));
+        }
+        if t.skipped > 0 {
+            parts.push(trf!("{} 個無法讀取", "{} unreadable", group_digits(t.skipped as u64)));
         }
         (title, parts.join(" · "))
     }
@@ -1628,11 +1707,6 @@ impl App {
                     theme::card(dc, &l.crumbs, l.crumbs.height(), p.surface, Some(p.accent), &p, dpi);
                 }
 
-                // ---- 大標題
-                let (title, subtitle) = self.title_texts();
-                theme::draw_text(dc, &title, &l.title, f.title, p.ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-                theme::draw_text(dc, &subtitle, &l.subtitle, f.ui, p.muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
                 // ---- 清單卡片（雙欄時作用中的一欄以重點色描邊）
                 let active = self.active_side();
                 for i in 0..2 {
@@ -1660,33 +1734,27 @@ impl App {
                 if self.picker_mode() {
                     self.paint_picker_bar(dc, l.footer);
                 } else {
-                // ---- 浮動狀態列（參考圖下方的播放列）
+                // ---- 底部狀態列：單行。左邊是作用中欄的項目數或選取資訊（粗體的主要文字＋淡色的細節），
+                // 右邊是操作結果、分頁數。高度固定，選取改變時清單不會移動。
                 let ft = l.footer;
-                theme::card(dc, &ft, s(22), p.surface, Some(theme::blend(p.ink, p.surface, 0.05)), &p, dpi);
                 let info = &self.footer_info;
-                let mut x = ft.left + s(16);
-                if info.icon >= 0 && self.icons.list != 0 {
-                    let tile = RECT::new(x, ft.top + (ft.height() - s(36)) / 2, s(36), s(36));
-                    theme::round_rect(dc, &tile, s(10), Some(p.chip), None);
-                    let iy = tile.top + (tile.height() - self.icons.row_px) / 2;
-                    let ix = tile.left + (tile.width() - self.icons.icon_px) / 2;
-                    (comctl().image_list_draw)(self.icons.list, info.icon, dc, ix, iy, ILD_TRANSPARENT);
-                    x = tile.right + s(12);
-                }
-                let right_w = (ft.width() / 3).min(s(360));
-                let text_right = ft.right - s(16) - right_w - s(12);
                 let fv = anim::value(&self.footer_fx).clamp(0.0, 1.0);
-                let rise = anim::px((1.0 - fv) * s(5) as f32);
-                let t1 = RECT { left: x, top: ft.top + s(8) + rise, right: text_right, bottom: ft.top + ft.height() / 2 + s(1) + rise };
-                theme::draw_text(dc, &info.title, &t1, f.ui_bold, anim::mix(p.surface, p.ink, fv), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-                let t2 = RECT { top: t1.bottom - s(1), bottom: ft.bottom - s(8) + rise, ..t1 };
-                theme::draw_text(dc, &info.detail, &t2, f.small, anim::mix(p.surface, p.muted, fv), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                 if anim::running(&self.footer_fx) {
                     anim::request_rects(self.hwnd, vec![ft]);
                 }
-                let rr = RECT { left: ft.right - s(16) - right_w, right: ft.right - s(18), ..ft };
+                let right_w = (ft.width() / 3).min(s(360));
+                let rr = RECT { left: ft.right - s(12) - right_w, right: ft.right - s(12), ..ft };
+                let text_right = rr.left - s(16);
+                let x = ft.left + s(12);
+                let main_w = theme::text_width(dc, &info.title, f.body_bold).min((text_right - x).max(0));
+                let t1 = RECT { left: x, right: x + main_w, ..ft };
+                theme::draw_text(dc, &info.title, &t1, f.body_bold, anim::mix(p.background, p.ink, fv), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                if !info.detail.is_empty() && t1.right + s(24) < text_right {
+                    let t2 = RECT { left: t1.right, right: text_right, ..ft };
+                    theme::draw_text(dc, &format!("  ·  {}", info.detail), &t2, f.body, anim::mix(p.background, p.muted, fv), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                }
                 let color = if self.op_busy { p.accent } else { p.muted };
-                theme::draw_text(dc, &self.footer, &rr, f.ui, color, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                theme::draw_text(dc, &self.footer, &rr, f.body, color, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                 }
             }
             EndPaint(self.hwnd, &ps);
@@ -1754,22 +1822,25 @@ impl App {
         unsafe {
             InvalidateRect(self.hwnd, std::ptr::null(), 0);
         }
+        // 篩選籤可能變多或變少（換了資料夾）：動作按鈕要不要帶文字跟著重新判斷
+        self.sync_action_labels();
         // 顯示的資料夾換了（導覽、切換分頁、雙欄、搜尋）：自動重新整理改監看新的資料夾
         self.sync_watches();
+        self.sync_crumb_menu();
     }
 
     /// 浮動狀態列左側：選取一個項目時顯示其圖示、名稱與細節；多選時顯示數量與合計大小。
+    /// 底部狀態列的文字。沒有選取時是資料夾的項目總數與摘要（見 folder_status_line）；
+    /// 選取時是「已選取 N 個項目」與大小等資訊（一個項目時是它的名稱、類型、大小與修改日期）。
     fn compute_footer_info(&mut self, side: Side) -> FooterInfo {
         let count = self.selected_count(side);
-        let tab_title = self.active_tab().map(|t| paths::tab_title(&t.display_path())).unwrap_or_default();
         if count == 0 {
-            let detail = self.active_tab().map(|t| trn!(t.row_count(); "{} 個項目", "{} item", "{} items", group_digits(t.row_count() as u64))).unwrap_or_default();
-            let icon = self.icons.folder_index();
-            return FooterInfo { icon, title: tab_title, detail };
+            let (title, detail) = self.folder_status_line();
+            return FooterInfo { title, detail };
         }
         if count == 1 {
             if let Some(e) = self.selected_entries(side).into_iter().next() {
-                let mut parts = vec![e.type_label()];
+                let mut parts = vec![e.name.clone(), e.type_label()];
                 if !e.is_dir {
                     parts.push(format_size(e.size()));
                 }
@@ -1777,8 +1848,7 @@ impl App {
                 if !date.is_empty() {
                     parts.push(date);
                 }
-                let icon = self.icons.index_for(&e);
-                return FooterInfo { icon, title: e.name.clone(), detail: parts.join(" · ") };
+                return FooterInfo { title: tr!("已選取 1 個項目", "1 item selected").to_string(), detail: parts.join(" · ") };
             }
         }
         let detail = if count <= 5_000 {
@@ -1789,7 +1859,7 @@ impl App {
         } else {
             tr!("大小未計算（選取項目過多）", "Size not calculated (too many items selected)").to_string()
         };
-        FooterInfo { icon: -1, title: trn!(count; "已選取 {} 個項目", "{} item selected", "{} items selected", group_digits(count as u64)), detail }
+        FooterInfo { title: trn!(count; "已選取 {} 個項目", "{} item selected", "{} items selected", group_digits(count as u64)), detail }
     }
 
     pub(super) fn activate(&mut self, side: Side) {
@@ -1897,8 +1967,8 @@ impl App {
         let l = &self.layout;
         let mut v = vec![l.panes[side.index()].inflate(self.s(4), self.s(6))];
         if side == self.active_side() {
-            v.push(RECT { left: l.title.left, top: l.title.top, right: l.title.right, bottom: l.subtitle.bottom + self.s(2) });
-            v.push(l.footer.inflate(self.s(4), self.s(6)));
+            v.push(l.crumbs.inflate(self.s(4), self.s(4)));
+            v.push(l.footer.inflate(self.s(4), self.s(4)));
         }
         v
     }
@@ -2038,6 +2108,7 @@ impl App {
                 tab.search_mode = false;
                 tab.view = ViewState::default();
                 tab.status = folder_status(tab.entries.len(), listing.skipped);
+                tab.skipped = listing.skipped;
                 if !folder_changed {
                     tree_sync = Some(tab.entries.iter().filter(|e| e.is_dir).map(|e| (e.name.clone(), e.is_link)).collect());
                 }
@@ -3252,12 +3323,6 @@ impl App {
                     self.refresh_list(side, true);
                 }
             }
-            chips::ACTION_SORT => {
-                if let Some(sort) = chips::sort_from_index(value) {
-                    let (col, desc) = sort.column();
-                    self.sort_to(side, col, desc);
-                }
-            }
             chips::ACTION_RECURSIVE => {
                 if let Some(t) = self.active_tab_mut() {
                     t.recursive = !t.recursive;
@@ -3266,6 +3331,87 @@ impl App {
             _ => {}
         }
         self.update_chrome();
+    }
+
+    /// 麵包屑箭頭：開啟或關閉那一段的子資料夾選單（見 crumbmenu.rs）。
+    /// `hover`：只是滑鼠移到這個箭頭，另一段的選單開著時才換成這一段的。
+    fn crumb_menu_action(&mut self, index: usize, hover: bool) {
+        let open = crumbmenu::segment(&self.crumb_menu);
+        if hover && (open.is_none() || open == Some(index)) {
+            return;
+        }
+        if !hover && open == Some(index) {
+            self.close_crumb_menu();
+            return;
+        }
+        let segments = crumb_model();
+        let Some((_, path)) = segments.get(index) else { return };
+        let Some(anchor) = crumbs::arrow_rect(self.crumbs, index) else { return };
+        let tab = self.active_tab_id();
+        // 順序與清單相同：分頁目前的排序
+        let (sort_col, desc) = self.tabs.get(&tab).map(|t| (t.sort_col, t.desc)).unwrap_or((0, false));
+        self.cancel_hover();
+        crumbmenu::open(
+            &mut self.crumb_menu,
+            crumbmenu::Request {
+                segment: index,
+                tab,
+                path: path.clone(),
+                current: segments.get(index + 1).map(|s| s.0.clone()),
+                anchor,
+                show_hidden: self.show_hidden,
+                sort_col,
+                desc,
+            },
+        );
+        invalidate(self.crumbs);
+    }
+
+    /// 關閉麵包屑的子資料夾選單（沒開著時什麼都不做）。
+    pub(super) fn close_crumb_menu(&mut self) {
+        if crumbmenu::close(&mut self.crumb_menu) {
+            invalidate(self.crumbs);
+        }
+    }
+
+    /// 子資料夾選單選了一個資料夾：在選單所屬的分頁開啟（一般的導覽，可以按上一頁回來）。
+    /// 選的是目前位置經過的資料夾時，到了那一層選取原本所在的子資料夾（同點麵包屑的名稱）。
+    pub(super) fn pick_crumb_menu(&mut self, path: String) {
+        let Some((tab, _)) = crumbmenu::target(&self.crumb_menu) else { return };
+        self.close_crumb_menu();
+        if tab != self.active_tab_id() {
+            return;
+        }
+        let segments = crumb_model();
+        let select = segments
+            .iter()
+            .position(|s| paths::same_path(&s.1, &path))
+            .and_then(|k| segments.get(k + 1))
+            .map(|s| vec![s.1.clone()])
+            .unwrap_or_default();
+        self.navigate(tab, &path, NavKind::Normal, select);
+        self.update_chrome();
+    }
+
+    /// 換了分頁或資料夾：子資料夾選單列的已經不是麵包屑上的那一層，關掉。
+    fn sync_crumb_menu(&mut self) {
+        let Some((tab, path)) = crumbmenu::target(&self.crumb_menu) else { return };
+        let still = tab == self.active_tab_id()
+            && crumbmenu::segment(&self.crumb_menu).and_then(|i| crumb_model().get(i).map(|s| paths::same_path(&s.1, path))).unwrap_or(false);
+        if !still {
+            self.close_crumb_menu();
+        }
+    }
+
+    /// 點了滑鼠（含標題列、邊框）：點在選單外面就關閉選單。點的是麵包屑的箭頭時交給麵包屑（換選單或關閉）。
+    fn crumb_menu_click(&mut self, msg: &MSG) {
+        if !crumbmenu::is_open(&self.crumb_menu) || msg.hwnd == self.crumb_menu.popup {
+            return;
+        }
+        if msg.hwnd == self.crumbs && crumbs::arrow_at(self.crumbs, msg.pt).is_some() {
+            return;
+        }
+        self.close_crumb_menu();
     }
 
     /// 麵包屑：前往上層資料夾（並選取原本所在的子資料夾），或切換成輸入模式。
@@ -3444,9 +3590,15 @@ impl App {
         let _fade = self.crossfade(vec![client_rect(self.hwnd)], anim::THEME_MS);
         let compact_changed = new.compact_rows != self.settings.compact_rows;
         let favorites_changed = new.favorites != self.settings.favorites;
+        let text_changed = new.text_size != self.settings.text_size;
         self.settings = new;
         self.theme.set_palette(&self.settings);
-        if compact_changed {
+        if text_changed {
+            // 字型換了：清單、樹狀圖換新字型，列高跟著文字重算（重建影像清單）
+            self.theme.set_text_size(self.settings.text_size);
+            self.apply_fonts();
+        }
+        if compact_changed || text_changed {
             self.rebuild_icons();
         }
         self.apply_theme_to_controls();
@@ -3464,7 +3616,7 @@ impl App {
     }
 
     fn rebuild_icons(&mut self) {
-        let mut old = std::mem::replace(&mut self.icons, Icons::new(self.theme.dpi, self.settings.compact_rows));
+        let mut old = std::mem::replace(&mut self.icons, Icons::new(self.theme.dpi, self.settings.compact_rows, self.theme.fonts.body_height));
         for list in self.lists {
             send(list, LVM_SETIMAGELIST, LVSIL_SMALL, self.icons.list);
         }
@@ -3657,6 +3809,32 @@ Not available yet: indexed search."),
         let alt = msg.message == WM_SYSKEYDOWN || key_down(VK_MENU);
         let focus = unsafe { GetFocus() };
         let in_edit = focus == self.address || focus == self.query;
+        // 麵包屑的子資料夾選單開著：方向鍵、Enter、Esc 與打字交給選單，其他按鍵不作用在後面的清單上
+        if crumbmenu::is_open(&self.crumb_menu) {
+            match crumbmenu::key(&mut self.crumb_menu, vk, ctrl, alt) {
+                crumbmenu::Key::Handled => return true,
+                // 交給 TranslateMessage 變成 WM_CHAR（見 pretranslate）
+                crumbmenu::Key::Char => return false,
+                crumbmenu::Key::Close => {
+                    self.close_crumb_menu();
+                    return true;
+                }
+                crumbmenu::Key::Pick(path) => {
+                    self.pick_crumb_menu(path);
+                    return true;
+                }
+                crumbmenu::Key::Neighbor(delta) => {
+                    // 左右鍵：換成左右相鄰那一段的選單（被收進「…」的段落沒有箭頭，就停在原處）
+                    if let Some(j) = crumbmenu::segment(&self.crumb_menu).and_then(|i| i.checked_add_signed(delta)) {
+                        if crumbs::arrow_rect(self.crumbs, j).is_some() {
+                            self.crumb_menu_action(j, false);
+                        }
+                    }
+                    return true;
+                }
+                crumbmenu::Key::Pass => self.close_crumb_menu(),
+            }
+        }
         // 選擇器：檔名欄的 Enter／Esc，以及分頁、雙欄、設定這些不存在的快捷鍵
         if let Some(handled) = self.picker_key(vk, ctrl, shift, alt, focus) {
             return handled;
@@ -3933,9 +4111,29 @@ Not available yet: indexed search."),
 }
 
 fn pretranslate(msg: &MSG) -> bool {
+    // 麵包屑的子資料夾選單：點在選單外面（含標題列、邊框）就關閉，點擊本身照常處理
+    if matches!(msg.message, WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN | WM_NCLBUTTONDOWN | WM_NCRBUTTONDOWN | WM_NCMBUTTONDOWN) {
+        if let Some(a) = app_opt() {
+            a.crumb_menu_click(msg);
+        }
+    }
     if msg.message == WM_MOUSEWHEEL || msg.message == WM_MOUSEHWHEEL {
         let Some(a) = app_opt() else { return false };
         let horizontal = msg.message == WM_MOUSEHWHEEL;
+        // 子資料夾選單開著：滑鼠在選單上就捲動選單，在別的地方就關掉選單、照常捲動
+        if crumbmenu::is_open(&a.crumb_menu) {
+            let mut r = RECT::default();
+            unsafe {
+                GetWindowRect(a.crumb_menu.popup, &mut r);
+            }
+            if r.contains(msg.pt.x, msg.pt.y) {
+                if !horizontal {
+                    crumbmenu::wheel(&mut a.crumb_menu, ((msg.wParam >> 16) & 0xFFFF) as u16 as i16 as i32);
+                }
+                return true;
+            }
+            a.close_crumb_menu();
+        }
         // 懸停的預覽：清單照常捲動，預覽先關掉，滑鼠再移動時依新的項目重新計時
         if preview::mode(&a.preview) == Some(preview::Mode::Hover) {
             a.reset_hover();
@@ -3989,6 +4187,13 @@ fn pretranslate(msg: &MSG) -> bool {
     if msg.message == WM_CHAR {
         // 清單與樹狀圖的打字搜尋由這裡處理；字元不交給控制項，因此找不到項目時不會有提示音。
         let Some(a) = app_opt() else { return false };
+        // 子資料夾選單開著：打的字跳到選單裡的資料夾，不進到後面的清單或輸入框
+        if crumbmenu::is_open(&a.crumb_menu) && (msg.hwnd == a.hwnd || unsafe { IsChild(a.hwnd, msg.hwnd) } != 0) {
+            if let Some(c) = char::from_u32(msg.wParam as u32).filter(|c| !c.is_control()) {
+                crumbmenu::type_char(&mut a.crumb_menu, c);
+            }
+            return true;
+        }
         if a.side_of_list(msg.hwnd).is_some() || msg.hwnd == a.tree {
             if let Some(c) = char::from_u32(msg.wParam as u32).filter(|c| !c.is_control()) {
                 a.type_to_find(msg.hwnd, c);
@@ -4140,11 +4345,13 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
     }
     match msg {
         WM_SIZE => {
+            a.close_crumb_menu();
             a.relayout();
             a.reposition_quicklook();
             return 0;
         }
         WM_MOVE => {
+            a.close_crumb_menu();
             a.reposition_quicklook();
             return 0;
         }
@@ -4289,6 +4496,9 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
             } else if wparam == super::thumbs::TIMER_REDRAW {
                 a.thumbs.redraw_due(hwnd);
                 a.redraw_thumbnails();
+            } else if wparam == super::fileicons::TIMER_REDRAW {
+                a.file_icons.redraw_due(hwnd);
+                a.redraw_file_icons();
             }
             return 0;
         }
@@ -4311,6 +4521,11 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
             a.thumbs.on_result(hwnd, *done);
             return 0;
         }
+        super::fileicons::WM_APP_FILE_ICON => {
+            let done = Box::from_raw(lparam as *mut super::fileicons::Done);
+            a.file_icons.on_result(hwnd, *done, &mut a.icons);
+            return 0;
+        }
         super::watch::WM_APP_WATCH => {
             a.on_watch_message(wparam, lparam);
             return 0;
@@ -4324,6 +4539,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
                 WorkerMsg::SearchBatch { tab, generation, entries, scanned, skipped } => a.on_search_batch(tab, generation, entries, scanned, skipped),
                 WorkerMsg::SearchDone { tab, generation, result } => a.on_search_done(tab, generation, result),
                 WorkerMsg::Tree { item, token, result } => a.on_tree_children(item, token, result),
+                WorkerMsg::CrumbMenu { token, result } => crumbmenu::on_loaded(&mut a.crumb_menu, token, result, &a.theme, a.icons.icon_px),
                 WorkerMsg::Preview { generation, path, result } => {
                     super::crashlog::crumb("主視窗：收到預覽結果");
                     preview::on_result(&mut a.preview, generation, &path, result)
@@ -4362,6 +4578,10 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
         }
         crumbs::WM_APP_CRUMB => {
             a.crumb_action(wparam);
+            return 0;
+        }
+        crumbs::WM_APP_CRUMB_MENU => {
+            a.crumb_menu_action(wparam, lparam != 0);
             return 0;
         }
         WM_COPYDATA => {
@@ -4406,6 +4626,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
         }
         WM_ACTIVATE => {
             if loword(wparam) == 0 {
+                a.close_crumb_menu();
                 a.hide_preview();
                 let f = GetFocus();
                 if f != 0 && IsChild(hwnd, f) != 0 {

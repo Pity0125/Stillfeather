@@ -191,7 +191,7 @@ fn icons(r: &mut Report, entries: &[feather_core::entry::Entry]) {
         r.line("（沒有可用的資料夾清單）", "");
         return;
     }
-    let mut icons = Icons::new(96, false);
+    let mut icons = Icons::new(96, false, 16);
     let t = Instant::now();
     let mut distinct = std::collections::HashSet::new();
     for e in entries {

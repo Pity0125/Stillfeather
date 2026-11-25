@@ -28,6 +28,8 @@ pub enum Kind {
     Toggle,
     /// 分段選項：選取時以淡重點色底與重點色框顯示。
     Segment,
+    /// 側邊導覽的項目（設定視窗的分類）：圖示字形＋靠左的文字，選取時以側欄的選取膠囊顯示。
+    Nav(char),
 }
 
 /// 按鈕所在區域的底色。
@@ -54,6 +56,8 @@ struct Data {
     primary: bool,
     /// 低調的圖示按鈕：平時用次要文字色，懸停才轉成主要文字色
     subtle: bool,
+    /// 文字用的字型（一般、粗體）；None 用介面字型（`Fonts::ui`）。設定視窗跟著文字大小放大時設定
+    fonts: Option<(HFONT, HFONT)>,
     /// 動畫中的懸停、按下與勾選程度（0～1）
     hover_fx: Tween,
     press_fx: Tween,
@@ -93,6 +97,7 @@ pub fn create(parent: HWND, id: u16, kind: Kind, text: &str, surface: Surface, f
         focus_on_click,
         primary: false,
         subtle: false,
+        fonts: None,
         hover_fx: Tween::new(0.0),
         press_fx: Tween::new(0.0),
         check_fx: Tween::new(0.0),
@@ -117,7 +122,7 @@ pub fn create(parent: HWND, id: u16, kind: Kind, text: &str, surface: Surface, f
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as isize);
         // 螢幕閱讀器：系統只把這個類別當成一般的窗格，補上角色（名稱就是視窗文字）
         match kind {
-            Kind::Toggle | Kind::Segment => {
+            Kind::Toggle | Kind::Segment | Kind::Nav(_) => {
                 access::set_role(hwnd, if kind == Kind::Toggle { access::ROLE_CHECKBUTTON } else { access::ROLE_RADIOBUTTON });
                 access::set_check_state(hwnd, false, false);
             }
@@ -129,7 +134,7 @@ pub fn create(parent: HWND, id: u16, kind: Kind, text: &str, surface: Surface, f
 
 /// 有勾選狀態的按鈕（核取方塊、分段選項）
 fn checkable(d: &Data) -> bool {
-    matches!(d.kind, Kind::Toggle | Kind::Segment)
+    matches!(d.kind, Kind::Toggle | Kind::Segment | Kind::Nav(_))
 }
 
 unsafe fn data<'a>(hwnd: HWND) -> Option<&'a mut Data> {
@@ -194,6 +199,16 @@ pub fn set_subtle(hwnd: HWND) {
     unsafe {
         if let Some(d) = data(hwnd) {
             d.subtle = true;
+            invalidate(hwnd);
+        }
+    }
+}
+
+/// 文字改用指定的字型（一般、粗體；由呼叫端建立與刪除，按鈕存在期間要保持有效）。
+pub fn set_fonts(hwnd: HWND, normal: HFONT, bold: HFONT) {
+    unsafe {
+        if let Some(d) = data(hwnd) {
+            d.fonts = Some((normal, bold));
             invalidate(hwnd);
         }
     }
@@ -351,6 +366,7 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
         }
 
         let normal_ink = if enabled { p.ink } else { theme::blend(p.ink, base, 0.35) };
+        let (font_ui, font_bold) = d.fonts.unwrap_or((t.fonts.ui, t.fonts.ui_bold));
         // 懸停時在底色上疊一層淡淡的文字色，按下時再深一點
         let hover_on = |c: COLORREF| theme::blend(p.ink, c, (0.07 + 0.05 * pr) * h);
         let text = window_text(hwnd);
@@ -392,7 +408,7 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
                     let gw = t.s(22);
                     let cw = t.s(18);
                     // 太窄時只畫圖示與箭頭（文字仍是提示與可及性名稱）
-                    let full_tw = theme::text_width(dc, &text, t.fonts.ui);
+                    let full_tw = theme::text_width(dc, &text, font_ui);
                     let tw = if gw + full_tw + cw + t.s(20) <= rect.width() { full_tw } else { 0 };
                     let total = gw + tw + cw;
                     let x = rect.left + (rect.width() - total).max(0) / 2;
@@ -400,22 +416,27 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
                     theme::draw_text(dc, &g.to_string(), &gr, t.fonts.icon_small, ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
                     if tw > 0 {
                         let tr = RECT { left: x + gw, top: rect.top, right: x + gw + tw, bottom: rect.bottom };
-                        theme::draw_text(dc, &text, &tr, t.fonts.ui, ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                        theme::draw_text(dc, &text, &tr, font_ui, ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
                     }
                     let cr = RECT { left: x + gw + tw, top: rect.top + t.s(1), right: x + total, bottom: rect.bottom };
                     theme::draw_text(dc, &theme::glyph::CHEVRON_DOWN_SMALL.to_string(), &cr, t.fonts.icon_small, anim::mix(ink, p.muted, 0.35), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
                 } else if let Kind::Pill(g) = d.kind {
-                    // 圖示 + 文字，整組置中
+                    // 圖示 + 文字，整組置中；太窄時只畫圖示（文字仍是提示與可及性名稱）
                     let gw = t.s(22);
-                    let tw = theme::text_width(dc, &text, t.fonts.ui_bold);
+                    let full_tw = theme::text_width(dc, &text, font_bold);
+                    let tw = if gw + full_tw + t.s(20) <= rect.width() { full_tw } else { 0 };
                     let total = gw + tw;
                     let x = rect.left + (rect.width() - total).max(0) / 2;
-                    let gr = RECT { left: x, top: rect.top, right: x + gw, bottom: rect.bottom };
-                    theme::draw_text(dc, &g.to_string(), &gr, t.fonts.icon_small, ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-                    let tr = RECT { left: x + gw, top: rect.top, right: rect.right, bottom: rect.bottom };
-                    theme::draw_text(dc, &text, &tr, t.fonts.ui_bold, ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                    if tw == 0 {
+                        theme::draw_text(dc, &g.to_string(), &rect, t.fonts.icon_small, ink, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                    } else {
+                        let gr = RECT { left: x, top: rect.top, right: x + gw, bottom: rect.bottom };
+                        theme::draw_text(dc, &g.to_string(), &gr, t.fonts.icon_small, ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                        let tr = RECT { left: x + gw, top: rect.top, right: rect.right, bottom: rect.bottom };
+                        theme::draw_text(dc, &text, &tr, font_bold, ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                    }
                 } else {
-                    let font = if d.primary || (is_segment && d.checked) { t.fonts.ui_bold } else { t.fonts.ui };
+                    let font = if d.primary || (is_segment && d.checked) { font_bold } else { font_ui };
                     theme::draw_text(dc, &text, &rect, font, ink, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                 }
             }
@@ -436,12 +457,29 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
                     theme::draw_text(dc, &theme::glyph::CHECKBOX_CHECKED.to_string(), &gr, t.fonts.icon, anim::mix(base, on, ck), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                 }
                 let tr = RECT { left: gr.right + t.s(4), top: rect.top, right: rect.right - t.s(4), bottom: rect.bottom };
-                theme::draw_text(dc, &text, &tr, t.fonts.ui, normal_ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                theme::draw_text(dc, &text, &tr, font_ui, normal_ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            }
+            Kind::Nav(g) => {
+                // 同側欄的樹狀圖：選取時是側欄的選取膠囊，懸停時淡淡的底色
+                let fill = anim::mix(hover_on(base), p.sidebar_selected, ck);
+                let pill_r = RECT { left: rect.left, top: rect.top + t.s(1), right: rect.right, bottom: rect.bottom - t.s(1) };
+                if ck > 0.5 {
+                    theme::card(dc, &pill_r, t.s(12), fill, None, p, t.dpi);
+                } else if fill != base {
+                    theme::round_rect(dc, &pill_r, t.s(12), Some(fill), None);
+                }
+                let gr = RECT { left: rect.left + t.s(10), top: rect.top, right: rect.left + t.s(34), bottom: rect.bottom };
+                let glyph_ink = if enabled { anim::mix(p.sidebar_muted, p.accent, ck) } else { normal_ink };
+                theme::draw_text(dc, &g.to_string(), &gr, t.fonts.icon_small, glyph_ink, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                let tr = RECT { left: gr.right + t.s(6), top: rect.top, right: rect.right - t.s(8), bottom: rect.bottom };
+                let font = if d.checked { font_bold } else { font_ui };
+                theme::draw_text(dc, &text, &tr, font, if enabled { p.sidebar_ink } else { normal_ink }, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             }
         }
         if focused {
             match d.kind {
                 Kind::Icon(_) | Kind::Round(_) => theme::circle(dc, &inner, None, Some(p.accent)),
+                Kind::Nav(_) => theme::round_rect(dc, &inner, t.s(12), None, Some(p.accent)),
                 _ => theme::round_rect(dc, &inner, pill, None, Some(p.accent)),
             }
         }

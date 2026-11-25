@@ -402,6 +402,9 @@ impl App {
         // 先建立填色再建立外框：外框在上面
         m.fill = create_overlay(owner, accent, 0);
         m.frame = create_overlay(owner, accent, border);
+        // 清單自己的懸停列（從圖示左邊的留白按下時，清單把留白也算那一列）在框選中不會更新，
+        // 留著會讓滑鼠下的那一列重畫時只剩底色：框選時先清掉
+        send(list, LVM_SETHOTITEM, usize::MAX, 0);
         m.combine = Combine::from_keys(m.ctrl, m.shift);
         if m.combine == Combine::Replace {
             self.clear_selection(side);
@@ -546,6 +549,10 @@ impl App {
                     DestroyWindow(h);
                 }
             }
+        }
+        // 框選結束時整個清單重畫一次，不留下只畫了一半的列
+        if m.active {
+            invalidate(list);
         }
     }
 

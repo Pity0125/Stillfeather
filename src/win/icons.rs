@@ -30,12 +30,16 @@ pub struct Icons {
     pub big_px: [i32; 2],
     /// 依加入影像清單的順序記下每個鍵（副檔名，或資料夾），重建大圖示清單時照同樣順序載入
     order: Vec<(String, bool)>,
+    /// 每個檔案各自的圖示（捷徑、程式…，見 fileicons.rs）：檔案的鍵 → 索引
+    files: HashMap<String, i32>,
 }
 
 impl Icons {
-    pub fn new(dpi: u32, compact: bool) -> Icons {
+    /// `text_px`：清單文字（`Fonts::body`）的單行高度；文字調大時列高跟著加高，字才不會被切掉
+    pub fn new(dpi: u32, compact: bool, text_px: i32) -> Icons {
         let icon_px = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16);
         let row_px = if compact { icon_px + scale(4, dpi) } else { (icon_px + scale(8, dpi)).max(scale(28, dpi)) };
+        let row_px = row_px.max(text_px + scale(if compact { 6 } else { 12 }, dpi));
         let cc = comctl();
         let (list, tree) = unsafe {
             (
@@ -54,6 +58,7 @@ impl Icons {
             big: [0; 2],
             big_px: [0; 2],
             order: Vec::new(),
+            files: HashMap::new(),
         };
         icons.tree_blank = icons.add_blank();
         icons
@@ -83,16 +88,6 @@ impl Icons {
                 index
             }
         }
-    }
-
-    /// 一般資料夾圖示（狀態列沒有選取時使用）。
-    pub fn folder_index(&mut self) -> i32 {
-        if let Some(i) = self.map.get("\\dir") {
-            return *i;
-        }
-        let index = unsafe { self.load("", true) };
-        self.map.insert("\\dir".to_string(), index);
-        index
     }
 
     /// 完全透明的一格（小圖示與大圖示清單用同一個索引）：有縮圖的項目用它，縮圖另外畫上去
@@ -130,6 +125,70 @@ impl Icons {
         }
         let index = unsafe { self.load(&key, entry.is_dir) };
         self.map.insert(key, index);
+        index
+    }
+
+    /// 這個檔案自己的圖示已經取到的話，回傳它的索引（鍵見 `feather_core::fileicons::key`）
+    pub fn file_icon(&self, key: &str) -> Option<i32> {
+        self.files.get(key).copied()
+    }
+
+    /// 已經記住幾個檔案自己的圖示
+    pub fn file_icon_count(&self) -> usize {
+        self.files.len()
+    }
+
+    /// 加入一個檔案自己的小圖示（背景取到的，呼叫端負責 DestroyIcon `icon`），回傳索引。
+    /// 大圖示清單的同一格放這種副檔名的圖示：大圖示檢視仍顯示副檔名的圖示，索引和小圖示清單保持一致。
+    pub fn add_file_icon(&mut self, key: &str, ext: &str, icon: HICON) -> Option<i32> {
+        if let Some(i) = self.files.get(key) {
+            return Some(*i);
+        }
+        let index = unsafe {
+            let padded = padded_icon(icon, self.icon_px, self.row_px);
+            if padded != 0 {
+                let i = (comctl().image_list_replace_icon)(self.list, -1, padded);
+                DestroyIcon(padded);
+                i
+            } else {
+                (comctl().image_list_replace_icon)(self.list, -1, icon)
+            }
+        };
+        if index < 0 {
+            return None;
+        }
+        let ext = ext.to_lowercase();
+        for slot in 0..2 {
+            if self.big[slot] != 0 {
+                unsafe {
+                    add_big(self.big[slot], self.big_px[slot], &ext, false);
+                }
+            }
+        }
+        self.order.push((ext, false));
+        self.files.insert(key.to_string(), index);
+        Some(index)
+    }
+
+    /// 某種副檔名（不含點，例如 "docx"）的檔案圖示索引（設定視窗預覽文字大小的範例檔名用）
+    pub fn file_index(&mut self, ext: &str) -> i32 {
+        let key = ext.to_lowercase();
+        if let Some(i) = self.map.get(&key) {
+            return *i;
+        }
+        let index = unsafe { self.load(&key, false) };
+        self.map.insert(key, index);
+        index
+    }
+
+    /// 資料夾的圖示索引（麵包屑的子資料夾選單用，與清單裡的資料夾相同）
+    pub fn folder_index(&mut self) -> i32 {
+        const KEY: &str = "\\dir";
+        if let Some(i) = self.map.get(KEY) {
+            return *i;
+        }
+        let index = unsafe { self.load(KEY, true) };
+        self.map.insert(KEY.to_string(), index);
         index
     }
 
@@ -212,6 +271,7 @@ impl Icons {
         self.big = [0; 2];
         self.order.clear();
         self.map.clear();
+        self.files.clear();
     }
 }
 

@@ -1,5 +1,7 @@
-Box selection and empty space, just like File Explorer:
-• In Details view, the selection highlight stops at the last column, with space left of the icons and right of the last column
-• Press on the empty space beside the items or below the last one and drag to box-select several items; hold Ctrl to toggle, or Shift to add to what's already selected
-• Drag past the top or bottom edge to scroll automatically; the box keeps up with the mouse without lag
-• Click the empty space to clear the selection, or right-click it for the folder menu; drag files from the items as before
+More room for your files, larger text, and a reorganized Settings:
+• The file list gets more room: the current folder is the last part of the path bar, filter chips and action buttons share one row, and the bottom is a single status line
+• New View › Text size (100%–150%) enlarges file names, columns, the sidebar, tabs and the status line
+• Settings now has categories on the left and their options on the right, with a live preview for text size
+• Each part of the path has an arrow that lists the subfolders at that level
+• The Sort menu now includes what the A–Z / Newest / Size chips used to do
+• Shortcuts, programs and icon files show their own icons instead of one generic white shortcut icon

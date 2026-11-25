@@ -572,6 +572,51 @@ pub fn child_folders(path: &str, show_hidden: bool, cancel: &AtomicBool) -> Resu
     Ok(FolderListing { folders, truncated })
 }
 
+/// 麵包屑的子資料夾選單最多列出幾個資料夾
+pub const MENU_MAX_FOLDERS: usize = 10_000;
+
+pub struct MenuFolders {
+    pub folders: Vec<Entry>,
+    /// 超過 [`MENU_MAX_FOLDERS`]，只列出前面的
+    pub truncated: bool,
+}
+
+/// 麵包屑的子資料夾選單：`path` 底下的資料夾（不含檔案）。隱藏項目依清單的顯示設定，
+/// 順序與清單相同（`sort_col`、`desc` 是分頁目前的排序）。在背景執行緒呼叫。
+pub fn menu_folders(path: &str, show_hidden: bool, sort_col: usize, desc: bool, cancel: &AtomicBool) -> Result<MenuFolders, FsError> {
+    require_dir(path, false)?;
+    let dir: Arc<str> = Arc::from(path);
+    let mut folders = Vec::new();
+    let mut truncated = false;
+    let Some(mut f) = Finder::open(path).map_err(error_text)? else {
+        return Ok(MenuFolders { folders, truncated });
+    };
+    loop {
+        match f.next() {
+            Next::End => break,
+            Next::Error(code) => return Err(FsError::Message(error_text(code))),
+            Next::Item => {}
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Err(FsError::Cancelled);
+        }
+        let a = f.attrs();
+        if f.is_dots() || a & FILE_ATTRIBUTE_DIRECTORY == 0 {
+            continue;
+        }
+        if !show_hidden && a & FILE_ATTRIBUTE_HIDDEN != 0 {
+            continue;
+        }
+        if folders.len() >= MENU_MAX_FOLDERS {
+            truncated = true;
+            break;
+        }
+        folders.push(f.entry(&dir));
+    }
+    sorting::sort_entries(&mut folders, sort_col, desc, true);
+    Ok(MenuFolders { folders, truncated })
+}
+
 /// 目前的磁碟根目錄與類型；只呼叫 GetDriveType，不讀取磁碟內容。
 pub fn drives() -> Vec<(String, u32)> {
     let mut buf = [0u16; 512];

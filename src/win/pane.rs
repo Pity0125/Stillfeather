@@ -34,6 +34,39 @@ const COLUMNS: [(&str, &str, i32, i32); 5] = [
 const NAME_MAX: i32 = 320;
 /// 最後一欄右邊至少留多少空白（邏輯像素）
 const RIGHT_BLANK: i32 = 32;
+/// 名稱欄至少要有多寬（邏輯像素，跟著文字大小放大）；不夠時其他欄讓位
+const NAME_MIN: i32 = 180;
+/// 所在位置欄窄於這個寬度就不顯示（邏輯像素，跟著文字大小放大）
+const LOCATION_MIN: i32 = 160;
+
+/// 詳細資料各欄的寬度（實際像素，依欄位順序：名稱、大小、類型、修改日期、所在位置）。
+/// `s` 依 DPI 縮放，`st` 再乘上文字大小。名稱欄優先：放不下時所在位置欄先縮窄，
+/// 搜尋時（所在位置有用）再拿掉類型欄換位置，最後才拿掉所在位置；名稱仍不夠寬就拿掉類型欄。
+/// 名稱欄不撐滿整個寬度：右邊留下沒有資訊的空白（同檔案總管），選取的底色只到最後一欄，
+/// 可以從那裡框選、點一下取消選取（見 marquee.rs）。
+fn column_widths(avail: i32, search: bool, s: impl Fn(i32) -> i32, st: impl Fn(i32) -> i32) -> [i32; 5] {
+    let wide_mode = avail >= st(430);
+    let size = if wide_mode { st(78) } else { st(62) };
+    let date = if wide_mode { st(140) } else { st(112) };
+    let kind_full = if wide_mode { st(118) } else { 0 };
+    let fixed = size + date + s(RIGHT_BLANK);
+    // 名稱欄保留 NAME_MIN 之後，還剩多少給所在位置
+    let room = |kind: i32| avail - fixed - kind - st(NAME_MIN);
+    let want_location = (search && avail >= st(600)) || avail >= st(800);
+    let wanted = st(280).min(avail / 3);
+    let (kind, location) = if !want_location {
+        (kind_full, 0)
+    } else if room(kind_full) >= st(LOCATION_MIN) {
+        (kind_full, wanted.min(room(kind_full)))
+    } else if search && room(0) >= st(LOCATION_MIN) {
+        (0, wanted.min(room(0)))
+    } else {
+        (kind_full, 0)
+    };
+    let kind = if room(kind) < location { 0 } else { kind };
+    let name = (avail - fixed - kind - location).min(st(NAME_MAX)).max(s(80));
+    [name, size, kind, date, location]
+}
 
 /// 欄位標題（依介面語言）
 fn column_title(c: &(&'static str, &'static str, i32, i32)) -> &'static str {
@@ -148,6 +181,16 @@ impl App {
     pub(super) fn redraw_thumbnails(&self) {
         for side in [Side::Left, Side::Right] {
             if self.thumb_edge(side).is_some() && (side == Side::Left || self.ws.dual) {
+                invalidate(self.lists[side.index()]);
+            }
+        }
+    }
+
+    /// 收到捷徑、程式等的圖示後（已合併）：重畫顯示中的清單。清單每次畫都重新問圖示，
+    /// 依檔案找到剛加進影像清單的索引，所以畫到的一定是對的列。
+    pub(super) fn redraw_file_icons(&self) {
+        for side in [Side::Left, Side::Right] {
+            if side == Side::Left || self.ws.dual {
                 invalidate(self.lists[side.index()]);
             }
         }
@@ -291,8 +334,9 @@ impl App {
         // 每個資料夾記住自己的檢視
         self.sync_view(side);
         if reset {
-            // 內容換了：還沒做的縮圖要求作廢，另一欄畫面上的項目重畫時再要求
+            // 內容換了：還沒做的縮圖與圖示要求作廢，另一欄畫面上的項目重畫時再要求
             self.thumbs.forget_queue();
+            self.file_icons.forget_queue();
             if self.thumb_edge(side.other()).is_some() {
                 invalidate(self.lists[side.other().index()]);
             }
@@ -444,16 +488,10 @@ impl App {
         }
         let r = client_rect(list);
         let avail = (r.width() - 2).max(self.s(160));
-        let wide_mode = avail >= self.s(430);
         let search = self.bound[side.index()].and_then(|id| self.tabs.get(&id)).is_some_and(|t| t.search_mode);
-        let size = if wide_mode { self.s(78) } else { self.s(62) };
-        let date = if wide_mode { self.s(140) } else { self.s(112) };
-        let kind = if wide_mode { self.s(118) } else { 0 };
-        let location = if (search && avail >= self.s(600)) || avail >= self.s(800) { self.s(280).min(avail / 3) } else { 0 };
-        // 名稱欄不撐滿整個寬度：右邊留下沒有資訊的空白（同檔案總管），選取的底色只到最後一欄，
-        // 可以從那裡框選、點一下取消選取（見 marquee.rs）。視窗窄時才縮小名稱欄。
-        let name = (avail - size - date - kind - location - self.s(RIGHT_BLANK)).min(self.s(NAME_MAX)).max(self.s(80));
-        for (i, w) in [name, size, kind, date, location].iter().enumerate() {
+        // 欄寬跟著文字大小放大（`st`），日期、類型等文字放大後才不會被切掉；判斷視窗寬窄也用同樣的比例
+        let widths = column_widths(avail, search, |v| self.s(v), |v| self.theme.st(v));
+        for (i, w) in widths.iter().enumerate() {
             send(list, LVM_SETCOLUMNWIDTH, i, *w as LPARAM);
         }
         self.fit_tiles(side);
@@ -679,7 +717,8 @@ impl App {
                     if info.item.mask & LVIF_IMAGE != 0 && info.item.iSubItem == 0 {
                         // 已經有縮圖：圖示用透明的那一格，縮圖在自繪的最後畫上去
                         let thumb = self.thumb_edge(side).is_some_and(|edge| self.thumbs.has(e, edge));
-                        info.item.iImage = if thumb { self.icons.blank_index() } else { self.icons.index_for(e) };
+                        // 捷徑、程式等每個檔案各自的圖示：取到前先顯示副檔名的圖示，背景取到後重畫（見 fileicons.rs）
+                        info.item.iImage = if thumb { self.icons.blank_index() } else { self.file_icons.index(&mut self.icons, self.hwnd, e) };
                     }
                     if info.item.mask & LVIF_COLUMNS != 0 && !info.item.puColumns.is_null() {
                         // 並排／內容檢視：名稱下方顯示的欄位（資料夾不顯示大小）
@@ -1402,14 +1441,14 @@ impl App {
                             tr.left += gw;
                             gr
                         } else {
-                            let tw = theme::text_width(cd.hdc, title, f.small_bold).min(tr.width() - gw);
+                            let tw = theme::text_width(cd.hdc, title, f.body_small_bold).min(tr.width() - gw);
                             RECT { left: tr.left + tw + self.s(4), right: tr.left + tw + self.s(4) + gw, ..tr }
                         };
                         theme::draw_text(cd.hdc, &g.to_string(), &gr, f.icon_small, p.accent, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                     }
                     let align = if right_align { DT_RIGHT } else { DT_LEFT };
                     let color = if sorted { p.ink } else { p.muted };
-                    theme::draw_text(cd.hdc, title, &tr, f.small_bold, color, align | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                    theme::draw_text(cd.hdc, title, &tr, f.body_small_bold, color, align | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                     // 很淡的欄位分隔，方便找到可拖曳調整寬度的位置
                     let sep = RECT { left: r.right - 1, top: r.top + r.height() / 3, right: r.right, bottom: r.bottom - r.height() / 3 };
                     theme::fill(cd.hdc, &sep, theme::blend(p.ink, p.surface, 0.08));
@@ -1528,4 +1567,54 @@ unsafe extern "system" fn list_subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lp
 /// 右鍵選單的「在這裡開啟 PowerShell 視窗」（和檔案總管的同名項目相同；資料夾樹的選單也用）
 pub(super) fn powershell_text() -> &'static str {
     tr!("在這裡開啟 PowerShell 視窗", "Open PowerShell window here")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn widths(avail: i32, search: bool, pct: i32) -> [i32; 5] {
+        column_widths(avail, search, |v| v, |v| v * pct / 100)
+    }
+
+    #[test]
+    fn standard_text_keeps_previous_layout() {
+        // 100%、1280×720 視窗的清單寬度：跟改之前一樣
+        assert_eq!(widths(945, true, 100), [297, 78, 118, 140, 280]);
+        assert_eq!(widths(945, false, 100), [297, 78, 118, 140, 280]);
+        assert_eq!(widths(700, false, 100), [320, 78, 118, 140, 0]);
+    }
+
+    #[test]
+    fn name_column_has_priority_when_text_is_large() {
+        // 150% 搜尋：類型欄讓位給所在位置，名稱欄不會被擠到只剩幾個字
+        let [name, _, kind, _, location] = widths(945, true, 150);
+        assert!(name >= 270, "{name}");
+        assert_eq!(kind, 0);
+        assert!(location >= 240, "{location}");
+        // 150% 一般資料夾：保留類型欄
+        let [name, _, kind, _, location] = widths(945, false, 150);
+        assert!(name >= 270 && kind > 0 && location == 0, "{name} {kind} {location}");
+    }
+
+    #[test]
+    fn narrow_pane_drops_type_before_squeezing_name() {
+        // 雙欄時每欄約 460 像素
+        let [name, _, kind, _, _] = widths(460, false, 100);
+        assert_eq!(kind, 0);
+        assert!(name >= 180, "{name}");
+        for pct in [100, 115, 130, 150] {
+            for avail in (200..2000).step_by(37) {
+                for search in [false, true] {
+                    let w = widths(avail, search, pct);
+                    let used: i32 = w.iter().sum::<i32>() + 32;
+                    // 有放類型或所在位置時，名稱欄一定至少有 NAME_MIN
+                    if w[2] > 0 || w[4] > 0 {
+                        assert!(w[0] >= NAME_MIN * pct / 100, "{avail} {search} {pct} {w:?}");
+                        assert!(used <= avail, "{avail} {search} {pct} {w:?}");
+                    }
+                }
+            }
+        }
+    }
 }

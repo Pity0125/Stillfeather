@@ -223,12 +223,48 @@ pub struct Fonts {
     pub icon_small: HFONT,
     /// 單行文字高度（像素）。
     pub ui_height: i32,
+    /// 內容文字：檔名與欄位、側欄、分頁、狀態列。跟著文字大小放大（`text_size` 百分比；設定視窗另外用
+    /// `ui_font` 建立同樣比例的字型），頂列與動作列的按鈕、選單、其他對話方塊維持 `ui` 的大小，版面才不會被撐開。
+    pub body: HFONT,
+    pub body_bold: HFONT,
+    /// 內容的小字：欄位標題、側欄的區段標籤、提示列
+    pub body_small: HFONT,
+    pub body_small_bold: HFONT,
+    /// `body` 的單行文字高度（像素）
+    pub body_height: i32,
+    /// 路徑列最後一段（目前資料夾），取代原本的大標題
+    pub heading: HFONT,
 }
 
 fn create_font(face: &str, points: i32, weight: i32, dpi: u32) -> HFONT {
+    create_font_scaled(face, points, 100, weight, dpi)
+}
+
+/// `points` 點放大 `percent`%（文字大小設定）
+fn create_font_scaled(face: &str, points: i32, percent: u32, weight: i32, dpi: u32) -> HFONT {
     let f = wide(face);
     unsafe {
-        CreateFontW(-MulDiv(points, dpi as i32, 72), 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, f.as_ptr())
+        CreateFontW(-MulDiv(points * percent as i32, dpi as i32, 7200), 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, f.as_ptr())
+    }
+}
+
+/// 介面字型（微軟正黑體 UI）`points` 點放大 `percent`%；`bold` 用半粗體。呼叫端負責 DeleteObject。
+/// 設定視窗依文字大小建立自己的字型、預覽各個文字大小時用。
+pub fn ui_font(points: i32, percent: u32, bold: bool, dpi: u32) -> HFONT {
+    create_font_scaled(UI_FACE, points, percent, if bold { FW_SEMIBOLD } else { FW_NORMAL }, dpi)
+}
+
+/// 字型的單行高度（以中英混排的樣本量）
+pub fn line_height(font: HFONT) -> i32 {
+    unsafe {
+        let hdc = GetDC(0);
+        let old = SelectObject(hdc, font);
+        let mut size = SIZE::default();
+        let sample = wide("羽Ag");
+        GetTextExtentPoint32W(hdc, sample.as_ptr(), 3, &mut size);
+        SelectObject(hdc, old);
+        ReleaseDC(0, hdc);
+        size.cy.max(12)
     }
 }
 
@@ -249,7 +285,7 @@ const UI_FACE: &str = "Microsoft JhengHei UI";
 const FW_BOLD: i32 = 700;
 
 impl Fonts {
-    fn new(dpi: u32) -> Fonts {
+    fn new(dpi: u32, text_size: u32) -> Fonts {
         let ui = create_font(UI_FACE, 9, FW_NORMAL, dpi);
         let ui_bold = create_font(UI_FACE, 9, FW_SEMIBOLD, dpi);
         let small = create_font(UI_FACE, 8, FW_NORMAL, dpi);
@@ -266,22 +302,19 @@ impl Fonts {
         }
         let icon = create_font(icon_face, 11, FW_NORMAL, dpi);
         let icon_small = create_font(icon_face, 8, FW_NORMAL, dpi);
-        let ui_height = unsafe {
-            let hdc = GetDC(0);
-            let old = SelectObject(hdc, ui);
-            let mut size = SIZE::default();
-            let sample = wide("羽Ag");
-            GetTextExtentPoint32W(hdc, sample.as_ptr(), 3, &mut size);
-            SelectObject(hdc, old);
-            ReleaseDC(0, hdc);
-            size.cy.max(12)
-        };
-        Fonts { ui, ui_bold, small, small_bold, brand, title, icon, icon_small, ui_height }
+        let ui_height = line_height(ui);
+        let body = create_font_scaled(UI_FACE, 9, text_size, FW_NORMAL, dpi);
+        let body_bold = create_font_scaled(UI_FACE, 9, text_size, FW_SEMIBOLD, dpi);
+        let body_small = create_font_scaled(UI_FACE, 8, text_size, FW_NORMAL, dpi);
+        let body_small_bold = create_font_scaled(UI_FACE, 8, text_size, FW_SEMIBOLD, dpi);
+        let body_height = line_height(body);
+        let heading = create_font(UI_FACE, 12, FW_SEMIBOLD, dpi);
+        Fonts { ui, ui_bold, small, small_bold, brand, title, icon, icon_small, ui_height, body, body_bold, body_small, body_small_bold, body_height, heading }
     }
 
     fn destroy(&mut self) {
         unsafe {
-            for f in [self.ui, self.ui_bold, self.small, self.small_bold, self.brand, self.title, self.icon, self.icon_small] {
+            for f in [self.ui, self.ui_bold, self.small, self.small_bold, self.brand, self.title, self.icon, self.icon_small, self.body, self.body_bold, self.body_small, self.body_small_bold, self.heading] {
                 if f != 0 {
                     DeleteObject(f);
                 }
@@ -295,12 +328,14 @@ pub struct Theme {
     pub brushes: Brushes,
     pub fonts: Fonts,
     pub dpi: u32,
+    /// 內容文字大小（百分比，見 `Fonts::body`）
+    pub text_size: u32,
 }
 
 impl Theme {
     pub fn new(settings: &Settings, dpi: u32) -> Theme {
         let pal = Palette::from_settings(settings);
-        Theme { brushes: Brushes::new(&pal), fonts: Fonts::new(dpi), pal, dpi }
+        Theme { brushes: Brushes::new(&pal), fonts: Fonts::new(dpi, settings.text_size), pal, dpi, text_size: settings.text_size }
     }
 
     pub fn set_palette(&mut self, settings: &Settings) {
@@ -311,12 +346,24 @@ impl Theme {
 
     pub fn set_dpi(&mut self, dpi: u32) {
         self.fonts.destroy();
-        self.fonts = Fonts::new(dpi);
+        self.fonts = Fonts::new(dpi, self.text_size);
         self.dpi = dpi;
+    }
+
+    /// 換內容文字大小：重建字型（呼叫端要把新字型套到清單、樹狀圖並重排）
+    pub fn set_text_size(&mut self, text_size: u32) {
+        self.fonts.destroy();
+        self.fonts = Fonts::new(self.dpi, text_size);
+        self.text_size = text_size;
     }
 
     pub fn s(&self, v: i32) -> i32 {
         scale(v, self.dpi)
+    }
+
+    /// 內容的寬度跟著文字大小放大（欄寬等）
+    pub fn st(&self, v: i32) -> i32 {
+        scale(v * self.text_size as i32 / 100, self.dpi)
     }
 }
 
@@ -541,6 +588,7 @@ pub mod glyph {
     pub const TERMINAL: char = '\u{E756}';
     // 排序、檢視選單（碼位依 Microsoft Segoe Fluent Icons 文件）
     pub const SORT: char = '\u{E8CB}';
+    pub const FONT_SIZE: char = '\u{E8D2}';
     pub const VIEW_DETAILS: char = '\u{E8FD}';
     pub const VIEW_LIST: char = '\u{EA37}';
     pub const VIEW_SMALL: char = '\u{E8A9}';

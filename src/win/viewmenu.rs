@@ -1,5 +1,6 @@
-//! 標題列右側的「排序」「檢視」下拉選單（對應檔案總管命令列的同名選單）。
-//! 檢視模式記在各個資料夾；「檢視 › 顯示」裡的精簡檢視、副檔名與隱藏的項目是整體設定。
+//! 動作列右側的「排序」「檢視」下拉選單（對應檔案總管命令列的同名選單）。
+//! 檢視模式記在各個資料夾；「檢視 › 顯示」裡的精簡檢視、副檔名與隱藏的項目，以及「檢視 › 文字大小」是整體設定。
+//! 排序原本另有 A–Z／最新／大小 三個快速籤，和這個選單重複，已併進來：選修改日期、大小時從新的、大的開始。
 
 use super::anim;
 use super::app::{id, write_folder_views, write_settings, App};
@@ -7,7 +8,7 @@ use super::dialog::{self, Icon};
 use super::menu::{self, Item, Look, Mark};
 use super::theme::glyph;
 use feather_core::folderviews;
-use feather_core::settings::Settings;
+use feather_core::settings::{Settings, TEXT_SIZES};
 use feather_core::sorting;
 use feather_core::view::{self, ViewMode};
 use feather_core::workspace::Side;
@@ -40,14 +41,11 @@ impl App {
         self.hide_preview();
         let (col, desc) = self.current_sort();
         let items = vec![
-            Item::radio(id::SORT_NAME, tr!("名稱", "Name"), col == 0),
-            Item::radio(id::SORT_DATE, tr!("修改日期", "Date modified"), col == 3),
-            Item::radio(id::SORT_TYPE, tr!("類型", "Type"), col == 2),
-            Item::Submenu {
-                text: tr!("更多選項", "More options"),
-                glyph: None,
-                items: vec![Item::radio(id::SORT_SIZE, tr!("大小", "Size"), col == 1), Item::radio(id::SORT_LOCATION, tr!("所在位置", "Location"), col == 4)],
-            },
+            Item::radio(id::SORT_NAME, tr!("名稱", "Name"), col == sorting::COL_NAME),
+            Item::radio(id::SORT_DATE, tr!("修改日期（新的在前）", "Date modified (newest first)"), col == sorting::COL_MODIFIED),
+            Item::radio(id::SORT_SIZE, tr!("大小（大的在前）", "Size (largest first)"), col == sorting::COL_SIZE),
+            Item::radio(id::SORT_TYPE, tr!("類型", "Type"), col == sorting::COL_TYPE),
+            Item::Submenu { text: tr!("更多選項", "More options"), glyph: None, items: vec![Item::radio(id::SORT_LOCATION, tr!("所在位置", "Location"), col == sorting::COL_LOCATION)] },
             Item::Separator,
             Item::radio(id::SORT_ASC, tr!("遞增", "Ascending"), !desc),
             Item::radio(id::SORT_DESC, tr!("遞減", "Descending"), desc),
@@ -91,16 +89,18 @@ impl App {
         });
     }
 
-    /// 換排序欄位時保留目前的遞增／遞減；遞增、遞減只換方向。
+    /// 換排序欄位時用那一欄習慣的方向（修改日期、大小從新的、大的開始，同原本的「最新」「大小」快速籤）；
+    /// 選目前的欄位不改方向；遞增、遞減只換方向。
     pub(super) fn sort_command(&mut self, cmd: u16) {
         let side = self.active_side();
         let (col, desc) = self.current_sort();
+        let pick = |target: usize| if target == col { (col, desc) } else { (target, sorting::default_desc(target)) };
         let (col, desc) = match cmd {
-            id::SORT_NAME => (0, desc),
-            id::SORT_SIZE => (1, desc),
-            id::SORT_TYPE => (2, desc),
-            id::SORT_DATE => (3, desc),
-            id::SORT_LOCATION => (4, desc),
+            id::SORT_NAME => pick(sorting::COL_NAME),
+            id::SORT_SIZE => pick(sorting::COL_SIZE),
+            id::SORT_TYPE => pick(sorting::COL_TYPE),
+            id::SORT_DATE => pick(sorting::COL_MODIFIED),
+            id::SORT_LOCATION => pick(sorting::COL_LOCATION),
             id::SORT_ASC => (col, false),
             id::SORT_DESC => (col, true),
             _ => return,
@@ -131,6 +131,14 @@ impl App {
                 Item::check(id::SHOW_MEDIA_ICONS, tr!("相片資料夾用大圖示", "Large icons for photo folders"), self.settings.media_folder_icons),
             ],
         });
+        // 文字大小：檔名、欄位、側欄與狀態列的字（存在設定裡，重開後仍有效）
+        let size_labels = [tr!("標準", "Standard"), tr!("大", "Large"), tr!("更大", "Larger"), tr!("最大", "Largest")];
+        let sizes: Vec<String> = TEXT_SIZES.iter().zip(size_labels).map(|(pct, label)| format!("{label}\t{pct}%")).collect();
+        items.push(Item::Submenu {
+            text: tr!("文字大小", "Text size"),
+            glyph: Some(glyph::FONT_SIZE),
+            items: sizes.iter().enumerate().map(|(i, label)| Item::radio(id::TEXT_SIZE_FIRST + i as u16, label, self.settings.text_size == TEXT_SIZES[i])).collect(),
+        });
         items.push(Item::Command { id: id::VIEW_APPLY_ALL, text: tr!("套用到所有資料夾", "Apply to all folders"), glyph: None, mark: Mark::None, on: false, enabled: true });
         let Some(cmd) = menu::drop_down(self.hwnd, self.view_btn, &items, &self.menu_look()) else { return };
         match cmd {
@@ -138,6 +146,7 @@ impl App {
             id::SHOW_EXTENSIONS => self.toggle_extensions(),
             id::HIDDEN => self.toggle_hidden(),
             id::SHOW_MEDIA_ICONS => self.toggle_media_icons(),
+            c if (id::TEXT_SIZE_FIRST..id::TEXT_SIZE_FIRST + TEXT_SIZES.len() as u16).contains(&c) => self.set_text_size(TEXT_SIZES[(c - id::TEXT_SIZE_FIRST) as usize]),
             id::VIEW_APPLY_ALL => self.apply_view_to_all(),
             c if (id::VIEW_FIRST..id::VIEW_FIRST + 8).contains(&c) => {
                 if let Some(mode) = ViewMode::from_digit((c - id::VIEW_FIRST + 1) as u8) {
@@ -227,6 +236,13 @@ impl App {
         match write_settings(&new) {
             Ok(()) => self.apply_settings(new),
             Err(e) => self.show_error(&trf!("設定未儲存，保留先前設定：{e}", "Settings weren't saved; the previous settings are kept: {e}")),
+        }
+    }
+
+    /// 「檢視 › 文字大小」
+    pub(super) fn set_text_size(&mut self, pct: u32) {
+        if self.settings.text_size != pct {
+            self.change_setting(|s| s.text_size = pct);
         }
     }
 

@@ -75,10 +75,11 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 - **Desktop folders open in tabs.** Set Stillfeather as your default file manager, then double-click different folders on your desktop. Each folder opens in its own tab in the same window.
 - **Tabs and dual panes**: the left and right panes each have their own tabs and back/forward history. Ctrl+Shift+D toggles single/dual pane. Drag files between panes, or use "Copy to other pane".
 - **Restore your tabs**: next time you open Stillfeather, both panes' tabs, the selected tabs, and dual-pane mode come back as you left them. The visible tabs load right away; the others load when you switch to them. When you open it with Win+E or by double-clicking a folder, that location opens in a new tab (or switches to it if it's already open). To turn this off, untick "還原上次的分頁" (restore tabs) in Settings.
-- **Breadcrumb path bar**: click any level to jump there. Press Ctrl+L to switch to a text box and type a full path, a relative path (`..`, a subfolder name), or a file path (opens its folder with the file selected).
+- **Breadcrumb path bar**: click any level to jump there; click the arrow next to a level to list its subfolders and switch to one (arrow keys, Enter and Esc work too). Press Ctrl+L to switch to a text box and type a full path, a relative path (`..`, a subfolder name), or a file path (opens its folder with the file selected).
 - **Per-folder views**: eight views, from extra-large icons to details. Switch one folder to large icons and the others stay as they were.
 - **Thumbnails**: the icon views (extra-large, large and medium icons, tiles, and content) show thumbnails for pictures and videos, and for PDFs, PSDs and more when a thumbnail handler is installed, just like File Explorer. Folders that are at least half pictures and videos open in large icons unless you've picked a view for them; to turn that off, untick "相片資料夾用大圖示" (large icons for photo folders) under View › Show. Thumbnails are made in a separate process, so a faulty thumbnail handler can't crash Stillfeather.
 - **Filter chips**: show only folders, images, documents, media or archives in one click, with a count for each.
+- **Room for your files, and larger text**: the current folder is the last part of the path bar, the filter chips share one row with the common actions, and the bottom is a single status line (the item count, or “N items selected” with their size), so the list takes about 70% of the window. View › Text size (or Settings › Appearance & text) enlarges file names, columns, the sidebar and tabs up to 150%, and it's remembered next time.
 - **Pinned locations**: drag a folder onto the sidebar to pin it, or pin and unpin from the right-click menu.
 - **The full right-click menu**: alongside Stillfeather's own commands, you get the entries installed programs add (Open in Terminal, 7-Zip, Git, Send to…), with no "Show more options" step.
 - **Open PowerShell window here**: right-click empty space in a folder, a folder, or a folder in the sidebar, no Shift needed. Uses PowerShell 7 when it's installed, otherwise the PowerShell built into Windows.
@@ -188,7 +189,7 @@ Stillfeather checks for new versions in the background (at most once every 20 ho
 - The release info (`update.json`) is only accepted if it carries Stillfeather's signature. The signing key is kept offline, not on GitHub, so even if the GitHub account were compromised, nobody could publish a fake update that Stillfeather would install.
 - A downloaded installer only runs if its size and SHA-256 exactly match the published release. If your current version is code-signed, the new one must have a valid signature too.
 - Updating keeps your shortcuts and default file manager setting, and reopens Stillfeather when done.
-- To stop the reminders, check **No update reminders** (`不要啟用更新提醒`) in Settings. **Check for updates** (`檢查更新`) next to it checks manually at any time. When it finds a new version, the button becomes **Update now** (`立即更新`); click it to start.
+- To stop the reminders, uncheck **Remind me about updates** (`啟動時提醒更新`) under Settings › About & updates. **Check for updates** (`檢查更新`) above it checks manually at any time. When it finds a new version, the button becomes **Update now** (`立即更新`); click it to start.
 
 ## Uninstall
 

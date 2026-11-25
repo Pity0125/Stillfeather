@@ -1,5 +1,7 @@
 //! 麵包屑路徑（參考圖的「Lullo › Library › Albums」）。
 //! 點上層名稱直接前往；點最後一段、空白處或「…」就切換成可輸入的路徑框（Ctrl+L 亦同）。
+//! 每一段右邊的箭頭（最後一段也有）和名稱分開點：點箭頭列出那一層的子資料夾（見 crumbmenu.rs），
+//! 選單開著時箭頭朝下；另一段的選單開著時，滑鼠移到這一段的箭頭就換成這一段的選單。
 
 use super::anim;
 use super::app;
@@ -12,11 +14,15 @@ pub const CRUMBS_CLASS: &str = "FeatherFiles.Crumbs";
 pub const WM_APP_CRUMB: u32 = WM_APP + 12;
 /// wParam：要前往的段落索引；EDIT 表示切換成輸入模式。
 pub const EDIT: usize = usize::MAX >> 1;
+/// 點了某一段右邊的箭頭：wParam 是段落索引；lParam 為 1 表示只是滑鼠移過去（別的選單開著時才換過去）
+pub const WM_APP_CRUMB_MENU: u32 = WM_APP + 16;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Hit {
     None,
     Segment(usize),
+    /// 段落右邊的箭頭（子資料夾選單）
+    Arrow(usize),
     Ellipsis,
 }
 
@@ -25,6 +31,7 @@ struct Data {
     tracking: bool,
     /// 各段落與「…」的懸停底色（路徑改變時重設）
     hover: Vec<Tween>,
+    arrow_hover: Vec<Tween>,
     ellipsis_hover: Tween,
     path: String,
     /// 拖放時滑鼠下的段落（放開就移動／複製到那一層）
@@ -34,6 +41,9 @@ struct Data {
 struct Layout {
     /// （段落索引, 文字範圍）
     items: Vec<(usize, RECT)>,
+    /// （段落索引, 箭頭範圍）：每一段右邊一個，最後一段也有
+    arrows: Vec<(usize, RECT)>,
+    /// 「…」右邊的分隔符號（不能點）
     separators: Vec<RECT>,
     ellipsis: Option<RECT>,
 }
@@ -60,7 +70,7 @@ pub fn register(hinst: HINSTANCE) {
 }
 
 pub fn create(parent: HWND) -> HWND {
-    let data = Box::new(Data { hot: Hit::None, tracking: false, hover: Vec::new(), ellipsis_hover: Tween::new(0.0), path: String::new(), drop: None });
+    let data = Box::new(Data { hot: Hit::None, tracking: false, hover: Vec::new(), arrow_hover: Vec::new(), ellipsis_hover: Tween::new(0.0), path: String::new(), drop: None });
     let class = wide(CRUMBS_CLASS);
     let name = wide(tr!("目前位置", "Current location"));
     unsafe {
@@ -96,18 +106,19 @@ fn layout(hwnd: HWND, segments: &[(String, String)], hdc: HDC) -> Layout {
         .iter()
         .enumerate()
         .map(|(i, (label, _))| {
-            let font = if i + 1 == segments.len() { t.fonts.ui_bold } else { t.fonts.ui };
+            // 最後一段是目前資料夾：用較大的字，取代原本另一列的大標題
+            let font = if i + 1 == segments.len() { t.fonts.heading } else { t.fonts.ui };
             theme::text_width(hdc, label, font) + 2 * pad
         })
         .collect();
-    // 從最後一段往前放，放不下的前段收成「…」。
+    // 從最後一段往前放，放不下的前段收成「…」。每一段後面都有箭頭（含最後一段）。
     let ellipsis_w = theme::text_width(hdc, "…", t.fonts.ui) + 2 * pad + sep_w;
     let mut first = 0;
-    let total = |from: usize| -> i32 { widths[from..].iter().sum::<i32>() + sep_w * (widths.len() - from).saturating_sub(1) as i32 };
+    let total = |from: usize| -> i32 { widths[from..].iter().sum::<i32>() + sep_w * (widths.len() - from) as i32 };
     while first + 1 < widths.len() && total(first) + if first > 0 { ellipsis_w } else { 0 } > r.width() {
         first += 1;
     }
-    let mut out = Layout { items: Vec::new(), separators: Vec::new(), ellipsis: None };
+    let mut out = Layout { items: Vec::new(), arrows: Vec::new(), separators: Vec::new(), ellipsis: None };
     let mut x = 0;
     if first > 0 {
         let w = ellipsis_w - sep_w;
@@ -117,13 +128,12 @@ fn layout(hwnd: HWND, segments: &[(String, String)], hdc: HDC) -> Layout {
         x += sep_w;
     }
     for (i, w) in widths.iter().enumerate().skip(first) {
-        let right = (x + w).min(r.right);
+        // 只剩一段還放不下時名稱縮短（結尾「…」），箭頭仍留在看得到的地方
+        let right = (x + w).min(r.right - sep_w).max(x);
         out.items.push((i, RECT { left: x, top: 0, right, bottom: r.bottom }));
         x = right;
-        if i + 1 < widths.len() {
-            out.separators.push(RECT { left: x, top: 0, right: x + sep_w, bottom: r.bottom });
-            x += sep_w;
-        }
+        out.arrows.push((i, RECT { left: x, top: 0, right: x + sep_w, bottom: r.bottom }));
+        x += sep_w;
     }
     out
 }
@@ -131,6 +141,11 @@ fn layout(hwnd: HWND, segments: &[(String, String)], hdc: HDC) -> Layout {
 fn hit_test(l: &Layout, x: i32, y: i32) -> Hit {
     if l.ellipsis.is_some_and(|r| r.contains(x, y)) {
         return Hit::Ellipsis;
+    }
+    for (i, r) in &l.arrows {
+        if r.contains(x, y) {
+            return Hit::Arrow(*i);
+        }
     }
     for (i, r) in &l.items {
         if r.contains(x, y) {
@@ -146,6 +161,33 @@ unsafe fn current_hit(hwnd: HWND, x: i32, y: i32) -> (Hit, usize) {
     let l = layout(hwnd, &segments, hdc);
     ReleaseDC(hwnd, hdc);
     (hit_test(&l, x, y), segments.len())
+}
+
+/// 螢幕座標下是不是某一段的箭頭（點選單外面時，點的是箭頭就交給麵包屑切換選單，不先關掉）。
+pub fn arrow_at(hwnd: HWND, screen: POINT) -> Option<usize> {
+    let mut p = screen;
+    unsafe {
+        ScreenToClient(hwnd, &mut p);
+        match current_hit(hwnd, p.x, p.y) {
+            (Hit::Arrow(i), _) => Some(i),
+            _ => None,
+        }
+    }
+}
+
+/// 某一段箭頭的螢幕範圍（畫出來的圓角底色那麼高），選單出現在它下方。這一段被收進「…」時回傳 None。
+pub fn arrow_rect(hwnd: HWND, index: usize) -> Option<RECT> {
+    unsafe {
+        let segments = app::crumb_model();
+        let hdc = GetDC(hwnd);
+        let l = layout(hwnd, &segments, hdc);
+        ReleaseDC(hwnd, hdc);
+        let r = l.arrows.iter().find(|(i, _)| *i == index)?.1;
+        let ph = app::theme().s(28).min(r.height());
+        let mut tl = POINT { x: r.left, y: r.top + (r.height() - ph) / 2 };
+        ClientToScreen(hwnd, &mut tl);
+        Some(RECT { left: tl.x, top: tl.y, right: tl.x + r.width(), bottom: tl.y + ph })
+    }
 }
 
 /// 拖放用：螢幕座標下的段落索引（含最後一段，也就是目前的資料夾）。
@@ -178,6 +220,12 @@ fn post(index: usize) {
     }
 }
 
+fn post_menu(index: usize, hover: bool) {
+    unsafe {
+        PostMessageW(app::main_hwnd(), WM_APP_CRUMB_MENU, index, hover as LPARAM);
+    }
+}
+
 unsafe extern "system" fn crumbs_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let Some(d) = data(hwnd) else { return DefWindowProcW(hwnd, msg, wparam, lparam) };
     let (x, y) = (get_x_lparam(lparam), get_y_lparam(lparam));
@@ -193,6 +241,7 @@ unsafe extern "system" fn crumbs_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             let (hit, n) = current_hit(hwnd, p.x, p.y);
             let cursor = match hit {
                 Hit::Segment(i) if i + 1 < n => IDC_HAND,
+                Hit::Arrow(_) => IDC_HAND,
                 _ => IDC_IBEAM,
             };
             SetCursor(load_cursor(cursor));
@@ -213,6 +262,10 @@ unsafe extern "system" fn crumbs_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             if hit != d.hot {
                 d.hot = hit;
                 invalidate(hwnd);
+                // 另一段的選單開著：移到這一段的箭頭就換成這一段的選單（同選單列）
+                if let Hit::Arrow(i) = hit {
+                    post_menu(i, true);
+                }
             }
             return 0;
         }
@@ -222,9 +275,17 @@ unsafe extern "system" fn crumbs_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             invalidate(hwnd);
             return 0;
         }
+        // 箭頭按下就開（或關）選單；連點兩下時第二下是 WM_LBUTTONDBLCLK，一樣當作再點一次
+        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
+            if let (Hit::Arrow(i), _) = current_hit(hwnd, x, y) {
+                post_menu(i, false);
+            }
+            return 0;
+        }
         WM_LBUTTONUP => {
             match current_hit(hwnd, x, y) {
                 (Hit::Segment(i), n) if i + 1 < n => post(i),
+                (Hit::Arrow(_), _) => {}
                 _ => post(EDIT),
             }
             return 0;
@@ -257,7 +318,9 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
         if path != d.path || d.hover.len() != segments.len() {
             d.path = path;
             d.hover = vec![Tween::new(0.0); segments.len()];
+            d.arrow_hover = vec![Tween::new(0.0); segments.len()];
         }
+        let open = app::crumb_menu_segment();
         let mut busy = false;
         let hover_color = theme::blend(p.ink, p.background, 0.06);
         let pill = |r: &RECT, h: f32| {
@@ -294,11 +357,30 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
             } else if h > 0.001 {
                 pill(r, h);
             }
-            let (font, color) = if last { (t.fonts.ui_bold, p.ink) } else if dropping { (t.fonts.ui, p.ink) } else { (t.fonts.ui, anim::mix(p.muted, p.ink, h)) };
+            let (font, color) = if last { (t.fonts.heading, p.ink) } else if dropping { (t.fonts.ui, p.ink) } else { (t.fonts.ui, anim::mix(p.muted, p.ink, h)) };
             theme::draw_text(dc, &segments[*i].0, r, font, color, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
         for s in &l.separators {
             theme::draw_text(dc, &glyph::CHEVRON_SMALL.to_string(), s, t.fonts.icon_small, theme::blend(p.muted, p.background, 0.7), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        // 子資料夾選單的箭頭：懸停時有自己的圓角底色；選單開著時朝下、底色維持
+        for (i, r) in &l.arrows {
+            let is_open = open == Some(*i);
+            let hot = d.hot == Hit::Arrow(*i) || is_open;
+            let h = match d.arrow_hover.get_mut(*i) {
+                Some(tw) => {
+                    anim::to(tw, hot as u8 as f32, anim::HOVER_MS);
+                    busy |= anim::running(tw);
+                    anim::value(tw)
+                }
+                None => 0.0,
+            };
+            if h > 0.001 {
+                pill(r, h);
+            }
+            let g = if is_open { glyph::CHEVRON_DOWN_SMALL } else { glyph::CHEVRON_SMALL };
+            let color = anim::mix(theme::blend(p.muted, p.background, 0.7), p.ink, h);
+            theme::draw_text(dc, &g.to_string(), r, t.fonts.icon_small, color, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         if busy {
             anim::request_frame(hwnd);

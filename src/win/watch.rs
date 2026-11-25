@@ -462,6 +462,7 @@ impl App {
         let folders: Vec<(String, bool)> = listing.entries.iter().filter(|e| e.is_dir).map(|e| (e.name.clone(), e.is_link)).collect();
         let Some(tab) = self.tabs.get_mut(&id) else { return };
         tab.status = app::folder_status(listing.entries.len(), listing.skipped);
+        tab.skipped = listing.skipped;
         tab.entries = listing.entries;
         tab.refilter();
         tab.resummarize();

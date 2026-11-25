@@ -1022,6 +1022,13 @@ pub const PW_CLIENTONLY: u32 = 0x1;
 pub const PW_RENDERFULLCONTENT: u32 = 0x2;
 pub const FLASHW_CAPTION: u32 = 0x1;
 pub const MA_NOACTIVATE: LRESULT = 3;
+pub const DWMWCP_ROUNDSMALL: u32 = 3;
+pub const VK_END: u32 = 0x23;
+pub const VK_HOME: u32 = 0x24;
+/// 標題列、邊框上按下滑鼠（拖曳標題列、縮放視窗之前）
+pub const WM_NCLBUTTONDOWN: u32 = 0x00A1;
+pub const WM_NCRBUTTONDOWN: u32 = 0x00A4;
+pub const WM_NCMBUTTONDOWN: u32 = 0x00A7;
 pub const TVGN_NEXTVISIBLE: usize = 0x6;
 pub const TVGN_FIRSTVISIBLE: usize = 0x5;
 pub const TVM_GETITEMRECT: u32 = 0x1104;
@@ -1064,6 +1071,8 @@ pub const SHGFI_SMALLICON: u32 = 0x0001;
 pub const SHGFI_USEFILEATTRIBUTES: u32 = 0x0010;
 pub const SHGFI_ICON: u32 = 0x0100;
 pub const SHGFI_SYSICONINDEX: u32 = 0x4000;
+/// 搭配 SHGFI_ICON：圖示加上捷徑箭頭
+pub const SHGFI_LINKOVERLAY: u32 = 0x8000;
 pub const SHCNE_UPDATEDIR: i32 = 0x0000_1000;
 pub const SHCNF_PATHW: u32 = 0x0005;
 pub const ERROR_NOT_SAME_DEVICE: u32 = 17;
@@ -1244,6 +1253,7 @@ pub const LVM_SETEXTENDEDLISTVIEWSTYLE: u32 = 0x1036;
 /// 清單自己的提示視窗（截斷的名稱滑鼠停上去時顯示完整名稱）
 pub const LVM_GETTOOLTIPS: u32 = 0x104E;
 pub const LVM_GETSELECTIONMARK: u32 = 0x1042;
+pub const LVM_SETHOTITEM: u32 = 0x103C;
 pub const LVM_SETSELECTIONMARK: u32 = 0x1043;
 pub const LVM_INSERTCOLUMNW: u32 = 0x1061;
 pub const LVM_EDITLABELW: u32 = 0x1076;

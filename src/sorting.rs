@@ -114,6 +114,11 @@ pub fn compare(a: &Entry, b: &Entry, column: usize, descending: bool, folders_on
     }
 }
 
+/// 從選單選一個排序欄位時先用的方向：修改日期、大小從新的、大的開始（遞減），名稱、類型、所在位置遞增
+pub fn default_desc(column: usize) -> bool {
+    matches!(column, COL_SIZE | COL_MODIFIED)
+}
+
 pub fn sort_entries(entries: &mut [Entry], column: usize, descending: bool, folders_on_top: bool) {
     entries.sort_by(|a, b| compare(a, b, column, descending, folders_on_top));
 }
@@ -121,6 +126,15 @@ pub fn sort_entries(entries: &mut [Entry], column: usize, descending: bool, fold
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_directions() {
+        assert!(!default_desc(COL_NAME));
+        assert!(default_desc(COL_SIZE));
+        assert!(!default_desc(COL_TYPE));
+        assert!(default_desc(COL_MODIFIED));
+        assert!(!default_desc(COL_LOCATION));
+    }
     use crate::entry::sample;
 
     #[test]

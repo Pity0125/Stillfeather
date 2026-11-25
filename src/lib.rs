@@ -12,6 +12,7 @@ pub mod anim;
 pub mod category;
 pub mod crashguard;
 pub mod entry;
+pub mod fileicons;
 pub mod folderviews;
 pub mod format;
 pub mod inflate;

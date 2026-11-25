@@ -145,13 +145,14 @@ fn layout(hwnd: HWND, d: &mut Data, model: &Model, hdc: HDC) -> Layout {
     let right = r.right - t.s(2);
     let plus_w = t.s(34);
     let arrow_w = t.s(26);
-    let min_w = t.s(88);
-    let max_w = t.s(220);
+    // 分頁標題跟著「文字大小」放大（`body` 字型）：寬度也照同樣的比例
+    let min_w = t.st(88);
+    let max_w = t.st(220);
     let n = model.titles.len();
     let natural: Vec<i32> = model
         .titles
         .iter()
-        .map(|title| (theme::text_width(hdc, title, t.fonts.ui_bold) + t.s(14 + 6 + 18 + 8)).clamp(min_w, max_w))
+        .map(|title| (theme::text_width(hdc, title, t.fonts.body_bold) + t.s(14 + 6 + 18 + 8)).clamp(min_w, max_w))
         .collect();
     let avail = (right - left - plus_w - t.s(4)).max(min_w);
     let total: i32 = natural.iter().sum();
@@ -427,11 +428,11 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
             let text_right = if show_close { close.left - t.s(2) } else { tab.right - t.s(10) };
             let tr = RECT { left: tab.left + t.s(14), top: tab.top, right: text_right, bottom: tab.bottom - t.s(6) };
             let color = if selected || dropping { p.ink } else { anim::mix(p.muted, p.ink, hv) };
-            let font = if selected { t.fonts.ui_bold } else { t.fonts.ui };
+            let font = if selected { t.fonts.body_bold } else { t.fonts.body };
             theme::draw_text(dc, title, &tr, font, color, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             if selected {
                 // 底線寬度跟著文字
-                let text_w = theme::text_width(dc, title, t.fonts.ui_bold).min(tr.width());
+                let text_w = theme::text_width(dc, title, t.fonts.body_bold).min(tr.width());
                 let bar_h = t.s(3);
                 bar_target = Some(RECT {
                     left: tr.left - t.s(4),
