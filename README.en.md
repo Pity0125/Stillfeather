@@ -11,7 +11,7 @@
 
 ![Project files on the left and image thumbnails on the right in Stillfeather’s dark theme](docs/main-window-en.png)
 
-**v0.1.6** adds detachable tabs, bookmark groups in Favorites, and customizable shortcuts. Search also supports date, size, and extension filters. [Full changelog (繁體中文)](CHANGELOG.md)
+**v0.1.6** adds detachable tabs, bookmark groups in Favorites, and customizable shortcuts. Search also supports date, size, and extension filters. This version also adds eight themes, NAS share navigation, and a standalone Help window. [Full 0.1.6 release notes](docs/release-v0.1.6.md#english)
 
 ## Copy between folders in one window
 
@@ -75,16 +75,16 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 ### Familiar, but smoother
 
 - **Desktop folders open in tabs.** Set Stillfeather as your default file manager, then double-click different folders on your desktop. Each folder opens in its own tab in the same window.
-- **Tabs and dual panes**: the left and right panes each have their own tabs and back/forward history. Ctrl+\\ toggles single/dual pane. Drag files between panes, or use "Copy to other pane". Drag tabs to reorder them, move them to the other pane, or drop them outside the window to open a separate window; Ctrl+Shift+T reopens the tab you just closed.
-- **Restore your tabs**: next time you open Stillfeather, both panes' tabs, the selected tabs, and dual-pane mode come back as you left them. The visible tabs load right away; the others load when you switch to them. When you open it with Win+E or by double-clicking a folder, that location opens in a new tab (or switches to it if it's already open). To turn this off, untick "還原上次的分頁" (restore tabs) in Settings.
+- **Tabs and dual panes**: the left and right panes each have their own tabs and back/forward history. Ctrl+\\ toggles single/dual pane. Drag files between panes, or use "Copy to other pane". Drag tabs to reorder them, move them to the other pane, or drop them outside the window to open a separate window; Ctrl+Shift+T reopens the tab you just closed. When maximized, drag a tab down into the file list to detach it. Dragging the only tab in a single-pane window moves that window. The source tab closes after the destination loads its folder.
+- **Restore your tabs**: next time you open Stillfeather, the main window's tabs in both panes, the selected tabs, and dual-pane mode come back as you left them. The visible tabs load right away; the others load when you switch to them. When you open it with Win+E or by double-clicking a folder, that location opens in a new tab (or switches to it if it's already open). To turn this off, turn off Settings › Browsing › Restore last tabs.
 - **Breadcrumb path bar**: click any level to jump there; click the arrow next to a level to list its subfolders and switch to one (arrow keys, Enter and Esc work too). Press Ctrl+E to switch to a text box and type a full path, a relative path (`..`, a subfolder name), or a file path (opens its folder with the file selected).
 - **Network locations and NAS**: type `\\computer-name` in the path bar to list the folders it shares. If it needs a user name and password, Windows' own sign-in window appears and the folder opens once you sign in.
 - **Per-folder views**: eight views, from extra-large icons to details. Switch one folder to large icons and the others stay as they were.
 - **Thumbnails**: the icon views (extra-large, large and medium icons, tiles, and content) show thumbnails for pictures and videos, and for PDFs, PSDs and more when a thumbnail handler is installed, just like File Explorer. Folders that are at least half pictures and videos open in large icons unless you've picked a view for them; to turn that off, untick "相片資料夾用大圖示" (large icons for photo folders) under View › Show. Thumbnails are made in a separate process, so a faulty thumbnail handler can't crash Stillfeather.
 - **Filter chips**: show only folders, images, documents, media or archives in one click, with a count for each.
 - **Room for your files, and larger text**: the current folder is the last part of the path bar, the filter chips share one row with the common actions, and the bottom is a single status line (the item count, or “N items selected” with their size), so the list takes about 70% of the window. View › Text size (or Settings › Text & language) enlarges file names, columns, the sidebar, tabs, the path bar, filter chips and dialogs up to 150%, and it's remembered next time.
-- **Pinned locations**: right-click Favorites to create a bookmark group, then drop folders onto it. Right-click a pinned folder to move it between groups.
-- **Custom shortcuts**: open Settings › Shortcuts, choose a command, enter a key combination and save. Leave it blank to disable the shortcut.
+- **Pinned locations**: right-click Favorites to create a bookmark group, then drop folders onto it. Right-click a pinned folder to move it between groups. Right-click a group to rename or remove it. Removing a group keeps its bookmarks in Favorites.
+- **Custom shortcuts**: open Settings › Shortcuts, choose a command, enter a key combination and save. Separate multiple combinations with a semicolon (`;`) or leave the field blank to disable the shortcut. A conflict prompt identifies the affected commands. Changes apply when you save.
 - **The full right-click menu**: alongside Stillfeather's own commands, you get the entries installed programs add (Open in Terminal, 7-Zip, Git, Send to…), with no "Show more options" step.
 - **Open PowerShell window here**: right-click empty space in a folder, a folder, or a folder in the sidebar, no Shift needed. Uses PowerShell 7 when it's installed, otherwise the PowerShell built into Windows.
 - **Box selection and empty space**: like File Explorer, the selection highlight stops at the last column. Press on the empty space beside the items or below the last one and drag to draw a box and select several items (hold Ctrl to toggle, or Shift to add to what's already selected); click the empty space to clear the selection. To drag files, drag them from the items as before.
@@ -181,6 +181,8 @@ Windows 11 updates rolling out since October 2026 make Win+E open File Explorer 
 - If Stillfeather won't open at all, or its install folder was deleted without uninstalling: download `RestoreExplorer.cmd` from [Releases](https://github.com/Pity0125/Stillfeather/releases/latest) and double-click it. It only changes the current user's settings: it closes Stillfeather, points folders and Win+E back to File Explorer and restores the standard Windows file dialogs. Your files are never touched.
 
 ## Keyboard shortcuts
+
+The table lists the defaults. Press `F1` or click `?` to see your current bindings in a separate Help window. During search, `F1` opens the syntax guide. `Ctrl+C` copies the page and `Esc` closes Help.
 
 | Keys | Action |
 |---|---|
