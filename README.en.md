@@ -11,7 +11,7 @@
 
 ![Project files on the left and image thumbnails on the right in Stillfeather’s dark theme](docs/main-window-en.png)
 
-**v0.1.6** adds detachable tabs, bookmark groups in Favorites, and customizable shortcuts. Search also supports date, size, and extension filters. This version also adds eight themes, NAS share navigation, and a standalone Help window. [Full 0.1.6 release notes](docs/release-v0.1.6.md#english)
+**v0.1.6** adds detachable tabs, bookmark groups in Favorites, and customizable shortcuts. Search also supports date, size, and extension filters. This version also adds eight themes, NAS share navigation, and a standalone Help window. [Full 0.1.6 release notes](docs/release-v0.1.6.md#new-features)
 
 ## Copy between folders in one window
 
