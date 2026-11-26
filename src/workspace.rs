@@ -194,6 +194,57 @@ impl Workspace {
         true
     }
 
+    /// 在指定欄位的第 `at` 個位置插入新分頁並選取、設為作用中（`at` 超過尾端就放在最後）。
+    /// 重新開啟剛關掉的分頁（Ctrl+Shift+T）時放回原來的位置。
+    pub fn insert_tab(&mut self, side: Side, at: usize) -> TabId {
+        let id = self.alloc();
+        let g = &mut self.groups[side.index()];
+        let at = at.min(g.tabs.len());
+        g.tabs.insert(at, id);
+        g.selected = at;
+        self.active = side;
+        id
+    }
+
+    /// 拖曳排序：把同一欄的第 `from` 個分頁移到第 `gap` 個縫（0 是最前面，`len` 是最後面）。
+    /// 原本選取的分頁維持選取；回傳是否有移動。
+    pub fn move_tab_to(&mut self, side: Side, from: usize, gap: usize) -> bool {
+        let g = &mut self.groups[side.index()];
+        let len = g.tabs.len();
+        if from >= len || gap > len || gap == from || gap == from + 1 {
+            return false;
+        }
+        let selected_id = g.current();
+        let id = g.tabs.remove(from);
+        let at = if gap > from { gap - 1 } else { gap };
+        g.tabs.insert(at, id);
+        if let Some(sel) = selected_id {
+            g.selected = g.tabs.iter().position(|t| *t == sel).unwrap_or(0);
+        }
+        true
+    }
+
+    /// 雙欄時把分頁拖到另一欄的分頁列：從 `from_side` 的第 `index` 個移到 `to_side` 的第 `gap` 個縫，
+    /// 並選取它、設為作用中。一欄的最後一個分頁不能拖走（那一欄會空掉）；單欄時不能跨欄。回傳是否有移動。
+    pub fn move_tab_across(&mut self, from_side: Side, index: usize, to_side: Side, gap: usize) -> bool {
+        if from_side == to_side {
+            return self.move_tab_to(from_side, index, gap);
+        }
+        if !self.dual || index >= self.groups[from_side.index()].tabs.len() || self.groups[from_side.index()].tabs.len() < 2 {
+            return false;
+        }
+        let from = &mut self.groups[from_side.index()];
+        let selected_id = from.current();
+        let id = from.tabs.remove(index);
+        from.selected = selected_id.and_then(|sel| from.tabs.iter().position(|t| *t == sel)).unwrap_or(index.min(from.tabs.len() - 1));
+        let to = &mut self.groups[to_side.index()];
+        let at = gap.min(to.tabs.len());
+        to.tabs.insert(at, id);
+        to.selected = at;
+        self.active = to_side;
+        true
+    }
+
     pub fn set_dual(&mut self, enabled: bool) -> DualChange {
         if enabled == self.dual {
             return DualChange::Unchanged;
@@ -253,6 +304,73 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ws_with(left: usize, right: usize) -> Workspace {
+        let (mut ws, _) = Workspace::new();
+        for _ in 1..left {
+            ws.add_tab(Side::Left);
+        }
+        if right > 0 {
+            ws.set_dual(true);
+            for _ in 1..right {
+                ws.add_tab(Side::Right);
+            }
+        }
+        ws
+    }
+
+    #[test]
+    fn drag_reorder_keeps_selection() {
+        let mut ws = ws_with(4, 0);
+        let ids = ws.groups[0].tabs.clone();
+        ws.select(Side::Left, 1);
+        // 第 0 個拖到最後面
+        assert!(ws.move_tab_to(Side::Left, 0, 4));
+        assert_eq!(ws.groups[0].tabs, vec![ids[1], ids[2], ids[3], ids[0]]);
+        assert_eq!(ws.groups[0].current(), Some(ids[1]));
+        // 拖回最前面
+        assert!(ws.move_tab_to(Side::Left, 3, 0));
+        assert_eq!(ws.groups[0].tabs, ids);
+        // 放在自己左右的縫：沒有移動
+        assert!(!ws.move_tab_to(Side::Left, 2, 2));
+        assert!(!ws.move_tab_to(Side::Left, 2, 3));
+        assert!(!ws.move_tab_to(Side::Left, 9, 0));
+        assert!(!ws.move_tab_to(Side::Left, 0, 9));
+        // 中間往後：2 號放到 3、4 號之間
+        assert!(ws.move_tab_to(Side::Left, 1, 3));
+        assert_eq!(ws.groups[0].tabs, vec![ids[0], ids[2], ids[1], ids[3]]);
+        assert_eq!(ws.groups[0].current(), Some(ids[1]));
+    }
+
+    #[test]
+    fn drag_across_panes() {
+        let mut ws = ws_with(2, 1);
+        let left = ws.groups[0].tabs.clone();
+        let right = ws.groups[1].tabs.clone();
+        ws.select(Side::Left, 1);
+        assert!(ws.move_tab_across(Side::Left, 1, Side::Right, 0));
+        assert_eq!(ws.groups[0].tabs, vec![left[0]]);
+        assert_eq!(ws.groups[1].tabs, vec![left[1], right[0]]);
+        assert_eq!(ws.groups[1].current(), Some(left[1]));
+        assert_eq!(ws.active, Side::Right);
+        assert_eq!(ws.groups[0].current(), Some(left[0]));
+        // 一欄的最後一個分頁不能拖走
+        assert!(!ws.move_tab_across(Side::Left, 0, Side::Right, 2));
+        // 單欄時不能跨欄
+        ws.set_dual(false);
+        assert!(!ws.move_tab_across(Side::Right, 0, Side::Left, 0));
+    }
+
+    #[test]
+    fn reopen_inserts_at_original_position() {
+        let mut ws = ws_with(3, 0);
+        let ids = ws.groups[0].tabs.clone();
+        let id = ws.insert_tab(Side::Left, 1);
+        assert_eq!(ws.groups[0].tabs, vec![ids[0], id, ids[1], ids[2]]);
+        assert_eq!(ws.groups[0].current(), Some(id));
+        let last = ws.insert_tab(Side::Left, 99);
+        assert_eq!(ws.groups[0].tabs.last(), Some(&last));
+    }
 
     #[test]
     fn add_switch_close() {

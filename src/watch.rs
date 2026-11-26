@@ -5,6 +5,7 @@
 
 use crate::entry::Entry;
 use crate::paths;
+use crate::plan::OpKind;
 use std::collections::{HashMap, HashSet};
 
 /// 收到變更通知後等這麼久再讀：同一批變更（例如解壓縮、一次貼上多個檔案）通常接連發生，一起處理。
@@ -136,6 +137,32 @@ pub fn nearest_existing(path: &str, exists: impl Fn(&str) -> bool) -> Option<Str
     }
 }
 
+/// 刪除或移動完成後，分頁顯示的資料夾（`tab_path`）是否因此不在了，要改顯示哪裡。
+/// - `tab_path` 是某個來源本身或在它底下，而且已經不存在：
+///   - 移動：換到目的地的對應位置（`目的地\來源名稱\其餘`），那裡存在就用它；
+///   - 否則（刪除，或移動後找不到）：最近一個還在的上層。
+/// - 不受影響（不在任何來源底下、來源還在、複製）：None。
+///
+/// `exists` 判斷資料夾在不在（Windows 端用 `fs::is_dir`）。
+pub fn redirect_after_op(tab_path: &str, kind: OpKind, sources: &[String], dest: Option<&str>, exists: impl Fn(&str) -> bool) -> Option<String> {
+    if kind == OpKind::Copy || tab_path.is_empty() {
+        return None;
+    }
+    let source = sources.iter().find(|s| paths::is_same_or_descendant(s, tab_path))?;
+    if exists(tab_path) {
+        return None;
+    }
+    if kind == OpKind::Move {
+        if let Some(dest) = dest {
+            let moved = paths::join(dest, paths::file_name(source));
+            if let Some(p) = rebase(tab_path, source, &moved).filter(|p| exists(p)) {
+                return Some(p);
+            }
+        }
+    }
+    nearest_existing(tab_path, exists)
+}
+
 /// 重新讀取的結果和畫面上的一樣嗎：名稱、資料夾或檔案、大小、修改時間與連結都相同，順序也相同。
 /// 相同時不必動清單，畫面完全不閃。
 pub fn same_entries(a: &[Entry], b: &[Entry]) -> bool {
@@ -188,6 +215,30 @@ pub fn plan_children(old: &[&str], new: &[&str]) -> ChildPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 分頁 1 開 A、分頁 2 開 A\B：從分頁 1 刪掉 B 或把 B 剪下貼到 C 之後，分頁 2 要去哪裡
+    #[test]
+    fn tabs_follow_deleted_or_moved_folders() {
+        let existing = ["C:\\A", "C:\\C", "C:\\C\\B", "C:\\C\\B\\sub", "C:\\"];
+        let exists = |p: &str| existing.iter().any(|e| paths::eq_ignore_case(e, paths::trim_end_sep(p)) || *e == p);
+        let src = vec!["C:\\A\\B".to_string()];
+        // 刪除：改顯示最近一個還在的上層
+        assert_eq!(redirect_after_op("C:\\A\\B", OpKind::Delete, &src, None, exists).as_deref(), Some("C:\\A"));
+        // 大小寫不同也認得（回傳的路徑沿用分頁原本的寫法）
+        assert!(redirect_after_op("c:\\a\\b\\sub\\deep", OpKind::Delete, &src, None, exists).is_some_and(|p| paths::eq_ignore_case(&p, "C:\\A")));
+        // 移動到 C：跟著到 C\B（底下的資料夾也跟著）
+        assert_eq!(redirect_after_op("C:\\A\\B", OpKind::Move, &src, Some("C:\\C"), exists).as_deref(), Some("C:\\C\\B"));
+        assert_eq!(redirect_after_op("C:\\A\\B\\sub", OpKind::Move, &src, Some("C:\\C"), exists).as_deref(), Some("C:\\C\\B\\sub"));
+        // 移動後新位置找不到（例如目的地同名而被改名）：退回最近一個還在的上層
+        assert_eq!(redirect_after_op("C:\\A\\B", OpKind::Move, &src, Some("C:\\X"), exists).as_deref(), Some("C:\\A"));
+        // 不受影響：A 本身、旁邊的資料夾、名稱開頭相同的資料夾、複製
+        assert_eq!(redirect_after_op("C:\\A", OpKind::Delete, &src, None, exists), None);
+        assert_eq!(redirect_after_op("C:\\A\\Bee", OpKind::Delete, &src, None, |_| false), None);
+        assert_eq!(redirect_after_op("C:\\A\\B", OpKind::Copy, &src, Some("C:\\C"), exists), None);
+        // 來源其實還在（取消、略過）：不動
+        assert_eq!(redirect_after_op("C:\\A\\B", OpKind::Delete, &src, None, |_| true), None);
+        assert_eq!(redirect_after_op("", OpKind::Delete, &src, None, exists), None);
+    }
     use crate::entry::sample;
 
     #[test]

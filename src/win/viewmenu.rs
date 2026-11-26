@@ -40,19 +40,27 @@ impl App {
     pub(super) fn sort_menu(&mut self) {
         self.hide_preview();
         let (col, desc) = self.current_sort();
-        let items = vec![
+        let searching = self.active_tab().is_some_and(|t| t.search_mode);
+        let relevance = col == sorting::COL_RELEVANCE;
+        let mut items = Vec::new();
+        // 搜尋結果：相關性（檔名完全相同的在前，再來是開頭相同、在詞的開頭出現、中間有出現）
+        if searching {
+            items.push(Item::radio(id::SORT_RELEVANCE, tr!("相關性", "Relevance"), relevance));
+        }
+        items.extend([
             Item::radio(id::SORT_NAME, tr!("名稱", "Name"), col == sorting::COL_NAME),
             Item::radio(id::SORT_DATE, tr!("修改日期（新的在前）", "Date modified (newest first)"), col == sorting::COL_MODIFIED),
             Item::radio(id::SORT_SIZE, tr!("大小（大的在前）", "Size (largest first)"), col == sorting::COL_SIZE),
             Item::radio(id::SORT_TYPE, tr!("類型", "Type"), col == sorting::COL_TYPE),
             Item::Submenu { text: tr!("更多選項", "More options"), glyph: None, items: vec![Item::radio(id::SORT_LOCATION, tr!("所在位置", "Location"), col == sorting::COL_LOCATION)] },
             Item::Separator,
-            Item::radio(id::SORT_ASC, tr!("遞增", "Ascending"), !desc),
-            Item::radio(id::SORT_DESC, tr!("遞減", "Descending"), desc),
+            // 相關性沒有方向
+            Item::Command { id: id::SORT_ASC, text: tr!("遞增", "Ascending"), glyph: None, mark: Mark::Radio, on: !desc && !relevance, enabled: !relevance },
+            Item::Command { id: id::SORT_DESC, text: tr!("遞減", "Descending"), glyph: None, mark: Mark::Radio, on: desc && !relevance, enabled: !relevance },
             Item::Separator,
             Item::check(id::SORT_FOLDERS_ON_TOP, tr!("資料夾一律排在最前面", "Keep folders on top"), self.settings.folders_on_top),
-        ];
-        if let Some(cmd) = menu::drop_down(self.hwnd, self.sort_btn, &items, &self.menu_look()) {
+        ]);
+        if let Some(cmd) = menu::drop_down(self.hwnd, self.sort_btn, &items) {
             if cmd == id::SORT_FOLDERS_ON_TOP {
                 self.toggle_folders_on_top();
             } else {
@@ -76,8 +84,8 @@ impl App {
         // 其他分頁：直接重排，切換過去時就是新的順序
         let shown: Vec<_> = self.bound.iter().flatten().copied().collect();
         for (id, t) in self.tabs.iter_mut() {
-            if !shown.contains(id) && !t.working() {
-                sorting::sort_entries(&mut t.entries, t.sort_col, t.desc, on);
+            if !shown.contains(id) && !t.loading {
+                t.resort(on);
                 t.refilter();
             }
         }
@@ -101,6 +109,7 @@ impl App {
             id::SORT_TYPE => pick(sorting::COL_TYPE),
             id::SORT_DATE => pick(sorting::COL_MODIFIED),
             id::SORT_LOCATION => pick(sorting::COL_LOCATION),
+            id::SORT_RELEVANCE => (sorting::COL_RELEVANCE, false),
             id::SORT_ASC => (col, false),
             id::SORT_DESC => (col, true),
             _ => return,
@@ -112,7 +121,7 @@ impl App {
     pub(super) fn view_menu(&mut self) {
         self.hide_preview();
         let current = self.view[self.active_side().index()];
-        let labels: Vec<String> = view::ALL.iter().map(|m| format!("{}\tCtrl+Shift+{}", m.label(), m.digit())).collect();
+        let labels: Vec<String> = view::ALL.iter().map(|m| self.keymap.with_hint(m.label(), feather_core::keymap::Cmd::View(m.digit() as u8), "\t")).collect();
         let mut items: Vec<Item> = view::ALL
             .iter()
             .zip(labels.iter())
@@ -140,7 +149,7 @@ impl App {
             items: sizes.iter().enumerate().map(|(i, label)| Item::radio(id::TEXT_SIZE_FIRST + i as u16, label, self.settings.text_size == TEXT_SIZES[i])).collect(),
         });
         items.push(Item::Command { id: id::VIEW_APPLY_ALL, text: tr!("套用到所有資料夾", "Apply to all folders"), glyph: None, mark: Mark::None, on: false, enabled: true });
-        let Some(cmd) = menu::drop_down(self.hwnd, self.view_btn, &items, &self.menu_look()) else { return };
+        let Some(cmd) = menu::drop_down(self.hwnd, self.view_btn, &items) else { return };
         match cmd {
             id::SHOW_COMPACT => self.toggle_compact(),
             id::SHOW_EXTENSIONS => self.toggle_extensions(),

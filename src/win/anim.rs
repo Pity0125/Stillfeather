@@ -429,8 +429,3 @@ impl Drop for Crossfade {
 pub fn mix(from: COLORREF, to: COLORREF, t: f32) -> COLORREF {
     super::theme::blend(to, from, t.clamp(0.0, 1.0))
 }
-
-/// 補間（f32 像素位置）轉成整數座標。
-pub fn px(v: f32) -> i32 {
-    v.round() as i32
-}

@@ -4,7 +4,7 @@
 //! 不佔用單一實例、不檢查更新、不寫入設定檔與資料夾檢視記錄，記錄檔另外寫成 picker-trace.log 等。
 //!
 //! 介面只保留選檔需要的部分：上一頁／下一頁／上一層、重新整理、路徑列、搜尋、新增資料夾、排序與檢視、
-//! 左側資料夾樹、檔案清單，以及底部的檔名欄、檔案類型、確定與取消。沒有分頁、雙欄與個人化卡片。
+//! 左側資料夾樹、檔案清單，以及底部的檔名欄、檔案類型、確定與取消。沒有分頁與雙欄。
 //! 選好後把路徑寫進結果檔，以結束代碼告訴取代元件是確定、取消，還是改用 Windows 原本的視窗。
 //!
 //! 另存新檔（`Mode::Save`）：檔名欄一開始就有焦點並選取主檔名，存檔時照 Windows 的做法補上副檔名、
@@ -550,7 +550,7 @@ impl App {
         let current = p.type_index;
         let button = p.type_btn;
         let items: Vec<Item> = labels.iter().enumerate().map(|(i, l)| Item::radio(id::PICK_TYPE_FIRST + i as u16, l, i == current)).collect();
-        let Some(cmd) = super::menu::drop_down(self.hwnd, button, &items, &self.menu_look()) else { return };
+        let Some(cmd) = super::menu::drop_down(self.hwnd, button, &items) else { return };
         let index = (cmd - id::PICK_TYPE_FIRST) as usize;
         self.picker_set_type(index);
     }
@@ -648,13 +648,8 @@ impl App {
                 _ => Some(false),
             };
         }
-        let letter = |c: u8| vk == c as u32;
-        let blocked = (ctrl && !alt && (letter(b'T') || letter(b'N') || letter(b'W')))
-            || (ctrl && vk == VK_TAB)
-            || (ctrl && shift && (vk == VK_PRIOR || vk == VK_NEXT))
-            || (ctrl && shift && !alt && letter(b'D'))
-            || vk == VK_F12
-            || (ctrl && vk == VK_OEM_COMMA);
+        // 分頁、雙欄、設定的快速鍵（依快速鍵表）：選擇器裡沒有這些功能，按了什麼都不做
+        let blocked = self.keymap.lookup(vk, ctrl, shift, alt, false, false).is_some_and(|c| c.main_window_only());
         blocked.then_some(true)
     }
 

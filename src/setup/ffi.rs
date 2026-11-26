@@ -89,12 +89,6 @@ extern "system" {
     pub fn GetTokenInformation(token: HANDLE, class: u32, info: *mut c_void, len: u32, ret: *mut u32) -> BOOL;
 }
 
-#[cfg_attr(windows, link(name = "gdi32", kind = "raw-dylib"))]
-extern "system" {
-    pub fn MoveToEx(hdc: HDC, x: i32, y: i32, old: *mut POINT) -> BOOL;
-    pub fn LineTo(hdc: HDC, x: i32, y: i32) -> BOOL;
-}
-
 #[cfg_attr(windows, link(name = "user32", kind = "raw-dylib"))]
 extern "system" {
     pub fn AdjustWindowRectExForDpi(rect: *mut RECT, style: u32, menu: BOOL, ex_style: u32, dpi: u32) -> BOOL;

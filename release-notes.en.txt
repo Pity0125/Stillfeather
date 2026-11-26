@@ -1,7 +1,6 @@
-More room for your files, larger text, and a reorganized Settings:
-• The file list gets more room: the current folder is the last part of the path bar, filter chips and action buttons share one row, and the bottom is a single status line
-• New View › Text size (100%–150%) enlarges file names, columns, the sidebar, tabs and the status line
-• Settings now has categories on the left and their options on the right, with a live preview for text size
-• Each part of the path has an arrow that lists the subfolders at that level
-• The Sort menu now includes what the A–Z / Newest / Size chips used to do
-• Shortcuts, programs and icon files show their own icons instead of one generic white shortcut icon
+• Drag tabs to reorder them, move them between panes, or drop them outside the window to open a separate window. Ctrl+Shift+T reopens the last closed tab.
+• Right-click Favorites to create bookmark groups, then drag folders into a group to pin them. Removing a group keeps its bookmarks.
+• Change or disable key bindings in Settings › Shortcuts, with a prompt when bindings conflict. Ctrl+E edits the path and Ctrl+\ toggles dual panes by default.
+• Filter folders and search results by date or size. Combine phrases, exclusions, and extensions in a search, such as "annual report" ext:pdf -draft. Results are ranked by relevance.
+• Choose from eight themes with light and dark variants. Quick preview settings are simpler, and the path bar and drop-down menus now scale with text size.
+• Enter \\nas to browse network shares. New folders immediately enter rename mode, and open tabs update when their folders move or disappear. F1 opens a separate Help window.

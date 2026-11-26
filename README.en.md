@@ -11,9 +11,11 @@
 
 ![Project files on the left and image thumbnails on the right in Stillfeather’s dark theme](docs/main-window-en.png)
 
+**v0.1.6** adds detachable tabs, bookmark groups in Favorites, and customizable shortcuts. Search also supports date, size, and extension filters. [Full changelog (繁體中文)](CHANGELOG.md)
+
 ## Copy between folders in one window
 
-Press **Ctrl+Shift+D** to split the window. Open the destination on the right, select a file on the left, and click **Copy to other pane**. Both folders stay in view.
+Press **Ctrl+\\** to split the window. Open the destination on the right, select a file on the left, and click **Copy to other pane**. Both folders stay in view.
 
 ![An example checklist being copied from the project folder into Brand assets](docs/demo-en.gif)
 
@@ -33,7 +35,7 @@ Press **Ctrl+Shift+D** to split the window. Open the destination on the right, s
 
 ## Install
 
-**Requirements**: Windows 10 or Windows 11, 64-bit (x64). No .NET, Office or other runtime needed.
+**Requirements**: Windows 10 or Windows 11, 64-bit (x64). No .NET, Office or other runtime needed. On Windows 10 the title bar can only be the system's dark or light color (dark needs version 1809 or later), so it won't exactly match the window; that's a Windows 10 limitation.
 
 1. Download `StillfeatherSetup.exe` from [Releases](https://github.com/Pity0125/Stillfeather/releases/latest). The installer is a single file and needs no network to install.
 2. Run it and choose an install location. The default is `%LOCALAPPDATA%\Programs\Stillfeather`, for the current user only, with no administrator rights needed. If you pick a protected location such as `C:\Program Files`, Windows will ask for permission.
@@ -73,14 +75,16 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 ### Familiar, but smoother
 
 - **Desktop folders open in tabs.** Set Stillfeather as your default file manager, then double-click different folders on your desktop. Each folder opens in its own tab in the same window.
-- **Tabs and dual panes**: the left and right panes each have their own tabs and back/forward history. Ctrl+Shift+D toggles single/dual pane. Drag files between panes, or use "Copy to other pane".
+- **Tabs and dual panes**: the left and right panes each have their own tabs and back/forward history. Ctrl+\\ toggles single/dual pane. Drag files between panes, or use "Copy to other pane". Drag tabs to reorder them, move them to the other pane, or drop them outside the window to open a separate window; Ctrl+Shift+T reopens the tab you just closed.
 - **Restore your tabs**: next time you open Stillfeather, both panes' tabs, the selected tabs, and dual-pane mode come back as you left them. The visible tabs load right away; the others load when you switch to them. When you open it with Win+E or by double-clicking a folder, that location opens in a new tab (or switches to it if it's already open). To turn this off, untick "還原上次的分頁" (restore tabs) in Settings.
-- **Breadcrumb path bar**: click any level to jump there; click the arrow next to a level to list its subfolders and switch to one (arrow keys, Enter and Esc work too). Press Ctrl+L to switch to a text box and type a full path, a relative path (`..`, a subfolder name), or a file path (opens its folder with the file selected).
+- **Breadcrumb path bar**: click any level to jump there; click the arrow next to a level to list its subfolders and switch to one (arrow keys, Enter and Esc work too). Press Ctrl+E to switch to a text box and type a full path, a relative path (`..`, a subfolder name), or a file path (opens its folder with the file selected).
+- **Network locations and NAS**: type `\\computer-name` in the path bar to list the folders it shares. If it needs a user name and password, Windows' own sign-in window appears and the folder opens once you sign in.
 - **Per-folder views**: eight views, from extra-large icons to details. Switch one folder to large icons and the others stay as they were.
 - **Thumbnails**: the icon views (extra-large, large and medium icons, tiles, and content) show thumbnails for pictures and videos, and for PDFs, PSDs and more when a thumbnail handler is installed, just like File Explorer. Folders that are at least half pictures and videos open in large icons unless you've picked a view for them; to turn that off, untick "相片資料夾用大圖示" (large icons for photo folders) under View › Show. Thumbnails are made in a separate process, so a faulty thumbnail handler can't crash Stillfeather.
 - **Filter chips**: show only folders, images, documents, media or archives in one click, with a count for each.
-- **Room for your files, and larger text**: the current folder is the last part of the path bar, the filter chips share one row with the common actions, and the bottom is a single status line (the item count, or “N items selected” with their size), so the list takes about 70% of the window. View › Text size (or Settings › Appearance & text) enlarges file names, columns, the sidebar and tabs up to 150%, and it's remembered next time.
-- **Pinned locations**: drag a folder onto the sidebar to pin it, or pin and unpin from the right-click menu.
+- **Room for your files, and larger text**: the current folder is the last part of the path bar, the filter chips share one row with the common actions, and the bottom is a single status line (the item count, or “N items selected” with their size), so the list takes about 70% of the window. View › Text size (or Settings › Text & language) enlarges file names, columns, the sidebar, tabs, the path bar, filter chips and dialogs up to 150%, and it's remembered next time.
+- **Pinned locations**: right-click Favorites to create a bookmark group, then drop folders onto it. Right-click a pinned folder to move it between groups.
+- **Custom shortcuts**: open Settings › Shortcuts, choose a command, enter a key combination and save. Leave it blank to disable the shortcut.
 - **The full right-click menu**: alongside Stillfeather's own commands, you get the entries installed programs add (Open in Terminal, 7-Zip, Git, Send to…), with no "Show more options" step.
 - **Open PowerShell window here**: right-click empty space in a folder, a folder, or a folder in the sidebar, no Shift needed. Uses PowerShell 7 when it's installed, otherwise the PowerShell built into Windows.
 - **Box selection and empty space**: like File Explorer, the selection highlight stops at the last column. Press on the empty space beside the items or below the last one and drag to draw a box and select several items (hold Ctrl to toggle, or Shift to add to what's already selected); click the empty space to clear the selection. To drag files, drag them from the items as before.
@@ -89,7 +93,7 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 
 ### Quick preview
 
-Hover over a file and a preview appears beside it. Hold Space to enlarge it in the middle of the window, release to close, and use the arrow keys while holding to move to the next item. If you'd rather not have previews pop up on hover, turn on **Preview with Space** (`按空白鍵預覽`) in Settings.
+Hover over a file and a preview appears beside it. Hold Space to enlarge it in the middle of the window, release to close, and use the arrow keys while holding to move to the next item. If you'd rather not have previews pop up on hover, set **Preview mode** to **Preview with Space** (`空白鍵預覽`) under Settings › Preview, or turn **Quick preview** off entirely (“Quick preview” in the right-click menu still works).
 
 ![Hold Space to preview a Word document, press the Down arrow to browse a presentation, text file and image, then release Space to return to the list](docs/space-preview-en.gif)
 
@@ -107,13 +111,30 @@ Office previews only read text and tables; macros and embedded content are never
 
 Search file names in the current folder (optionally including subfolders) or across the whole PC. Several threads search at once, results appear as they're found, and you can cancel at any time. If the search couldn't finish (too many results, or folders it couldn't read), the results say so.
 
+After the type filters come two buttons, “Date ▾” and “Size ▾”: dates can be Today, Yesterday, This week, This month, This year or a custom range, and sizes can be under 1 MB, 1–100 MB, 100 MB–1 GB, over 1 GB or custom. A chosen condition shows on its button (for example “This week ×”); click × to clear it. Changing a condition filters the current results right away, without searching again. You can also search with filters only and an empty search box: in Downloads, pick “Documents” and “This week”, then press Enter to list this week's documents.
+
+For more control, type conditions in the search box (a full-width colon works too):
+
+| Syntax | Meaning |
+|---|---|
+| `report 2025` | Names containing all of these words, in any order |
+| `"annual report"` | The exact phrase |
+| `-draft` | Exclude names containing the word |
+| `*.pdf` | Wildcards match the whole name: `*` is any text, `?` is one character |
+| `ext:pdf;docx` | By extension |
+| `size:>100mb`, `size:1mb..10mb` | By size (also `<`, `>=`, `<=`; `size:empty` for empty files; folders are hidden) |
+| `dm:today`, `dm:7d`, `dm:2026-11-01..2026-11-20` | By date modified (`yesterday`, `thisweek`, `thismonth`, `thisyear`, `2w`; `datemodified:` also works) |
+| `folder:`, `file:` | Folders only / files only |
+
+Results are sorted by relevance: an exact name (ignoring the extension) first, then names that start with the word, have it at the start of a word, or contain it; within each group, shallower and newer items come first. Click a column heading to sort by it; “Sort › Relevance” switches back. The same table is on the “Search” page of Help (F1 or the ? button).
+
 ### Mistakes are easy to undo
 
-Ctrl+Z reverses your last 30 renames, moves and deletes. Deleted files always go to the Recycle Bin first, and undo moves them back to where they were. If a file with the same name is already there, it won't be overwritten.
+Ctrl+Z reverses your last 30 renames, moves and deletes. Delete sends files to the Recycle Bin first, and undo moves them back to where they were. If a file with the same name is already there, it won't be overwritten. Shift+Delete deletes permanently: it asks first and can't be undone. Whether moving to the Recycle Bin asks first follows Windows' own "Display delete confirmation dialog" setting in the Recycle Bin's Properties.
 
 ### Quiet and soft
 
-- Light mode uses an off-white base and dark mode a near-black charcoal, with a soft terracotta accent, large rounded cards and pill-shaped buttons. It follows Windows' light/dark mode, and you can customize the accent and background colors.
+- By default, light mode uses an off-white base and dark mode a near-black charcoal, with a soft terracotta accent, large rounded cards and pill-shaped buttons. Seven more tuned themes (Sage, Harbor, Lavender, Rose, Amber, Teal, Graphite) each come in light and dark and follow Windows' light/dark mode. For fully custom colors, use “Custom colors (advanced)” under Settings › Theme & colors.
 - Confirmations and errors use Stillfeather's own dialogs, with no Windows "ding".
 - Changing folders, switching tabs, selecting and hovering all fade smoothly. If you turn off "Animation effects" in Windows, everything switches instantly.
 - High-DPI aware, and it readjusts when you move between monitors with different scaling.
@@ -165,21 +186,27 @@ Windows 11 updates rolling out since October 2026 make Win+E open File Explorer 
 |---|---|
 | Ctrl+T, Ctrl+N | New tab |
 | Ctrl+W, middle-click a tab | Close tab |
-| Ctrl+Tab, Ctrl+Shift+Tab | Switch tabs |
-| Ctrl+Shift+D | Toggle single/dual pane |
-| Ctrl+L, Alt+D | Edit path |
+| Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PgUp / PgDn | Switch tabs |
+| Ctrl+1–8, Ctrl+9 | Go to tab 1–8, or the last tab |
+| Ctrl+Shift+T | Reopen the tab you just closed |
+| Ctrl+Shift+PgUp / PgDn, drag a tab | Reorder tabs |
+| Ctrl+\\ | Toggle single/dual pane |
+| Ctrl+E, Alt+D | Edit path |
 | Ctrl+F | Search |
 | Alt+← / → / ↑, Backspace | Back / forward / up |
 | F5 | Refresh |
 | F2 | Rename |
 | Delete, Ctrl+D | Delete to Recycle Bin |
+| Shift+Delete | Delete permanently (asks first) |
 | Ctrl+C / X / V | Copy / cut / paste |
 | Ctrl+Z | Undo |
 | Ctrl+Shift+C | Copy path |
+| Ctrl+Shift+N | New folder |
 | Alt+Enter | Properties |
 | Hold Space | Enlarged preview, release to close (arrow keys change items while held) |
 | Ctrl+Shift+1–8 | Switch view (remembered for the current folder) |
 | F12, Ctrl+, | Settings |
+| F1 | Help (shortcuts, search syntax, quick preview, drag and drop, undo) |
 | Type in the list or sidebar | Jump to the first item whose name starts with what you typed |
 
 ## Updates

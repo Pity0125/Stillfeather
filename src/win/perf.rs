@@ -163,7 +163,8 @@ fn search(r: &mut Report) {
         let t = Instant::now();
         let mut first_batch: Option<f64> = None;
         let mut found = 0usize;
-        let result = fs::search(&SearchScope::Folder(root), query, true, false, &cancel, |entries, _, _| {
+        let filter = feather_core::searchquery::Filter::new(&feather_core::searchquery::Query::parse(query).unwrap_or_default(), None);
+        let result = fs::search(&SearchScope::Folder(root), &filter, None, true, false, &cancel, |entries, _, _| {
             if !entries.is_empty() && first_batch.is_none() {
                 first_batch = Some(ms(t));
             }

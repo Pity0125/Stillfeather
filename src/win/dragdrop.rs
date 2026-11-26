@@ -409,6 +409,7 @@ pub(super) enum Zone {
     Folder { path: String, mark: Mark },
     /// 釘選成側欄的常用位置
     Pin,
+    BookmarkGroup { name: String, item: HTREEITEM },
 }
 
 struct DragState {
@@ -558,6 +559,9 @@ impl App {
                     None => Zone::Pin,
                     Some(n) => match n.kind {
                         NodeKind::Header if n.path == FAVORITES_KEY => Zone::Pin,
+                        NodeKind::Header if n.path.starts_with("::bookmark-group/") => n.path.strip_prefix("::bookmark-group/")
+                            .and_then(|s| s.parse::<usize>().ok()).and_then(|i| self.settings.bookmark_groups.get(i))
+                            .map_or(Zone::None, |(name, _)| Zone::BookmarkGroup { name: name.clone(), item }),
                         NodeKind::Header | NodeKind::Info => Zone::None,
                         _ => Zone::Folder { path: n.path.clone(), mark: Mark::Tree(item) },
                     },
@@ -581,7 +585,7 @@ impl App {
         };
         match zone {
             Zone::Folder { ref path, .. } if !paths::drop_target_ok(path, sources) => Zone::None,
-            Zone::Pin if sources.is_empty() || !sources.iter().all(|s| std::path::Path::new(s).is_dir()) => Zone::None,
+            Zone::Pin | Zone::BookmarkGroup { .. } if sources.is_empty() || !sources.iter().all(|s| std::path::Path::new(s).is_dir()) => Zone::None,
             z => z,
         }
     }
@@ -590,6 +594,7 @@ impl App {
     fn show_drop_zone(&mut self, zone: &Zone, on: bool) {
         match zone {
             Zone::Folder { mark, .. } => self.show_mark(*mark, on),
+            Zone::BookmarkGroup { item, .. } => self.show_mark(Mark::Tree(*item), on),
             Zone::Pin => {
                 self.drop_pin = on;
                 invalidate(self.tree);
@@ -616,6 +621,8 @@ impl App {
                 unsafe {
                     InvalidateRect(self.hwnd, &r, 0);
                 }
+                // 選取的分頁和卡片同一個外框顏色
+                invalidate(self.strips[side.index()]);
             }
             Mark::Tree(item) => {
                 send(self.tree, TVM_SELECTITEM, TVGN_DROPHILITE, if on { item } else { 0 });
@@ -639,6 +646,7 @@ impl App {
             unsafe {
                 InvalidateRect(self.hwnd, &r, 0);
             }
+            invalidate(self.strips[side.index()]);
         }
         if self.drop_pin {
             self.drop_pin = false;
@@ -721,6 +729,7 @@ unsafe fn update(window: DropWindow, keys: u32, pt: POINT, allowed: u32) -> u32 
         a.show_drop_zone(&st.zone, false);
         a.show_drop_zone(&zone, true);
         match &zone {
+            Zone::BookmarkGroup { name, .. } => set_description(st.data, DROPIMAGE_LINK, tr!("釘選到 %1", "Pin to %1"), name),
             Zone::Pin => set_description(st.data, DROPIMAGE_LINK, tr!("釘選到 %1", "Pin to %1"), tr!("常用位置", "Favorites")),
             _ => set_description(st.data, DROPIMAGE_INVALID, "", ""),
         }
@@ -745,7 +754,7 @@ unsafe fn update(window: DropWindow, keys: u32, pt: POINT, allowed: u32) -> u32 
             }
             e
         }
-        Zone::Pin => [DROPEFFECT_LINK, DROPEFFECT_COPY, DROPEFFECT_MOVE].into_iter().find(|e| allowed & e != 0).unwrap_or(DROPEFFECT_NONE),
+        Zone::Pin | Zone::BookmarkGroup { .. } => [DROPEFFECT_LINK, DROPEFFECT_COPY].into_iter().find(|e| allowed & e != 0).unwrap_or(DROPEFFECT_NONE),
         _ => DROPEFFECT_NONE,
     };
     DRAG.with(|d| *d.borrow_mut() = Some(st));
@@ -912,11 +921,12 @@ unsafe extern "system" fn dt_drop(this: *mut DropTarget, data: *mut c_void, keys
         Zone::Folder { .. } if !st.shell.is_null() => {
             (vt::<ShellDropVtbl>(st.shell).drag_leave)(st.shell);
         }
-        Zone::Pin if e != DROPEFFECT_NONE => {
+        Zone::Pin | Zone::BookmarkGroup { .. } if e != DROPEFFECT_NONE => {
             let dirs: Vec<String> = st.paths.iter().filter(|p| std::path::Path::new(p).is_dir()).cloned().collect();
             if let Some(a) = app::app_opt() {
                 // 拖放的處理還在進行中（來源程式等著回應），稍後再加入，避免在這裡跳出對話方塊
-                a.pending_pins = dirs;
+                let group = match &st.zone { Zone::BookmarkGroup { name, .. } => Some(name.clone()), _ => None };
+                a.pending_pins.push((dirs, group));
                 PostMessageW(a.hwnd, WM_COMMAND, id::PIN_DROPPED as usize, 0);
             }
             result = e;

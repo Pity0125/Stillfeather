@@ -1,5 +1,5 @@
 //! 麵包屑路徑（參考圖的「Lullo › Library › Albums」）。
-//! 點上層名稱直接前往；點最後一段、空白處或「…」就切換成可輸入的路徑框（Ctrl+L 亦同）。
+//! 點上層名稱直接前往；點最後一段、空白處或「…」就切換成可輸入的路徑框（Ctrl+E、Alt+D 亦同）。
 //! 每一段右邊的箭頭（最後一段也有）和名稱分開點：點箭頭列出那一層的子資料夾（見 crumbmenu.rs），
 //! 選單開著時箭頭朝下；另一段的選單開著時，滑鼠移到這一段的箭頭就換成這一段的選單。
 
@@ -33,6 +33,8 @@ struct Data {
     hover: Vec<Tween>,
     arrow_hover: Vec<Tween>,
     ellipsis_hover: Tween,
+    /// 滑鼠在空白處（或最後一段）時，右邊淡淡顯示「點一下或按 Ctrl+E 輸入路徑」
+    hint: Tween,
     path: String,
     /// 拖放時滑鼠下的段落（放開就移動／複製到那一層）
     drop: Option<usize>,
@@ -70,7 +72,16 @@ pub fn register(hinst: HINSTANCE) {
 }
 
 pub fn create(parent: HWND) -> HWND {
-    let data = Box::new(Data { hot: Hit::None, tracking: false, hover: Vec::new(), arrow_hover: Vec::new(), ellipsis_hover: Tween::new(0.0), path: String::new(), drop: None });
+    let data = Box::new(Data {
+        hot: Hit::None,
+        tracking: false,
+        hover: Vec::new(),
+        arrow_hover: Vec::new(),
+        ellipsis_hover: Tween::new(0.0),
+        hint: Tween::new(0.0),
+        path: String::new(),
+        drop: None,
+    });
     let class = wide(CRUMBS_CLASS);
     let name = wide(tr!("目前位置", "Current location"));
     unsafe {
@@ -97,22 +108,28 @@ unsafe fn data<'a>(hwnd: HWND) -> Option<&'a mut Data> {
     (GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Data).as_mut()
 }
 
+/// 懸停、拖放時的膠囊高度：容得下內容文字（文字大小放大時跟著加高）
+fn pill_height(t: &theme::Theme) -> i32 {
+    t.s(28).max(t.fonts.body_height + t.s(10))
+}
+
 fn layout(hwnd: HWND, segments: &[(String, String)], hdc: HDC) -> Layout {
     let t = app::theme();
     let r = client_rect(hwnd);
-    let sep_w = t.s(20);
+    // 箭頭與左右留白跟著文字大小放大
+    let sep_w = t.s(20 * t.text_size as i32 / 100);
     let pad = t.s(6);
     let widths: Vec<i32> = segments
         .iter()
         .enumerate()
         .map(|(i, (label, _))| {
             // 最後一段是目前資料夾：用較大的字，取代原本另一列的大標題
-            let font = if i + 1 == segments.len() { t.fonts.heading } else { t.fonts.ui };
+            let font = if i + 1 == segments.len() { t.fonts.body_heading } else { t.fonts.body };
             theme::text_width(hdc, label, font) + 2 * pad
         })
         .collect();
     // 從最後一段往前放，放不下的前段收成「…」。每一段後面都有箭頭（含最後一段）。
-    let ellipsis_w = theme::text_width(hdc, "…", t.fonts.ui) + 2 * pad + sep_w;
+    let ellipsis_w = theme::text_width(hdc, "…", t.fonts.body) + 2 * pad + sep_w;
     let mut first = 0;
     let total = |from: usize| -> i32 { widths[from..].iter().sum::<i32>() + sep_w * (widths.len() - from) as i32 };
     while first + 1 < widths.len() && total(first) + if first > 0 { ellipsis_w } else { 0 } > r.width() {
@@ -183,7 +200,7 @@ pub fn arrow_rect(hwnd: HWND, index: usize) -> Option<RECT> {
         let l = layout(hwnd, &segments, hdc);
         ReleaseDC(hwnd, hdc);
         let r = l.arrows.iter().find(|(i, _)| *i == index)?.1;
-        let ph = app::theme().s(28).min(r.height());
+        let ph = pill_height(app::theme()).min(r.height());
         let mut tl = POINT { x: r.left, y: r.top + (r.height() - ph) / 2 };
         ClientToScreen(hwnd, &mut tl);
         Some(RECT { left: tl.x, top: tl.y, right: tl.x + r.width(), bottom: tl.y + ph })
@@ -257,6 +274,8 @@ unsafe extern "system" fn crumbs_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 };
                 TrackMouseEvent(&mut tme);
                 d.tracking = true;
+                // 進來時就在空白處：要畫出提示
+                invalidate(hwnd);
             }
             let (hit, _) = current_hit(hwnd, x, y);
             if hit != d.hot {
@@ -324,7 +343,7 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
         let mut busy = false;
         let hover_color = theme::blend(p.ink, p.background, 0.06);
         let pill = |r: &RECT, h: f32| {
-            let ph = t.s(28).min(r.height());
+            let ph = pill_height(t).min(r.height());
             let rr = RECT { top: r.top + (r.height() - ph) / 2, bottom: r.top + (r.height() - ph) / 2 + ph, ..*r };
             theme::round_rect(dc, &rr, ph, Some(anim::mix(p.background, hover_color, h)), None);
         };
@@ -335,7 +354,7 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
             if h > 0.001 {
                 pill(&r, h);
             }
-            theme::draw_text(dc, "…", &r, t.fonts.ui, p.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            theme::draw_text(dc, "…", &r, t.fonts.body, p.muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         for (i, r) in &l.items {
             let last = *i + 1 == segments.len();
@@ -351,17 +370,17 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
             let dropping = d.drop == Some(*i);
             if dropping {
                 // 拖放目標：與清單的放置標示相同，淡重點色底加重點色外框
-                let ph = t.s(30).min(r.height());
+                let ph = (pill_height(t) + t.s(2)).min(r.height());
                 let rr = RECT { left: r.left - t.s(2), top: r.top + (r.height() - ph) / 2, right: r.right + t.s(2), bottom: r.top + (r.height() - ph) / 2 + ph };
                 theme::round_rect(dc, &rr, ph, Some(theme::blend(p.selected_tint, p.background, 0.7)), Some(p.accent));
             } else if h > 0.001 {
                 pill(r, h);
             }
-            let (font, color) = if last { (t.fonts.heading, p.ink) } else if dropping { (t.fonts.ui, p.ink) } else { (t.fonts.ui, anim::mix(p.muted, p.ink, h)) };
+            let (font, color) = if last { (t.fonts.body_heading, p.ink) } else if dropping { (t.fonts.body, p.ink) } else { (t.fonts.body, anim::mix(p.muted, p.ink, h)) };
             theme::draw_text(dc, &segments[*i].0, r, font, color, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
         for s in &l.separators {
-            theme::draw_text(dc, &glyph::CHEVRON_SMALL.to_string(), s, t.fonts.icon_small, theme::blend(p.muted, p.background, 0.7), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            theme::draw_text(dc, &glyph::CHEVRON_SMALL.to_string(), s, t.fonts.body_icon_small, theme::blend(p.muted, p.background, 0.7), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         // 子資料夾選單的箭頭：懸停時有自己的圓角底色；選單開著時朝下、底色維持
         for (i, r) in &l.arrows {
@@ -380,7 +399,26 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
             }
             let g = if is_open { glyph::CHEVRON_DOWN_SMALL } else { glyph::CHEVRON_SMALL };
             let color = anim::mix(theme::blend(p.muted, p.background, 0.7), p.ink, h);
-            theme::draw_text(dc, &g.to_string(), r, t.fonts.icon_small, color, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            theme::draw_text(dc, &g.to_string(), r, t.fonts.body_icon_small, color, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        // 空白處與最後一段點了都是輸入路徑：滑鼠停在那裡時，右邊空著的地方淡淡寫出來（也告訴使用者 Ctrl+E）
+        let editing_hit = match d.hot {
+            Hit::None => d.drop.is_none(),
+            Hit::Segment(i) => i + 1 == segments.len(),
+            _ => false,
+        };
+        anim::to(&mut d.hint, (d.tracking && editing_hit) as u8 as f32, anim::HOVER_MS);
+        busy |= anim::running(&d.hint);
+        let hv = anim::value(&d.hint);
+        if hv > 0.001 {
+            let text = tr!("點一下或按 Ctrl+E 輸入路徑", "Click or press Ctrl+E to type a path");
+            let used = l.arrows.last().map_or(0, |(_, r)| r.right);
+            let tw = theme::text_width(dc, text, t.fonts.body_small);
+            let hr = RECT { left: rect.right - t.s(10) - tw, right: rect.right - t.s(10), ..rect };
+            if hr.left >= used + t.s(16) {
+                let color = anim::mix(p.background, theme::blend(p.muted, p.background, 0.8), hv);
+                theme::draw_text(dc, text, &hr, t.fonts.body_small, color, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            }
         }
         if busy {
             anim::request_frame(hwnd);

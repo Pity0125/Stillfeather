@@ -1,8 +1,10 @@
-//! 設定視窗：左邊是分類導覽，右邊是那一類的設定，開啟時顯示「外觀與文字」。
+//! 設定視窗：左邊是分類導覽，右邊是那一類的設定，開啟時顯示「文字與語言」。
 //!
-//! - 外觀與文字：文字大小（附範例檔名即時預覽）、介面語言、主題、重點色、背景色
+//! - 文字與語言：文字大小（附範例檔名即時預覽）、介面語言
+//! - 主題與顏色：深淺色、預先調好的主題（每一組都有淺色與深色，選項上畫出那個主題的小預覽）、
+//!   「自訂顏色（進階）」：勾選後才能填重點色與背景色，取代主題的顏色；兩個顏色各有「重設」，清空改回主題的顏色
 //! - 檔案瀏覽：緊湊清單、顯示副檔名、側欄寬度、雙欄模式的左欄比例、還原上次的分頁
-//! - 預覽：圖片與影片、PDF 的快速預覽、按空白鍵預覽
+//! - 預覽：啟用快速預覽（總開關），底下是「預覽方式」下拉選單：懸停預覽或空白鍵預覽
 //! - Windows 整合：設為預設檔案總管、攔截 Win+E（放在它下面，停用時就近說明原因）、
 //!   其他程式開啟或儲存檔案時也用 Stillfeather。這三項寫在登錄，不在設定檔（見 [`Integration`]）。
 //! - 關於與更新：目前版本、檢查更新、啟動時提醒更新
@@ -14,10 +16,12 @@
 
 use super::app;
 use super::controls::{self, Kind, Surface};
+use super::menu;
 use super::sys::*;
 use super::theme::{self, glyph};
 use super::util::*;
 use feather_core::settings::{color_to_hex, parse_color, Language, Settings, ThemeMode, SIDEBAR_MAX, SIDEBAR_MIN, SPLIT_MAX, SPLIT_MIN, TEXT_SIZES};
+use feather_core::themes::{self, PRESETS};
 
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
@@ -37,9 +41,9 @@ const SIDEBAR_EDIT: u16 = 24;
 const SPLIT_EDIT: u16 = 25;
 const T_COMPACT: u16 = 30;
 const T_EXT: u16 = 31;
-const T_IMAGE: u16 = 32;
-const T_PDF: u16 = 33;
-const T_SPACE: u16 = 34;
+/// 「啟用快速預覽」與它底下的「預覽方式」下拉選單
+const T_PREVIEW: u16 = 32;
+const PREVIEW_MODE: u16 = 33;
 const T_DEFAULT_FM: u16 = 35;
 const T_REMINDERS: u16 = 36;
 const T_PICKER: u16 = 37;
@@ -47,23 +51,37 @@ const T_WIN_E: u16 = 38;
 const T_RESTORE: u16 = 39;
 const RESET: u16 = 40;
 const CHECK_UPDATES: u16 = 41;
+/// 「自訂顏色（進階）」
+const T_CUSTOM: u16 = 42;
+/// 自訂重點色、背景色後面的「重設」：清空那一欄，改回主題的顏色
+const ACCENT_RESET: u16 = 43;
+const BG_RESET: u16 = 44;
 /// 文字大小的四個級距（依 TEXT_SIZES 的順序）
 const SIZE_FIRST: u16 = 50;
 /// 分類導覽（依 PAGES 的順序）
 const NAV_FIRST: u16 = 60;
+/// 主題選項（依 themes::PRESETS 的順序）
+const THEME_FIRST: u16 = 70;
 const NOTE_ID: u16 = 90;
 
 /// 分類
-const P_LOOK: usize = 0;
-const P_BROWSE: usize = 1;
-const P_PREVIEW: usize = 2;
-const P_WINDOWS: usize = 3;
-const P_ABOUT: usize = 4;
-const PAGES: usize = 5;
+const P_TEXT: usize = 0;
+const P_THEME: usize = 1;
+const P_BROWSE: usize = 2;
+const P_PREVIEW: usize = 3;
+const P_WINDOWS: usize = 4;
+const P_ABOUT: usize = 5;
+const P_SHORTCUTS: usize = 6;
+const PAGES: usize = 7;
+const EDIT_SHORTCUT: u16 = 91;
+/// 主題選項一列幾個
+const THEME_COLUMNS: usize = 4;
 
 fn page_title(page: usize) -> &'static str {
     match page {
-        P_LOOK => tr!("外觀與文字", "Appearance & text"),
+        P_TEXT => tr!("文字與語言", "Text & language"),
+        P_SHORTCUTS => tr!("快速鍵", "Shortcuts"),
+        P_THEME => tr!("主題與顏色", "Theme & colors"),
         P_BROWSE => tr!("檔案瀏覽", "Browsing"),
         P_PREVIEW => tr!("預覽", "Preview"),
         P_WINDOWS => tr!("Windows 整合", "Windows integration"),
@@ -73,7 +91,8 @@ fn page_title(page: usize) -> &'static str {
 
 fn page_glyph(page: usize) -> char {
     match page {
-        P_LOOK => glyph::FONT_SIZE,
+        P_TEXT => glyph::FONT_SIZE,
+        P_THEME => glyph::PALETTE,
         P_BROWSE => glyph::FOLDER,
         P_PREVIEW => glyph::PREVIEW,
         P_WINDOWS => glyph::LINK,
@@ -153,20 +172,33 @@ struct State {
     pages: [Vec<HWND>; PAGES],
     sizes: [HWND; 4],
     size_note: HWND,
-    /// 範例檔名的預覽（只在「外觀與文字」顯示）
+    /// 範例檔名的預覽（只在「文字與語言」顯示）
     preview: RECT,
     segments: [HWND; 3],
     languages: [HWND; 3],
+    /// 主題選項（依 themes::PRESETS 的順序）
+    tiles: [HWND; PRESETS.len()],
+    /// 「自訂顏色（進階）」與它控制的文字框、選色按鈕
+    custom: HWND,
+    custom_parts: Vec<HWND>,
     accent: HWND,
     background: HWND,
+    /// 重點色、背景色的「重設」（勾選了自訂顏色、而且那一欄有填時才能按）
+    accent_reset: HWND,
+    bg_reset: HWND,
     sidebar: HWND,
     split: HWND,
     compact: HWND,
     extensions: HWND,
     restore_tabs: HWND,
-    image: HWND,
-    pdf: HWND,
-    space: HWND,
+    /// 「啟用快速預覽」
+    preview_on: HWND,
+    /// 「預覽方式」下拉選單（按鈕上寫目前的方式）、標題與說明（跟著選的方式換）
+    preview_mode: HWND,
+    preview_label: HWND,
+    preview_note: HWND,
+    /// 選的是空白鍵預覽（否則是懸停預覽）
+    preview_space: std::cell::Cell<bool>,
     default_fm: HWND,
     win_e: HWND,
     win_e_note: HWND,
@@ -366,13 +398,19 @@ fn check_one(group: &[HWND], index: Option<usize>) {
 /// 把設定值填進某個分類的控制項。
 fn fill_page(st: &State, page: usize, s: &Settings, integration: Integration) {
     match page {
-        P_LOOK => {
+        P_TEXT => {
             check_one(&st.sizes, TEXT_SIZES.iter().position(|p| *p == s.text_size));
             check_one(&st.languages, LANGUAGES.iter().position(|l| *l == s.language));
+            size_changed(st);
+        }
+        P_THEME => {
             check_one(&st.segments, THEMES.iter().position(|m| *m == s.theme_mode));
+            check_one(&st.tiles, Some(themes::index_of(&s.theme)));
             set_window_text(st.accent, s.accent_color.as_deref().unwrap_or(""));
             set_window_text(st.background, s.background_color.as_deref().unwrap_or(""));
-            size_changed(st);
+            controls::set_checked(st.custom, s.accent_color.is_some() || s.background_color.is_some());
+            custom_changed(st);
+            refresh_swatches(st);
         }
         P_BROWSE => {
             controls::set_checked(st.compact, s.compact_rows);
@@ -382,9 +420,9 @@ fn fill_page(st: &State, page: usize, s: &Settings, integration: Integration) {
             controls::set_checked(st.restore_tabs, s.restore_tabs);
         }
         P_PREVIEW => {
-            controls::set_checked(st.image, s.image_preview);
-            controls::set_checked(st.pdf, s.pdf_preview);
-            controls::set_checked(st.space, s.space_preview);
+            controls::set_checked(st.preview_on, s.preview);
+            st.preview_space.set(s.space_preview);
+            preview_changed(st);
         }
         P_WINDOWS => {
             controls::set_checked(st.default_fm, integration.default_fm);
@@ -392,6 +430,7 @@ fn fill_page(st: &State, page: usize, s: &Settings, integration: Integration) {
             win_e_changed(st);
             controls::set_checked(st.picker, integration.picker);
         }
+        P_SHORTCUTS => {},
         _ => controls::set_checked(st.reminders, s.update_reminders),
     }
 }
@@ -408,6 +447,123 @@ fn win_e_changed(st: &State) {
             tr!("要先勾選上面的「設為預設檔案總管」才能使用：Win+E 只會開預設的檔案總管。", "Turn on “Set as default file manager” above first: Win+E only opens the default file manager.")
         },
     );
+}
+
+/// 主題選項的小預覽跟著目前選的深淺色（跟隨系統時看 Windows 目前的模式）
+fn refresh_swatches(st: &State) {
+    let mode = st.segments.iter().position(|h| controls::is_checked(*h)).map_or(ThemeMode::System, |i| THEMES[i]);
+    let dark = theme::mode_is_dark(mode);
+    for (h, preset) in st.tiles.iter().zip(PRESETS.iter()) {
+        controls::set_swatch(*h, theme::preset_swatch(preset.colors(dark)));
+    }
+}
+
+/// 「自訂顏色（進階）」勾選時才能填重點色與背景色
+fn custom_changed(st: &State) {
+    let on = controls::is_checked(st.custom);
+    for h in &st.custom_parts {
+        controls::set_enabled(*h, on);
+    }
+    reset_buttons_changed(st);
+    let dlg = DIALOG.load(Ordering::Relaxed);
+    if dlg != 0 {
+        unsafe {
+            InvalidateRect(dlg, std::ptr::null(), 0);
+        }
+    }
+}
+
+/// 預覽方式的名稱（下拉選單的按鈕與選項）
+fn preview_mode_name(space: bool) -> &'static str {
+    if space {
+        tr!("空白鍵預覽", "Preview with Space")
+    } else {
+        tr!("懸停預覽", "Preview on hover")
+    }
+}
+
+/// 預覽方式的說明（下拉選單底下，跟著選的方式換）
+fn preview_mode_note(space: bool) -> &'static str {
+    if space {
+        tr!(
+            "滑鼠停著不會預覽；按住空白鍵時預覽滑鼠下的項目，放開就關閉。",
+            "Hovering doesn't preview; hold Space to preview the item under the mouse, release to close."
+        )
+    } else {
+        tr!(
+            "滑鼠停在項目上一下就預覽，移開就關閉；按住空白鍵可以放大到視窗中央。",
+            "Hover over an item to preview it, move away to close; hold Space to enlarge it in the middle of the window."
+        )
+    }
+}
+
+/// 「啟用快速預覽」或預覽方式換了：下拉選單只在啟用時能用，按鈕文字與說明跟著選的方式
+fn preview_changed(st: &State) {
+    let space = st.preview_space.get();
+    set_window_text(st.preview_mode, preview_mode_name(space));
+    set_window_text(st.preview_note, preview_mode_note(space));
+    controls::set_enabled(st.preview_mode, controls::is_checked(st.preview_on));
+    unsafe {
+        InvalidateRect(st.preview_mode, std::ptr::null(), 0);
+    }
+}
+
+/// 打開「預覽方式」下拉選單，選了就更新
+fn edit_shortcut(dlg: HWND, st: &mut State, anchor: HWND) {
+    use feather_core::keymap::{Cmd, Keymap, parse_combo};
+    let map = Keymap::with_overrides(&st.base.shortcuts).0;
+    let labels: Vec<_> = Cmd::CUSTOMIZABLE.iter().map(|cmd| {
+        let keys = map.combos(*cmd).iter().map(|c| c.label()).collect::<Vec<_>>().join(" / ");
+        format!("{}\t{keys}", cmd.display_name())
+    }).collect();
+    use feather_core::keymap::Section;
+    let items: Vec<_> = [Section::Tabs, Section::View, Section::Navigate, Section::Files, Section::Other].iter().map(|section| {
+        let items = labels.iter().enumerate().filter(|(i, _)| Cmd::CUSTOMIZABLE[*i].section() == *section)
+            .map(|(i, text)| menu::Item::radio((i + 1) as u16, text, false)).collect();
+        menu::Item::Submenu { text: section.title(), glyph: None, items }
+    }).collect();
+    let Some(index) = menu::drop_down(dlg, anchor, &items) else { return };
+    let cmd = Cmd::CUSTOMIZABLE[index as usize - 1];
+    let current = map.combos(cmd).iter().map(|c| c.label()).collect::<Vec<_>>().join("; ");
+    let Some(value) = super::dialog::text_input(dlg, &cmd.display_name(),
+        tr!("組合鍵（多組用 ; 分隔，留白停用）", "Keys (separate with ; or leave blank to disable)"), &current, "Ctrl+Shift+T") else { return };
+    if value == current { return }
+    let mut combos = Vec::new();
+    for key in value.split(';').map(str::trim).filter(|v| !v.is_empty()) {
+        let Some(combo) = parse_combo(key).filter(|c| !c.reserved()) else {
+            super::dialog::error(dlg, tr!("無法使用此快速鍵", "Invalid shortcut"), key);
+            return;
+        };
+        let label = combo.label();
+        if !combos.contains(&label) { combos.push(label); }
+    }
+    let mut overrides = st.base.shortcuts.clone();
+    overrides.retain(|(id, _)| *id != cmd.id());
+    let defaults = Keymap::default().combos(cmd).iter().map(|c| c.label()).collect::<Vec<_>>();
+    if combos != defaults { overrides.push((cmd.id(), combos)); }
+    let (_, notes) = Keymap::with_overrides(&overrides);
+    if !notes.is_empty() && !super::dialog::confirm(dlg, super::dialog::Icon::Question,
+        tr!("套用快速鍵變更？", "Apply shortcut changes?"), &notes.join("\n"), tr!("套用", "Apply")) { return; }
+    st.base.shortcuts = overrides;
+}
+
+fn pick_preview_mode(dlg: HWND, st: &State) {
+    let space = st.preview_space.get();
+    let items = [menu::Item::radio(1, preview_mode_name(false), !space), menu::Item::radio(2, preview_mode_name(true), space)];
+    if let Some(cmd) = menu::drop_down(dlg, st.preview_mode, &items) {
+        st.preview_space.set(cmd == 2);
+        preview_changed(st);
+    }
+}
+
+/// 「重設」只在勾選了自訂顏色、而且那一欄有填東西時能按（已經是主題的顏色就不必重設）
+fn reset_buttons_changed(st: &State) {
+    let on = controls::is_checked(st.custom);
+    for (edit, reset) in [(st.accent, st.accent_reset), (st.background, st.bg_reset)] {
+        if reset != 0 {
+            controls::set_enabled(reset, on && !window_text(edit).trim().is_empty());
+        }
+    }
 }
 
 /// 選了別的文字大小：說明文字與範例檔名跟著換
@@ -467,6 +623,10 @@ fn collect(st: &State) -> Result<Settings, (usize, String)> {
     let mut s = st.base.clone();
     s.text_size = st.text_size();
     s.theme_mode = st.segments.iter().position(|h| controls::is_checked(*h)).map_or(ThemeMode::System, |i| THEMES[i]);
+    // 沒有選任何主題（設定檔裡是更新的版本才有的主題）時保留原本的名稱
+    if let Some(i) = st.tiles.iter().position(|h| controls::is_checked(*h)) {
+        s.theme = PRESETS[i].id.to_string();
+    }
     s.language = st.languages.iter().position(|h| controls::is_checked(*h)).map_or(Language::System, |i| LANGUAGES[i]);
     let color = |h: HWND| -> Result<Option<String>, (usize, String)> {
         let t = window_text(h).trim().to_string();
@@ -476,11 +636,13 @@ fn collect(st: &State) -> Result<Settings, (usize, String)> {
         let t = if t.starts_with('#') { t } else { format!("#{t}") };
         match parse_color(&t) {
             Some((r, g, b)) => Ok(Some(color_to_hex(r, g, b))),
-            None => Err((P_LOOK, tr!("自訂顏色必須是 #RRGGBB，或留白使用預設。", "Custom colors must be #RRGGBB, or leave them blank to use the default.").into())),
+            None => Err((P_THEME, tr!("自訂顏色必須是 #RRGGBB，或留白使用主題的顏色。", "Custom colors must be #RRGGBB, or leave them blank to use the theme's colors.").into())),
         }
     };
-    s.accent_color = color(st.accent)?;
-    s.background_color = color(st.background)?;
+    // 沒勾「自訂顏色（進階）」：用主題的顏色（填過的值不保留）
+    let custom = controls::is_checked(st.custom);
+    s.accent_color = if custom { color(st.accent)? } else { None };
+    s.background_color = if custom { color(st.background)? } else { None };
     s.sidebar_width = window_text(st.sidebar)
         .trim()
         .parse()
@@ -493,12 +655,11 @@ fn collect(st: &State) -> Result<Settings, (usize, String)> {
     s.compact_rows = controls::is_checked(st.compact);
     s.show_extensions = controls::is_checked(st.extensions);
     s.restore_tabs = controls::is_checked(st.restore_tabs);
-    s.image_preview = controls::is_checked(st.image);
-    s.pdf_preview = controls::is_checked(st.pdf);
-    s.space_preview = controls::is_checked(st.space);
+    s.preview = controls::is_checked(st.preview_on);
+    s.space_preview = st.preview_space.get();
     s.update_reminders = controls::is_checked(st.reminders);
-    // 超出範圍的是側欄寬度或左欄比例（在「檔案瀏覽」），其他（文字大小、顏色）在「外觀與文字」
-    let page = if !(SIDEBAR_MIN..=SIDEBAR_MAX).contains(&s.sidebar_width) || !(SPLIT_MIN..=SPLIT_MAX).contains(&s.split_percent) { P_BROWSE } else { P_LOOK };
+    // 超出範圍的是側欄寬度或左欄比例（在「檔案瀏覽」），其他（文字大小）在「文字與語言」；顏色在上面就檢查過了
+    let page = if !(SIDEBAR_MIN..=SIDEBAR_MAX).contains(&s.sidebar_width) || !(SPLIT_MIN..=SPLIT_MAX).contains(&s.split_percent) { P_BROWSE } else { P_TEXT };
     s.validate().map_err(|e| (page, e))?;
     Ok(s)
 }
@@ -593,7 +754,7 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
         result: None,
         integration,
         done: false,
-        page: P_LOOK,
+        page: P_TEXT,
         nav: [0; PAGES],
         pages: Default::default(),
         sizes: [0; 4],
@@ -601,16 +762,23 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
         preview: RECT::default(),
         segments: [0; 3],
         languages: [0; 3],
+        tiles: [0; PRESETS.len()],
+        custom: 0,
+        custom_parts: Vec::new(),
         accent: 0,
         background: 0,
+        accent_reset: 0,
+        bg_reset: 0,
         sidebar: 0,
         split: 0,
         compact: 0,
         extensions: 0,
         restore_tabs: 0,
-        image: 0,
-        pdf: 0,
-        space: 0,
+        preview_on: 0,
+        preview_mode: 0,
+        preview_label: 0,
+        preview_note: 0,
+        preview_space: std::cell::Cell::new(false),
         default_fm: 0,
         win_e: 0,
         win_e_note: 0,
@@ -649,9 +817,9 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
     }
     let top = k(22) + heading_h + k(18);
 
-    // 外觀與文字
+    // 文字與語言
     {
-        let p = P_LOOK;
+        let p = P_TEXT;
         let mut y = top;
         let h = label(dlg, tr!("文字大小", "Text size"), RECT::new(x0, y, k(LABEL_W) - k(8), row_h), f_normal);
         st.pages[p].push(h);
@@ -684,33 +852,6 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
         }
         y += row_h + k(4);
         let h = note(dlg, tr!("換了語言要重新開啟 Stillfeather 才會套用。", "A new language applies after Stillfeather restarts."), RECT::new(cx, y, ctrl_w, note_h), f_small);
-        st.pages[p].push(h);
-        y += note_h + k(14);
-        let h = label(dlg, tr!("主題", "Theme"), RECT::new(x0, y, k(LABEL_W) - k(8), row_h), f_normal);
-        st.pages[p].push(h);
-        for (i, (cid, text)) in [(SEG_SYSTEM, tr!("跟隨系統", "System")), (SEG_LIGHT, tr!("淺色", "Light")), (SEG_DARK, tr!("深色", "Dark"))].into_iter().enumerate() {
-            let h = button(dlg, cid, Kind::Segment, text, RECT::new(cx + i as i32 * (seg3 + k(6)), y, seg3, row_h), &st.fonts);
-            st.segments[i] = h;
-            st.pages[p].push(h);
-        }
-        y += row_h + k(14);
-        let pick_w = k(96);
-        let edit_w = (ctrl_w - pick_w - k(10)).min(k(180));
-        let h = label(dlg, tr!("重點色", "Accent color"), RECT::new(x0, y, k(LABEL_W) - k(8), row_h), f_normal);
-        st.pages[p].push(h);
-        st.accent = edit(dlg, ACCENT_EDIT, RECT::new(cx, y, edit_w, row_h), &mut st, p);
-        st.pages[p].push(st.accent);
-        let h = button(dlg, ACCENT_PICK, Kind::Text, tr!("選色…", "Pick…"), RECT::new(cx + edit_w + k(10), y, pick_w, row_h), &st.fonts);
-        st.pages[p].push(h);
-        y += row_h + k(14);
-        let h = label(dlg, tr!("背景色", "Background"), RECT::new(x0, y, k(LABEL_W) - k(8), row_h), f_normal);
-        st.pages[p].push(h);
-        st.background = edit(dlg, BG_EDIT, RECT::new(cx, y, edit_w, row_h), &mut st, p);
-        st.pages[p].push(st.background);
-        let h = button(dlg, BG_PICK, Kind::Text, tr!("選色…", "Pick…"), RECT::new(cx + edit_w + k(10), y, pick_w, row_h), &st.fonts);
-        st.pages[p].push(h);
-        y += row_h + k(4);
-        let h = note(dlg, tr!("顏色留白使用主題預設；格式為 #RRGGBB。", "Blank uses the theme default. Format: #RRGGBB"), RECT::new(cx, y, ctrl_w, note_h), f_small);
         st.pages[p].push(h);
     }
 
@@ -746,6 +887,76 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
         (e, y + row_h + k(14))
     };
 
+    // 主題與顏色
+    {
+        let p = P_THEME;
+        let mut y = top;
+        let seg3 = (ctrl_w - k(6) * 2) / 3;
+        let h = label(dlg, tr!("深淺色", "Light or dark"), RECT::new(x0, y, k(LABEL_W) - k(8), row_h), f_normal);
+        st.pages[p].push(h);
+        for (i, (cid, text)) in [(SEG_SYSTEM, tr!("跟隨系統", "System")), (SEG_LIGHT, tr!("淺色", "Light")), (SEG_DARK, tr!("深色", "Dark"))].into_iter().enumerate() {
+            let h = button(dlg, cid, Kind::Segment, text, RECT::new(cx + i as i32 * (seg3 + k(6)), y, seg3, row_h), &st.fonts);
+            st.segments[i] = h;
+            st.pages[p].push(h);
+        }
+        y += row_h + k(14);
+        let h = label(dlg, tr!("主題", "Theme"), RECT::new(x0, y, k(LABEL_W) - k(8), row_h), f_normal);
+        st.pages[p].push(h);
+        // 主題選項：四個一列，上面是小視窗預覽、下面是名稱
+        let gap = k(8);
+        let cols = THEME_COLUMNS as i32;
+        let tile_w = (ctrl_w - gap * (cols - 1)) / cols;
+        let tile_h = k(66).max(theme::line_height(f_normal) + k(46));
+        for (i, preset) in PRESETS.iter().enumerate() {
+            let (row, col) = ((i / THEME_COLUMNS) as i32, (i % THEME_COLUMNS) as i32);
+            let r = RECT::new(cx + col * (tile_w + gap), y + row * (tile_h + gap), tile_w, tile_h);
+            let h = button(dlg, THEME_FIRST + i as u16, Kind::Swatch, preset.name(), r, &st.fonts);
+            st.tiles[i] = h;
+            st.pages[p].push(h);
+        }
+        let rows = PRESETS.len().div_ceil(THEME_COLUMNS) as i32;
+        y += rows * tile_h + (rows - 1) * gap + k(6);
+        let h = note(dlg, tr!("每個主題都有調好的淺色與深色，跟著上面的深淺色切換。", "Each theme has tuned light and dark colors that follow the setting above."), RECT::new(cx, y, ctrl_w, note_h), f_small);
+        st.pages[p].push(h);
+        y += note_h + k(16);
+        let (h, mut y) = toggle(
+            &mut st,
+            p,
+            T_CUSTOM,
+            tr!("自訂顏色（進階）", "Custom colors (advanced)"),
+            Some(tr!("取代主題的重點色或背景色。背景色也決定深淺，太接近中間亮度時文字會不好讀。", "Replaces the theme's accent or background. The background also decides light or dark; mid-brightness colors make text hard to read.")),
+            x0,
+            y,
+        );
+        st.custom = h;
+        let pick_w = k(96);
+        let reset_w = k(72);
+        let edit_w = (ctrl_w - pick_w - reset_w - k(20)).min(k(180));
+        let reset_x = cx + edit_w + k(10) + pick_w + k(10);
+        let h = label(dlg, tr!("重點色", "Accent color"), RECT::new(x0 + t.s(34), y, k(LABEL_W) - k(8) - t.s(34), row_h), f_normal);
+        st.pages[p].push(h);
+        st.accent = edit(dlg, ACCENT_EDIT, RECT::new(cx, y, edit_w, row_h), &mut st, p);
+        st.pages[p].push(st.accent);
+        let pick = button(dlg, ACCENT_PICK, Kind::Text, tr!("選色…", "Pick…"), RECT::new(cx + edit_w + k(10), y, pick_w, row_h), &st.fonts);
+        st.pages[p].push(pick);
+        st.custom_parts.extend([st.accent, pick]);
+        st.accent_reset = button(dlg, ACCENT_RESET, Kind::Text, tr!("重設", "Reset"), RECT::new(reset_x, y, reset_w, row_h), &st.fonts);
+        st.pages[p].push(st.accent_reset);
+        y += row_h + k(10);
+        let h = label(dlg, tr!("背景色", "Background"), RECT::new(x0 + t.s(34), y, k(LABEL_W) - k(8) - t.s(34), row_h), f_normal);
+        st.pages[p].push(h);
+        st.background = edit(dlg, BG_EDIT, RECT::new(cx, y, edit_w, row_h), &mut st, p);
+        st.pages[p].push(st.background);
+        let pick = button(dlg, BG_PICK, Kind::Text, tr!("選色…", "Pick…"), RECT::new(cx + edit_w + k(10), y, pick_w, row_h), &st.fonts);
+        st.pages[p].push(pick);
+        st.custom_parts.extend([st.background, pick]);
+        st.bg_reset = button(dlg, BG_RESET, Kind::Text, tr!("重設", "Reset"), RECT::new(reset_x, y, reset_w, row_h), &st.fonts);
+        st.pages[p].push(st.bg_reset);
+        y += row_h + k(4);
+        let h = note(dlg, tr!("留白（或按「重設」）使用主題的顏色；格式為 #RRGGBB。", "Leave blank (or press Reset) to use the theme's color. Format: #RRGGBB"), RECT::new(cx, y, ctrl_w, note_h), f_small);
+        st.pages[p].push(h);
+    }
+
     // 檔案瀏覽
     {
         let p = P_BROWSE;
@@ -766,20 +977,29 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
     {
         let p = P_PREVIEW;
         let y = top;
-        let (h, y) = toggle(&mut st, p, T_IMAGE, tr!("快速預覽圖片與影片", "Preview images & videos"), None, x0, y);
-        st.image = h;
-        let (h, y) = toggle(&mut st, p, T_PDF, tr!("快速預覽 PDF", "Preview PDFs"), None, x0, y);
-        st.pdf = h;
-        let (h, _) = toggle(
+        let (h, y) = toggle(
             &mut st,
             p,
-            T_SPACE,
-            tr!("按空白鍵預覽", "Preview with Space"),
-            Some(tr!("不自動懸停預覽，按住空白鍵時才預覽滑鼠下的項目。", "Hold Space to preview the item under the mouse instead of previewing on hover.")),
+            T_PREVIEW,
+            tr!("啟用快速預覽", "Quick preview"),
+            Some(tr!(
+                "不必開啟檔案，就能看圖片、影片、PDF、文字與程式碼的內容。關閉後仍可從右鍵選單的「快速預覽」開啟。",
+                "See images, videos, PDFs, text and code without opening them. When off, you can still use “Quick preview” in the right-click menu."
+            )),
             x0,
             y,
         );
-        st.space = h;
+        st.preview_on = h;
+        // 預覽方式：縮排在總開關底下的下拉選單
+        let indent = t.s(34);
+        st.preview_label = label(dlg, tr!("預覽方式", "Preview mode"), RECT::new(x0 + indent, y, k(LABEL_W) - k(8) - indent, row_h), f_normal);
+        st.pages[p].push(st.preview_label);
+        st.preview_mode = button(dlg, PREVIEW_MODE, Kind::Menu(glyph::PREVIEW), "", RECT::new(cx, y, k(220).min(ctrl_w), row_h), &st.fonts);
+        st.pages[p].push(st.preview_mode);
+        let y = y + row_h + k(6);
+        // 說明可能要兩行（英文比較長）
+        st.preview_note = note(dlg, "", RECT::new(cx, y, ctrl_w, note_h * 2 + t.s(4)), f_small);
+        st.pages[p].push(st.preview_note);
     }
 
     // Windows 整合
@@ -812,6 +1032,10 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
     // 關於與更新
     let check;
     let update_note;
+    {
+        let h = button(dlg, EDIT_SHORTCUT, Kind::Menu(glyph::SETTINGS), tr!("選擇要修改的命令…", "Choose a command…"), RECT::new(x0, top, k(280), row_h), &st.fonts);
+        st.pages[P_SHORTCUTS].push(h);
+    }
     {
         let p = P_ABOUT;
         let mut y = top;
@@ -846,7 +1070,7 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
 
     // 底部固定：還原這個分類的預設值、儲存、取消
     let by = bar_top + (k(BAR_H) - k(36)) / 2;
-    st.reset = button(dlg, RESET, Kind::Text, &reset_text(P_LOOK), RECT::new(k(20), by, k(200), k(36)), &st.fonts);
+    st.reset = button(dlg, RESET, Kind::Text, &reset_text(P_TEXT), RECT::new(k(20), by, k(200), k(36)), &st.fonts);
     let cancel = button(dlg, IDCANCEL as u16, Kind::Text, tr!("取消", "Cancel"), RECT::new(cw - k(MARGIN) - k(96), by, k(96), k(36)), &st.fonts);
     let save_btn = button(dlg, IDOK as u16, Kind::Text, tr!("儲存", "Save"), RECT::new(cw - k(MARGIN) - k(96) * 2 - k(10), by, k(96), k(36)), &st.fonts);
     controls::set_primary(save_btn);
@@ -858,11 +1082,11 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
     let raw = Box::into_raw(st);
     unsafe {
         SetWindowLongPtrW(dlg, GWLP_USERDATA, raw as isize);
-        show_page(dlg, &mut *raw, P_LOOK);
+        show_page(dlg, &mut *raw, P_TEXT);
         size_changed(&*raw);
         EnableWindow(owner, 0);
         ShowWindow(dlg, SW_SHOW);
-        SetFocus((*raw).nav[P_LOOK]);
+        SetFocus((*raw).nav[P_TEXT]);
         let mut msg: MSG = std::mem::zeroed();
         let mut quit = None;
         // 對話方塊程序透過同一個指標設定 done；以 volatile 讀取，明確表示它會在迴圈外被改變。
@@ -959,6 +1183,10 @@ unsafe fn paint_preview(hdc: HDC, st: &State) {
 }
 
 unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // 「預覽方式」下拉選單的項目是自己畫的（字型跟著文字大小）
+    if let Some(r) = menu::owner_draw(msg, wparam, lparam) {
+        return r;
+    }
     let Some(st) = state(hwnd) else { return DefWindowProcW(hwnd, msg, wparam, lparam) };
     let t = app::theme();
     match msg {
@@ -977,11 +1205,18 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 let focus = GetFocus();
                 for (frame, edit, page) in &st.frames {
                     if *page == st.page {
-                        let border = if focus == *edit { t.pal.accent } else { t.pal.line };
+                        // 停用（沒勾「自訂顏色」）時框線淡一點
+                        let border = if focus == *edit {
+                            t.pal.accent
+                        } else if IsWindowEnabled(*edit) == 0 {
+                            theme::blend(t.pal.line, t.pal.surface, 0.5)
+                        } else {
+                            t.pal.line
+                        };
                         theme::round_rect(buf.hdc, frame, st.k(8), Some(t.pal.surface), Some(border));
                     }
                 }
-                if st.page == P_LOOK {
+                if st.page == P_TEXT {
                     paint_preview(buf.hdc, st);
                 }
                 let line = RECT { left: 0, top: bar_top, right: rect.right, bottom: bar_top + 1 };
@@ -1010,7 +1245,15 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     check_one(&st.sizes, Some((c - SIZE_FIRST) as usize));
                     size_changed(st);
                 }
-                SEG_SYSTEM | SEG_LIGHT | SEG_DARK => check_one(&st.segments, Some((cid - SEG_SYSTEM) as usize)),
+                SEG_SYSTEM | SEG_LIGHT | SEG_DARK => {
+                    check_one(&st.segments, Some((cid - SEG_SYSTEM) as usize));
+                    refresh_swatches(st);
+                }
+                c if (THEME_FIRST..THEME_FIRST + PRESETS.len() as u16).contains(&c) => check_one(&st.tiles, Some((c - THEME_FIRST) as usize)),
+                T_CUSTOM => custom_changed(st),
+                T_PREVIEW => preview_changed(st),
+                EDIT_SHORTCUT => edit_shortcut(hwnd, st, lparam as HWND),
+                PREVIEW_MODE => pick_preview_mode(hwnd, st),
                 LANG_SYSTEM | LANG_CHINESE | LANG_ENGLISH => check_one(&st.languages, Some((cid - LANG_SYSTEM) as usize)),
                 ACCENT_PICK => {
                     let target = st.accent;
@@ -1020,6 +1263,15 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                     let target = st.background;
                     pick_color(hwnd, st, target, t.pal.surface);
                 }
+                // 重設：清空那一欄（改回主題的顏色），焦點移到文字框，按「儲存」才套用
+                ACCENT_RESET | BG_RESET => {
+                    let target = if cid == ACCENT_RESET { st.accent } else { st.background };
+                    set_window_text(target, "");
+                    SetFocus(target);
+                    reset_buttons_changed(st);
+                }
+                // 填了或清掉顏色：「重設」跟著能不能按
+                ACCENT_EDIT | BG_EDIT if code == EN_CHANGE => reset_buttons_changed(st),
                 CHECK_UPDATES => {
                     if UPDATE_READY.load(Ordering::Relaxed) {
                         // 立即更新：和「儲存」一樣先儲存並關閉設定，主視窗接著下載更新
@@ -1033,6 +1285,7 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 }
                 RESET => {
                     // 只還原目前這個分類；常用位置等其他設定不動，按「儲存」才套用
+                    if st.page == P_SHORTCUTS { st.base.shortcuts.clear(); }
                     let mut d = Settings::default();
                     d.favorites = st.base.favorites.clone();
                     fill_page(st, st.page, &d, Integration::DEFAULT);

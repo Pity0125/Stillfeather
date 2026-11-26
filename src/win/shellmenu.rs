@@ -102,6 +102,8 @@ pub struct ShellMenu {
     cm: *mut c_void,
     cm2: *mut c_void,
     cm3: *mut c_void,
+    /// 資料夾空白處的選單交給 Windows 的站台（「新增 ▸」建好項目後藉它進入改名，見 [`super::menusite`]）
+    site: *mut c_void,
     /// 選到 Windows 項目時，選單要留到執行命令之後才銷毀（部分擴充程式執行時還會查詢它）。
     menu: Cell<HMENU>,
 }
@@ -111,6 +113,10 @@ impl Drop for ShellMenu {
         unsafe {
             if self.menu.get() != 0 {
                 DestroyMenu(self.menu.get());
+            }
+            if !self.site.is_null() {
+                super::menusite::detach(self.cm);
+                super::menusite::release_site(self.site);
             }
             release(self.cm3);
             release(self.cm2);
@@ -132,7 +138,7 @@ impl ShellMenu {
                 cm2 = std::ptr::null_mut();
             }
         }
-        ShellMenu { cm, cm2, cm3, menu: Cell::new(0) }
+        ShellMenu { cm, cm2, cm3, site: std::ptr::null_mut(), menu: Cell::new(0) }
     }
 
     /// 選取項目的選單。項目必須在同一個資料夾（搜尋結果跨資料夾時回傳 None，只顯示 Stillfeather 自己的項目）。
@@ -152,7 +158,13 @@ impl ShellMenu {
             let mut cm: *mut c_void = std::ptr::null_mut();
             let hr = (vtbl::<ShellFolderVtbl>(sf).create_view_object)(sf, owner, &IID_ICONTEXTMENU, &mut cm);
             release(sf);
-            (hr >= 0 && !cm.is_null()).then(|| ShellMenu::wrap(cm))
+            if hr < 0 || cm.is_null() {
+                return None;
+            }
+            let mut menu = ShellMenu::wrap(cm);
+            // 在填入選單之前交給它：Windows 在 QueryContextMenu 時載入「新增 ▸」等處理程式，並把站台轉給它們
+            menu.site = super::menusite::attach(cm, owner, folder);
+            Some(menu)
         }
     }
 
@@ -315,7 +327,10 @@ pub fn popup(owner: HWND, parts: &[Part], shell: Option<&ShellMenu>, item_menu: 
                             AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
                             continue;
                         }
-                        let mut text = wide(c.text);
+                        let title = if let Some(cmd) = super::app::shortcut_command(c.id) {
+                            super::app::app().keymap.with_hint(c.text.split('\t').next().unwrap_or(c.text), cmd, "\t")
+                        } else { c.text.into() };
+                        let mut text = wide(&title);
                         let mut mii: MENUITEMINFOW = std::mem::zeroed();
                         mii.cbSize = std::mem::size_of::<MENUITEMINFOW>() as u32;
                         mii.fMask = MIIM_FTYPE | MIIM_STATE | MIIM_ID | MIIM_STRING;

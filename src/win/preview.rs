@@ -466,7 +466,8 @@ pub fn on_result(state: &mut State, generation: u64, path: &str, result: Result<
     let t = app::theme();
     let content = match result {
         Err(FsError::Cancelled) => return,
-        Err(FsError::Message(m)) | Ok(Loaded::Message(m)) => Content::Message(m),
+        Err(FsError::Message(m)) => Content::Message(m.text),
+        Ok(Loaded::Message(m)) => Content::Message(m),
         Ok(Loaded::Image(img)) => Content::Image { bitmap: make_bitmap(&img, t.pal.surface), w: img.width, h: img.height, caption: img.caption },
         Ok(Loaded::Text { doc, caption }) => Content::Text { doc, caption },
         Ok(Loaded::Office { office: Office::Document(doc), cover, caption }) => Content::Document {
@@ -1528,7 +1529,7 @@ fn load(target: &Target, edge: i32, opts: Opts, cancel: &AtomicBool) -> Result<L
     let path = target.path.as_str();
     mark("背景：讀取屬性");
     let Some((attrs, size, modified)) = fs::attributes_size_modified(path) else {
-        return Err(FsError::Message(trf!("無法讀取：{}", "Couldn't read: {}", last_error_text())));
+        return Err(FsError::msg(trf!("無法讀取：{}", "Couldn't read: {}", last_error_text())));
     };
     if attrs & (FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) != 0 {
         return msg(tr!("這個檔案在雲端，還沒下載到這台電腦；為了不觸發下載，先不讀取內容。按 Enter 開啟。", "This file is in the cloud and hasn't been downloaded to this PC; its contents aren't read so the download isn't triggered. Press Enter to open it."));
@@ -1609,7 +1610,7 @@ static SHELL_OFFICE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::
 
 fn office_doc(path: &str, format: Format, edge: i32, opts: Opts, cancel: &AtomicBool) -> Result<Loaded, FsError> {
     mark("背景：讀取 Office 文件");
-    let bytes = std::fs::read(paths::to_long_path(path)).map_err(|e| FsError::Message(trf!("無法讀取：{e}", "Couldn't read: {e}")))?;
+    let bytes = std::fs::read(paths::to_long_path(path)).map_err(|e| FsError::msg(trf!("無法讀取：{e}", "Couldn't read: {e}")))?;
     if cancel.load(Ordering::Relaxed) {
         return Err(FsError::Cancelled);
     }
@@ -1655,7 +1656,7 @@ fn text(path: &str, size: u64, lang: Lang) -> Result<Loaded, FsError> {
     let mut bytes = Vec::new();
     std::fs::File::open(paths::to_long_path(path))
         .and_then(|f| f.take(MAX_TEXT_BYTES).read_to_end(&mut bytes))
-        .map_err(|e| FsError::Message(trf!("無法讀取：{e}", "Couldn't read: {e}")))?;
+        .map_err(|e| FsError::msg(trf!("無法讀取：{e}", "Couldn't read: {e}")))?;
     let (content, encoding) = match quicklook::decode(&bytes) {
         Decoded::Text(t) => (t, ""),
         Decoded::Binary => return msg(tr!("看起來是二進位檔案，沒有文字預覽。", "This looks like a binary file, so there's no text preview.")),
@@ -1704,7 +1705,7 @@ fn duration_text(hundred_ns: u64) -> String {
 
 fn thumbnail(path: &str, edge: i32, video: bool, cancel: &AtomicBool) -> Result<Loaded, FsError> {
     mark("背景：縮圖工作程序");
-    let exe = std::env::current_exe().map_err(|e| FsError::Message(trf!("找不到預覽工作程式：{e}", "Can't find the preview worker: {e}")))?;
+    let exe = std::env::current_exe().map_err(|e| FsError::msg(trf!("找不到預覽工作程式：{e}", "Can't find the preview worker: {e}")))?;
     let edge_arg = edge.to_string();
     let out = run_child(exe.as_os_str(), &["--preview-worker".as_ref(), path.as_ref(), edge_arg.as_ref()], &[], cancel)?;
     let (mut img, ow, oh, dur) = parse_worker_output(out, video)?;
@@ -1749,14 +1750,14 @@ fn pdf(path: &str, edge: i32, cancel: &AtomicBool) -> Result<Loaded, FsError> {
 }
 
 fn pdf_powershell(path: &str, edge: i32, cancel: &AtomicBool) -> Result<Loaded, FsError> {
-    let exe = std::env::current_exe().map_err(|e| FsError::Message(trf!("找不到預覽工作程式：{e}", "Can't find the preview worker: {e}")))?;
+    let exe = std::env::current_exe().map_err(|e| FsError::msg(trf!("找不到預覽工作程式：{e}", "Can't find the preview worker: {e}")))?;
     let dir = std::env::temp_dir().join(format!(
         "FeatherFiles-preview-{}-{}-{}",
         std::process::id(),
         unsafe { GetTickCount64() },
         TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).map_err(|e| FsError::Message(trf!("無法建立暫存資料夾：{e}", "Couldn't create the temporary folder: {e}")))?;
+    std::fs::create_dir_all(&dir).map_err(|e| FsError::msg(trf!("無法建立暫存資料夾：{e}", "Couldn't create the temporary folder: {e}")))?;
     let result = (|| {
         let png = dir.join("preview.png");
         let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
@@ -1780,7 +1781,7 @@ fn pdf_powershell(path: &str, edge: i32, cancel: &AtomicBool) -> Result<Loaded, 
             cancel,
         )?;
         if out.code != 0 || !png.exists() {
-            return Err(FsError::Message(simplify_error(&out.stderr, true)));
+            return Err(FsError::msg(simplify_error(&out.stderr, true)));
         }
         let pages: Option<u32> = String::from_utf8_lossy(&out.stdout).trim().parse().ok();
         let png_os = png.as_os_str().to_owned();
@@ -1814,7 +1815,7 @@ fn run_child(program: &std::ffi::OsStr, args: &[&std::ffi::OsStr], envs: &[(&str
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let mut child = cmd.spawn().map_err(|e| FsError::Message(trf!("無法啟動預覽工作程式：{e}", "Couldn't start the preview worker: {e}")))?;
+    let mut child = cmd.spawn().map_err(|e| FsError::msg(trf!("無法啟動預覽工作程式：{e}", "Couldn't start the preview worker: {e}")))?;
     let mut stdout = child.stdout.take();
     let mut stderr = child.stderr.take();
     let out_reader = std::thread::spawn(move || {
@@ -1838,7 +1839,7 @@ fn run_child(program: &std::ffi::OsStr, args: &[&std::ffi::OsStr], envs: &[(&str
             Ok(None) => {}
             Err(e) => {
                 let _ = child.kill();
-                return Err(FsError::Message(e.to_string()));
+                return Err(FsError::msg(e.to_string()));
             }
         }
         if cancel.load(Ordering::Relaxed) {
@@ -1849,7 +1850,7 @@ fn run_child(program: &std::ffi::OsStr, args: &[&std::ffi::OsStr], envs: &[(&str
         if start.elapsed() > TIMEOUT {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(FsError::Message(tr!("預覽超過 8 秒，已停止工作程式。", "The preview took longer than 8 seconds, so the worker was stopped.").into()));
+            return Err(FsError::msg(tr!("預覽超過 8 秒，已停止工作程式。", "The preview took longer than 8 seconds, so the worker was stopped.")));
         }
         std::thread::sleep(Duration::from_millis(25));
     };
@@ -1879,19 +1880,19 @@ fn parse_worker_output(out: ChildOutput, video: bool) -> Result<(Image, u32, u32
         if video && out.stderr.is_empty() {
             e = tr!("沒有可用的影片縮圖；系統可能缺少這種影片格式的解碼器。", "No video thumbnail available; the system may be missing a decoder for this video format.").into();
         }
-        return Err(FsError::Message(e));
+        return Err(FsError::msg(e));
     }
     let b = &out.stdout;
     let u32_at = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
     if b.len() < 28 || &b[0..4] != MAGIC {
-        return Err(FsError::Message(tr!("預覽輸出無效。", "The preview output is invalid.").into()));
+        return Err(FsError::msg(tr!("預覽輸出無效。", "The preview output is invalid.")));
     }
     let w = u32_at(4) as i32;
     let h = u32_at(8) as i32;
     let (ow, oh) = (u32_at(12), u32_at(16));
     let dur = u64::from_le_bytes(b[20..28].try_into().unwrap_or([0; 8]));
     if w < 1 || h < 1 || w > 2 * MAX_EDGE || h > 2 * MAX_EDGE || b.len() != 28 + (w * h * 4) as usize {
-        return Err(FsError::Message(tr!("預覽尺寸超過上限。", "The preview is larger than the size limit.").into()));
+        return Err(FsError::msg(tr!("預覽尺寸超過上限。", "The preview is larger than the size limit.")));
     }
     let pixels = b[28..].chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
     Ok((Image { width: w, height: h, pixels, caption: String::new() }, ow, oh, dur))

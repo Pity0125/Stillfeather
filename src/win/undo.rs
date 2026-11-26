@@ -29,6 +29,7 @@ impl App {
         self.op_pending = match (kind, dest) {
             (OpKind::Move, Some(d)) => Some(Pending::Move(undo::move_pairs(sources, d))),
             (OpKind::Delete, _) => Some(Pending::Recycle { items: sources.to_vec(), since: undo::filetime_now().saturating_sub(2 * FILETIME_SECOND) }),
+            // 永久刪除不記錄復原（不在資源回收筒裡，還原不了）
             _ => None,
         };
     }

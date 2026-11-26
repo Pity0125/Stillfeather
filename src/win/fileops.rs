@@ -90,10 +90,14 @@ fn shell_operation(kind: OpKind, sources: &[&str], dest: Option<&str>, rename_on
     let func = match kind {
         OpKind::Copy => FO_COPY,
         OpKind::Move => FO_MOVE,
-        OpKind::Delete => FO_DELETE,
+        OpKind::Delete | OpKind::DeletePermanently => FO_DELETE,
     };
     match kind {
+        // 移到資源回收筒：要不要確認由 Stillfeather 依 Windows 的設定決定（見 app/fileactions.rs 的 delete_paths）；
+        // 不能放進資源回收筒（網路磁碟、檔案太大）時 Windows 仍會自己警告「將永久刪除」
         OpKind::Delete => flags |= FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING,
+        // 永久刪除：沒有 FOF_ALLOWUNDO 就不經過資源回收筒；確認由 Stillfeather 自己問過了
+        OpKind::DeletePermanently => flags = FOF_NOCONFIRMATION,
         _ => flags |= FOF_NOCONFIRMMKDIR,
     }
     if rename_on_collision {
@@ -342,7 +346,7 @@ fn check(kind: OpKind, p: &Planned) -> Result<(), String> {
     let Some(attrs) = fs::attributes(&p.source) else {
         return Err(trf!("找不到或無法讀取來源（{}）", "Can't find or read the source ({})", last_error_text()));
     };
-    if kind == OpKind::Delete {
+    if kind.is_delete() {
         return Ok(());
     }
     if let Some(link) = fs::reparse_in_ancestors(&p.source, false)? {

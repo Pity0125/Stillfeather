@@ -7,7 +7,10 @@ use crate::paths;
 pub enum OpKind {
     Copy,
     Move,
+    /// 移到資源回收筒（可以復原）
     Delete,
+    /// 永久刪除（Shift+Delete；不經過資源回收筒，無法復原）
+    DeletePermanently,
 }
 
 impl OpKind {
@@ -16,7 +19,13 @@ impl OpKind {
             OpKind::Copy => tr!("複製", "copy"),
             OpKind::Move => tr!("移動", "move"),
             OpKind::Delete => tr!("刪除", "delete"),
+            OpKind::DeletePermanently => tr!("永久刪除", "permanently delete"),
         }
+    }
+
+    /// 刪除類（移到資源回收筒或永久刪除）：沒有目的地
+    pub fn is_delete(self) -> bool {
+        matches!(self, OpKind::Delete | OpKind::DeletePermanently)
     }
 }
 
@@ -59,7 +68,7 @@ pub fn normalize(path: &str) -> Result<String, String> {
 /// `protected` 為不可直接操作的系統或使用者設定檔根目錄。
 pub fn plan(kind: OpKind, sources: &[String], destination: Option<&str>, protected: &[String]) -> Result<Vec<PlanItem>, String> {
     let dest = match kind {
-        OpKind::Delete => None,
+        OpKind::Delete | OpKind::DeletePermanently => None,
         _ => {
             let d = destination.ok_or(tr!("缺少目的地資料夾。", "No destination folder."))?;
             Some(normalize(d).map_err(|e| trf!("目的地無法使用：{e}", "The destination can't be used: {e}"))?)
@@ -161,6 +170,20 @@ mod tests {
         assert_eq!(r[0].as_ref().unwrap_err().reason, "不能將來源複製或移動至自身或其子目錄。");
         let r = plan(OpKind::Copy, &s(&["C:\\"]), Some("D:\\x"), &[]).unwrap();
         assert!(r[0].as_ref().unwrap_err().reason.contains("根目錄"));
+    }
+
+    /// 永久刪除（Shift+Delete）和移到資源回收筒一樣不需要目的地，檢查也相同
+    #[test]
+    fn permanent_delete_plans_like_delete() {
+        assert!(OpKind::Delete.is_delete() && OpKind::DeletePermanently.is_delete());
+        assert!(!OpKind::Move.is_delete() && !OpKind::Copy.is_delete());
+        let sources = s(&["C:\\a", "C:\\a\\b", "C:\\Windows"]);
+        let protected = s(&["C:\\Windows"]);
+        let a = plan(OpKind::Delete, &sources, None, &protected).unwrap();
+        let b = plan(OpKind::DeletePermanently, &sources, None, &protected).unwrap();
+        assert_eq!(a, b);
+        assert!(b[0].as_ref().is_ok_and(|p| p.target.is_none()));
+        assert!(b[2].is_err());
     }
 
     #[test]

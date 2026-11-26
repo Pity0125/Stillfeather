@@ -19,6 +19,7 @@ use feather_core::watch::{self, Step};
 use std::sync::atomic::AtomicBool;
 
 pub(super) const FAVORITES_KEY: &str = "::favorites";
+const BOOKMARK_MOVE: u16 = 450;
 const DRIVES_KEY: &str = "::drives";
 
 impl App {
@@ -168,9 +169,20 @@ impl App {
                 self.insert_node(fav, label, folder, true, false, Node { path: p, kind: NodeKind::Favorite { custom: false }, loaded: false, token: 0 });
             }
         }
+        let mut parents = Vec::new();
+        for (index, (name, members)) in self.settings.bookmark_groups.clone().into_iter().enumerate() {
+            let node = self.insert_node(fav, &name, folder, !members.is_empty(), false, Node {
+                path: format!("::bookmark-group/{index}"), kind: NodeKind::Header, loaded: true, token: 0,
+            });
+            parents.push((node, members));
+        }
         for p in self.settings.favorites.clone() {
+            let parent = parents.iter().find(|(_, members)| members.iter().any(|m| paths::eq_ignore_case(m, &p))).map_or(fav, |(node, _)| *node);
             let label = paths::tab_title(&p);
-            self.insert_node(fav, &label, folder, true, false, Node { path: p, kind: NodeKind::Favorite { custom: true }, loaded: false, token: 0 });
+            self.insert_node(parent, &label, folder, true, false, Node { path: p, kind: NodeKind::Favorite { custom: true }, loaded: false, token: 0 });
+        }
+        for (parent, _) in parents {
+            send(self.tree, TVM_EXPAND, TVE_EXPAND, parent);
         }
         let drives = self.insert_node(TVI_ROOT, tr!("磁碟", "Drives"), folder, true, true, Node {
             path: DRIVES_KEY.into(),
@@ -432,10 +444,11 @@ impl App {
 
         if kind == Some(NodeKind::Header) {
             // 區段標題：小字標籤，後面一個小箭頭表示展開或收合（點標題可切換）
-            let x = row.left + self.s(16);
+            let group = self.nodes.get(&item).is_some_and(|n| n.path.starts_with("::bookmark-group/"));
+            let x = row.left + self.s(if group { 32 } else { 16 });
             let tr = RECT { left: x, top: row.top + self.s(6), ..row };
             let pin_here = self.drop_pin && self.nodes.get(&item).is_some_and(|n| n.path == FAVORITES_KEY);
-            if pin_here {
+            if pin_here || (group && drop_target) {
                 // 拖曳資料夾到這裡：標題變成重點色並提示放開即可釘選
                 let pill = RECT { left: row.left + self.s(4), top: row.top + self.s(4), right: row.right - self.s(4), bottom: row.bottom };
                 theme::round_rect(hdc, &pill, self.s(12), Some(theme::blend(p.accent, p.sidebar, 0.14)), Some(p.accent));
@@ -562,6 +575,40 @@ impl App {
         }
     }
 
+    fn save_bookmark_groups(&mut self, settings: feather_core::settings::Settings) {
+        match app::write_settings(&settings) {
+            Ok(()) => { self.settings = settings; self.build_tree(); }
+            Err(error) => self.show_error(&error),
+        }
+    }
+
+    fn bookmark_group_menu(&mut self, index: Option<usize>, pt: POINT) {
+        let mut commands = vec![(1, tr!("新增書籤分類…", "New bookmark group…"), true)];
+        if index.is_some() {
+            commands.push((2, tr!("重新命名分類…", "Rename group…"), true));
+            commands.push((3, tr!("移除分類（保留書籤）", "Remove group (keep bookmarks)"), true));
+        }
+        let Some(action) = app::popup_menu(self.hwnd, &commands, pt) else { return };
+        let mut settings = self.settings.clone();
+        if action == 3 {
+            if let Some(i) = index { settings.bookmark_groups.remove(i); }
+        } else {
+            let current = index.filter(|_| action == 2).map_or("", |i| settings.bookmark_groups[i].0.as_str());
+            let Some(name) = super::dialog::text_input(self.hwnd, commands[(action - 1) as usize].1,
+                tr!("分類名稱", "Group name"), current, "") else { return };
+            if name.is_empty() || settings.bookmark_groups.iter().enumerate().any(|(i, (n, _))| n.eq_ignore_ascii_case(&name) && !(action == 2 && index == Some(i))) {
+                self.show_error(tr!("請輸入尚未使用的分類名稱。", "Enter an unused group name."));
+                return;
+            }
+            if let Some(i) = index.filter(|_| action == 2) {
+                settings.bookmark_groups[i].0 = name;
+            } else {
+                settings.bookmark_groups.push((name, Vec::new()));
+            }
+        }
+        self.save_bookmark_groups(settings);
+    }
+
     pub(super) fn tree_context_menu(&mut self, pt: POINT, keyboard: bool) {
         self.hide_preview();
         let item = if keyboard {
@@ -574,7 +621,6 @@ impl App {
             let mut ht = TVHITTESTINFO { pt: p, flags: 0, hItem: 0 };
             send(self.tree, TVM_HITTEST, 0, &mut ht as *mut TVHITTESTINFO as LPARAM)
         };
-        let Some(path) = (item != 0).then(|| self.node_path(item)).flatten() else { return };
         let pt = if keyboard {
             let r = client_rect(self.tree);
             let mut p = POINT { x: r.left + self.s(40), y: r.top + self.s(20) };
@@ -585,6 +631,13 @@ impl App {
         } else {
             pt
         };
+        let Some(node) = self.nodes.get(&item) else { return };
+        if node.path == FAVORITES_KEY || node.path.starts_with("::bookmark-group/") {
+            let group = node.path.strip_prefix("::bookmark-group/").and_then(|s| s.parse::<usize>().ok());
+            self.bookmark_group_menu(group, pt);
+            return;
+        }
+        let Some(path) = self.node_path(item) else { return };
         let kind = self.nodes.get(&item).map(|n| n.kind);
         // 內建的常用位置（桌面、文件、下載…）一直都在，不需要釘選
         let builtin = matches!(kind, Some(NodeKind::Favorite { custom: false }));
@@ -603,6 +656,9 @@ impl App {
         ];
         let mut organize = Vec::new();
         if pinned {
+            if !self.settings.bookmark_groups.is_empty() {
+                organize.push(Cmd::new(BOOKMARK_MOVE, tr!("移至書籤分類…", "Move to bookmark group…"), glyph::FOLDER));
+            }
             organize.push(Cmd::new(id::REMOVE_FAVORITE, tr!("從常用位置取消釘選", "Unpin from Favorites"), glyph::UNPIN));
         } else if !builtin {
             organize.push(Cmd::new(id::ADD_FAVORITE, tr!("釘選到常用位置", "Pin to Favorites"), glyph::PIN));
@@ -627,6 +683,22 @@ impl App {
             Some(Pick::Ours(cmd)) => cmd,
         };
         match cmd {
+            BOOKMARK_MOVE => {
+                let mut choices = vec![(1, tr!("未分類", "Ungrouped"), true)];
+                for (i, (name, _)) in self.settings.bookmark_groups.iter().enumerate() {
+                    choices.push(((i + 2) as u16, name.as_str(), true));
+                }
+                if let Some(choice) = app::popup_menu(self.hwnd, &choices, pt) {
+                    let mut settings = self.settings.clone();
+                    for (_, members) in &mut settings.bookmark_groups {
+                        members.retain(|p| !paths::eq_ignore_case(p, &path));
+                    }
+                    if choice >= 2 {
+                        settings.bookmark_groups[choice as usize - 2].1.push(path);
+                    }
+                    self.save_bookmark_groups(settings);
+                }
+            }
             id::OPEN => {
                 let tab = self.active_tab_id();
                 self.navigate(tab, &path, NavKind::Normal, vec![]);
@@ -639,8 +711,9 @@ impl App {
             id::ADD_FAVORITE => self.add_favorites(vec![path]),
             id::REMOVE_FAVORITE => self.remove_favorite(&path),
             id::CUT | id::COPY => self.clipboard_paths(vec![path], cmd == id::CUT),
+            // 按住 Shift 點「刪除」：永久刪除
             id::DELETE => {
-                if self.delete_paths(vec![path.clone()]) {
+                if self.delete_paths(vec![path.clone()], key_down(VK_SHIFT)) {
                     self.pending_tree_delete = Some((item, path));
                 }
             }

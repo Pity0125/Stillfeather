@@ -207,7 +207,8 @@ impl App {
                 continue;
             }
             let Some(t) = self.tabs.get(&id) else { continue };
-            if t.search_mode || t.path.is_empty() {
+            // 共用資料夾清單（`\\nas`）不是真的資料夾，沒辦法監看
+            if t.search_mode || t.path.is_empty() || paths::unc_server(&t.path).is_some() {
                 continue;
             }
             out.push((side, id, t.path.clone()));
@@ -409,10 +410,15 @@ impl App {
         let (sort_col, desc) = (tab.sort_col, tab.desc);
         let path = tab.path.clone();
         std::thread::spawn(move || {
-            let result = fs::read_dir(&path, show_hidden, sort_col, desc, folders_on_top, &cancel);
+            // 只有電腦名稱的那一層（`\\nas`）：重新列出共用資料夾
+            let server = paths::unc_server(&path).map(str::to_string);
+            let result = match &server {
+                Some(s) => fs::list_shares(s, show_hidden, sort_col, desc, folders_on_top),
+                None => fs::read_dir(&path, show_hidden, sort_col, desc, folders_on_top, &cancel),
+            };
             // 讀不到時順便確認資料夾還在不在：網路位置斷線時這要等很久，不能在介面執行緒上做
             let gone_to = match &result {
-                Err(FsError::Message(_)) if !fs::is_dir(&path) => watch::nearest_existing(&path, fs::is_dir),
+                Err(FsError::Message(_)) if server.is_none() && !fs::is_dir(&path) => watch::nearest_existing(&path, fs::is_dir),
                 _ => None,
             };
             app::post(WorkerMsg::AutoDir { tab: id, generation, path, result, gone_to });
@@ -471,9 +477,9 @@ impl App {
         self.update_chrome();
     }
 
-    /// 自動重新讀取時發現資料夾已經不在（被刪除、搬走）：改顯示還在的上一層。
+    /// 自動重新讀取（或重新讀取目前的資料夾，見 on_dir）時發現資料夾已經不在（被刪除、搬走）：改顯示還在的上一層。
     /// 只是暫時讀不到（例如網路斷線）時背景執行緒不會給 `target`，保留畫面，不跳到別的地方。
-    fn folder_gone(&mut self, id: TabId, path: &str, target: &str) {
+    pub(super) fn folder_gone(&mut self, id: TabId, path: &str, target: &str) {
         super::crashlog::crumb("自動重新整理：顯示中的資料夾已不在，改顯示上一層");
         if id == self.active_tab_id() {
             self.set_footer(trf!("「{}」已被移走或刪除，改為顯示「{}」", "“{}” was moved or deleted, so “{}” is shown instead", paths::tab_title(path), paths::tab_title(target)));

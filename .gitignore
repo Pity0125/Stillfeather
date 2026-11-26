@@ -1,6 +1,6 @@
 # 建置產生的檔案（build.ps1、cargo）：可以隨時重新建置
 target/
-app/
+/app/
 dist/
 build.log
 

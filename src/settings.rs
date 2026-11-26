@@ -83,6 +83,9 @@ pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub theme_mode: ThemeMode,
+    /// 主題（`themes::PRESETS` 的名稱，Rust 版專用）。不認得的名稱照樣保留，畫面用預設主題
+    pub theme: String,
+    /// 「進階」的自訂重點色、背景色：設了就取代主題的顏色
     pub accent_color: Option<String>,
     pub background_color: Option<String>,
     pub sidebar_width: i32,
@@ -91,12 +94,19 @@ pub struct Settings {
     pub show_extensions: bool,
     /// 顯示隱藏的項目（整體設定，Rust 版專用）
     pub show_hidden: bool,
+    /// 快速預覽的總開關（Rust 版專用）。關閉時滑鼠停留、空白鍵都不預覽；右鍵選單的「快速預覽」照常
+    pub preview: bool,
+    /// 以前「快速預覽圖片與影片」「快速預覽 PDF」的個別開關。設定視窗改成只有總開關（[`Settings::preview`]），
+    /// 這兩個值不再使用，只為了讀寫 C# 版與舊的設定檔而保留
     pub image_preview: bool,
     pub pdf_preview: bool,
-    /// 按空白鍵才預覽：滑鼠停在項目上不自動預覽，按住空白鍵時才預覽滑鼠下的項目（Rust 版專用）
+    /// 預覽方式：true 是空白鍵預覽（滑鼠停在項目上不自動預覽，按住空白鍵時才預覽滑鼠下的項目），
+    /// false 是懸停預覽（Rust 版專用）
     pub space_preview: bool,
     pub favorites: Vec<String>,
-    /// 側欄底部的「個人化」卡片是否收合（Rust 版專用；C# 版會忽略這個欄位）
+    pub bookmark_groups: Vec<(String, Vec<String>)>,
+    pub shortcuts: Vec<(String, Vec<String>)>,
+    /// 以前側欄底部「個人化」卡片是否收合。卡片已經拿掉（設定在右上角的齒輪），只為了讀寫舊的設定檔而保留
     pub personalize_collapsed: bool,
     /// 清單的檢視模式（Rust 版專用）
     pub view_mode: ViewMode,
@@ -119,6 +129,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             theme_mode: ThemeMode::System,
+            theme: crate::themes::DEFAULT.to_string(),
             accent_color: None,
             background_color: None,
             sidebar_width: 240,
@@ -126,10 +137,13 @@ impl Default for Settings {
             compact_rows: false,
             show_extensions: true,
             show_hidden: false,
+            preview: true,
             image_preview: true,
             pdf_preview: true,
             space_preview: false,
             favorites: Vec::new(),
+            bookmark_groups: Vec::new(),
+            shortcuts: Vec::new(),
             personalize_collapsed: false,
             view_mode: ViewMode::Details,
             update_reminders: true,
@@ -154,6 +168,27 @@ pub fn parse_color(s: &str) -> Option<(u8, u8, u8)> {
 
 pub fn color_to_hex(r: u8, g: u8, b: u8) -> String {
     format!("#{r:02X}{g:02X}{b:02X}")
+}
+
+fn string_lists(root: &Value, key: &str) -> Result<Vec<(String, Vec<String>)>, String> {
+    let Some(value) = root.get(key) else { return Ok(Vec::new()) };
+    let Value::Obj(entries) = value else { return Err(format!("Invalid {key}")) };
+    entries.iter().map(|(name, value)| {
+        let Value::Arr(list) = value else { return Err(format!("Invalid {key}: {name}")) };
+        let strings = list.iter().map(|v| match v {
+            Value::Str(s) => Ok(s.clone()),
+            _ => Err(format!("Invalid {key}: {name}")),
+        }).collect::<Result<Vec<_>, _>>()?;
+        Ok((name.clone(), strings))
+    }).collect()
+}
+
+fn encode_lists(entries: &[(String, Vec<String>)]) -> String {
+    let fields = entries.iter().map(|(key, values)| {
+        let values = values.iter().map(|v| json::quote(v)).collect::<Vec<_>>().join(", ");
+        format!("{}: [{values}]", json::quote(key))
+    }).collect::<Vec<_>>().join(", ");
+    format!("{{{fields}}}")
 }
 
 impl Settings {
@@ -207,6 +242,13 @@ impl Settings {
                 _ => return Err(tr!("ThemeMode 必須是字串。", "ThemeMode must be a string.").into()),
             }
         }
+        match root.get("Theme") {
+            None | Some(Value::Null) => {}
+            // 不認得的主題（更新的版本加的）照樣保留，顯示時用預設主題
+            Some(Value::Str(t)) if !t.trim().is_empty() => s.theme = t.trim().to_string(),
+            Some(Value::Str(_)) => {}
+            Some(_) => return Err(tr!("Theme 必須是字串。", "Theme must be a string.").into()),
+        }
         s.accent_color = opt_string(&root, "AccentColor")?;
         s.background_color = opt_string(&root, "BackgroundColor")?;
         if let Some(n) = opt_int(&root, "SidebarWidth")? {
@@ -222,6 +264,7 @@ impl Settings {
             ("CompactRows", &mut s.compact_rows),
             ("ShowExtensions", &mut s.show_extensions),
             ("ShowHidden", &mut s.show_hidden),
+            ("Preview", &mut s.preview),
             ("ImagePreview", &mut s.image_preview),
             ("PdfPreview", &mut s.pdf_preview),
             ("SpacePreview", &mut s.space_preview),
@@ -260,6 +303,8 @@ impl Settings {
             }
             Some(_) => return Err(tr!("常用位置必須是字串陣列。", "Favorites must be an array of strings.").into()),
         }
+        s.bookmark_groups = string_lists(&root, "BookmarkGroups")?;
+        s.shortcuts = string_lists(&root, "Shortcuts")?;
         s.validate()?;
         Ok(s)
     }
@@ -273,8 +318,9 @@ impl Settings {
             format!("[\n{}\n  ]", items.join(",\n"))
         };
         format!(
-            "{{\n  \"ThemeMode\": {},\n  \"AccentColor\": {},\n  \"BackgroundColor\": {},\n  \"SidebarWidth\": {},\n  \"SplitPercent\": {},\n  \"CompactRows\": {},\n  \"ShowExtensions\": {},\n  \"ShowHidden\": {},\n  \"ImagePreview\": {},\n  \"PdfPreview\": {},\n  \"SpacePreview\": {},\n  \"PersonalizeCollapsed\": {},\n  \"ViewMode\": {},\n  \"UpdateReminders\": {},\n  \"RestoreTabs\": {},\n  \"MediaFolderIcons\": {},\n  \"Language\": {},\n  \"FoldersOnTop\": {},\n  \"TextSize\": {},\n  \"Favorites\": {}\n}}",
+            "{{\n  \"ThemeMode\": {},\n  \"Theme\": {},\n  \"AccentColor\": {},\n  \"BackgroundColor\": {},\n  \"SidebarWidth\": {},\n  \"SplitPercent\": {},\n  \"CompactRows\": {},\n  \"ShowExtensions\": {},\n  \"ShowHidden\": {},\n  \"Preview\": {},\n  \"ImagePreview\": {},\n  \"PdfPreview\": {},\n  \"SpacePreview\": {},\n  \"PersonalizeCollapsed\": {},\n  \"ViewMode\": {},\n  \"UpdateReminders\": {},\n  \"RestoreTabs\": {},\n  \"MediaFolderIcons\": {},\n  \"Language\": {},\n  \"FoldersOnTop\": {},\n  \"TextSize\": {},\n  \"BookmarkGroups\": {},\n  \"Shortcuts\": {},\n  \"Favorites\": {}\n}}",
             json::quote(self.theme_mode.as_str()),
+            json::quote(&self.theme),
             opt(&self.accent_color),
             opt(&self.background_color),
             self.sidebar_width,
@@ -282,6 +328,7 @@ impl Settings {
             self.compact_rows,
             self.show_extensions,
             self.show_hidden,
+            self.preview,
             self.image_preview,
             self.pdf_preview,
             self.space_preview,
@@ -293,6 +340,8 @@ impl Settings {
             json::quote(self.language.as_str()),
             self.folders_on_top,
             self.text_size,
+            encode_lists(&self.bookmark_groups),
+            encode_lists(&self.shortcuts),
             favorites
         )
     }
@@ -330,6 +379,7 @@ mod tests {
     fn full_roundtrip_with_unicode() {
         let s = Settings {
             theme_mode: ThemeMode::Dark,
+            theme: "sage".into(),
             accent_color: Some("#60CDFF".into()),
             background_color: None,
             sidebar_width: 260,
@@ -337,10 +387,13 @@ mod tests {
             compact_rows: true,
             show_extensions: false,
             show_hidden: true,
+            preview: false,
             image_preview: false,
             pdf_preview: true,
             space_preview: true,
             favorites: vec!["C:\\Users\\pity0\\桌面\\專案".into(), "\\\\nas\\共用".into()],
+            bookmark_groups: vec![("專案".into(), vec![r"\\nas\共用".into()])],
+            shortcuts: vec![("new-tab".into(), vec!["Ctrl+K".into()]), ("refresh".into(), vec![])],
             personalize_collapsed: true,
             view_mode: ViewMode::Tiles,
             update_reminders: false,
@@ -368,6 +421,28 @@ mod tests {
         assert!(!s.folders_on_top);
         // 舊的設定檔沒有 TextSize：標準大小
         assert_eq!(s.text_size, 100);
+        // 舊的設定檔沒有 Theme：預設主題（自訂的重點色照樣保留，在「進階」）
+        assert_eq!(s.theme, crate::themes::DEFAULT);
+        assert_eq!(s.accent_color.as_deref(), Some("#005FB8"));
+    }
+
+    #[test]
+    fn preview_switch() {
+        // 舊的設定檔沒有 Preview：預覽開著，預覽方式照舊
+        let s = Settings::from_json("{\"SpacePreview\":true}").unwrap();
+        assert!(s.preview && s.space_preview);
+        let s = Settings::from_json("{\"Preview\":false}").unwrap();
+        assert!(!s.preview && !s.space_preview);
+        assert!(Settings::from_json("{\"Preview\":1}").is_err());
+    }
+
+    #[test]
+    fn themes() {
+        assert_eq!(Settings::from_json("{\"Theme\":\"teal\"}").unwrap().theme, "teal");
+        // 不認得的主題照樣保留（更新的版本寫的），顯示時用預設主題
+        assert_eq!(Settings::from_json("{\"Theme\":\"aurora\"}").unwrap().theme, "aurora");
+        assert_eq!(Settings::from_json("{\"Theme\":\"  \"}").unwrap().theme, crate::themes::DEFAULT);
+        assert!(Settings::from_json("{\"Theme\":3}").is_err());
     }
 
     /// 設定視窗的「不要啟用更新提醒」改成正向的「啟動時提醒更新」：存的一直是 UpdateReminders，

@@ -4,6 +4,8 @@
 use super::sys::*;
 use super::util::*;
 use feather_core::entry::Entry;
+use feather_core::category::Category;
+use feather_core::searchquery::Filter;
 use feather_core::{paths, sorting};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -14,15 +16,55 @@ pub const SEARCH_BATCH: usize = 128;
 pub const SEARCH_BATCH_MS: u128 = 100;
 pub const TREE_MAX_CHILDREN: usize = 2_000;
 
+/// 讀取失敗的原因：給人看的文字，以及 Win32 錯誤碼（有的話）。介面依錯誤碼分辨「要登入」「找不到電腦」
+/// 「資料夾不見了」；顯示時當成文字用（`Display`、`Deref<Target = str>`）。
+#[derive(Debug, Clone)]
+pub struct Msg {
+    pub text: String,
+    pub code: Option<u32>,
+}
+
+impl std::fmt::Display for Msg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text)
+    }
+}
+
+impl std::ops::Deref for Msg {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
 #[derive(Debug)]
 pub enum FsError {
     Cancelled,
-    Message(String),
+    Message(Msg),
+}
+
+impl FsError {
+    /// 只有文字（不是 Win32 錯誤）
+    pub fn msg(text: impl Into<String>) -> FsError {
+        FsError::Message(Msg { text: text.into(), code: None })
+    }
+
+    /// Win32 錯誤：說明文字加上錯誤碼
+    pub fn win32(code: u32) -> FsError {
+        FsError::Message(Msg { text: error_text(code), code: Some(code) })
+    }
+
+    pub fn code(&self) -> Option<u32> {
+        match self {
+            FsError::Message(m) => m.code,
+            FsError::Cancelled => None,
+        }
+    }
 }
 
 impl From<String> for FsError {
     fn from(s: String) -> Self {
-        FsError::Message(s)
+        FsError::msg(s)
     }
 }
 
@@ -152,17 +194,18 @@ impl Finder {
         self.attrs() & FILE_ATTRIBUTE_REPARSE_POINT != 0 && paths::reparse_is_link(self.data.dwReserved0)
     }
 
+    fn size(&self) -> u64 {
+        ((self.data.nFileSizeHigh as u64) << 32) | self.data.nFileSizeLow as u64
+    }
+
+    fn modified(&self) -> u64 {
+        let t = &self.data.ftLastWriteTime;
+        ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64
+    }
+
     fn entry(&self, dir: &Arc<str>) -> Entry {
         let a = self.attrs();
-        let d = &self.data;
-        Entry {
-            name: self.name(),
-            dir: dir.clone(),
-            is_dir: a & FILE_ATTRIBUTE_DIRECTORY != 0,
-            size: ((d.nFileSizeHigh as u64) << 32) | d.nFileSizeLow as u64,
-            modified: ((d.ftLastWriteTime.dwHighDateTime as u64) << 32) | d.ftLastWriteTime.dwLowDateTime as u64,
-            is_link: self.is_link(),
-        }
+        Entry { name: self.name(), dir: dir.clone(), is_dir: a & FILE_ATTRIBUTE_DIRECTORY != 0, size: self.size(), modified: self.modified(), is_link: self.is_link() }
     }
 }
 
@@ -184,17 +227,18 @@ fn check_dir(path: &str, attrs: Option<u32>, reject_reparse: bool) -> Result<u32
         Some(a) => a,
         None => {
             let code = unsafe { GetLastError() };
-            return Err(FsError::Message(match code {
+            let text = match code {
                 ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => trf!("資料夾不存在：{path}", "The folder doesn't exist: {path}"),
                 _ => error_text(code),
-            }));
+            };
+            return Err(FsError::Message(Msg { text, code: Some(code) }));
         }
     };
     if a & FILE_ATTRIBUTE_DIRECTORY == 0 {
-        return Err(FsError::Message(trf!("這不是資料夾：{path}", "This isn't a folder: {path}")));
+        return Err(FsError::msg(trf!("這不是資料夾：{path}", "This isn't a folder: {path}")));
     }
     if reject_reparse && a & FILE_ATTRIBUTE_REPARSE_POINT != 0 && is_link_path(path) {
-        return Err(FsError::Message(tr!("不支援搜尋目錄連結（junction 或符號連結），請改選實際目標資料夾。", "Searching directory links (junctions or symbolic links) isn't supported; choose the actual target folder instead.").into()));
+        return Err(FsError::msg(tr!("不支援搜尋目錄連結（junction 或符號連結），請改選實際目標資料夾。", "Searching directory links (junctions or symbolic links) isn't supported; choose the actual target folder instead.")));
     }
     Ok(a)
 }
@@ -205,6 +249,92 @@ pub struct Listing {
 }
 
 /// 讀取單一資料夾，不開啟檔案內容；根目錄的列舉錯誤會回報給呼叫端，不以空清單掩蓋。
+/// 只有電腦名稱的網路路徑（`\\nas`）：列出那台電腦分享的資料夾（NetShareEnum，level 1）。
+/// 只列磁碟共用（STYPE_DISKTREE）；C$、ADMIN$ 這類特殊共用（STYPE_SPECIAL）只在顯示隱藏項目時列出。
+/// 每個共用資料夾是一個資料夾項目（`\\nas\share`）。在背景執行緒呼叫（電腦離線時要等逾時）。
+pub fn list_shares(server: &str, show_hidden: bool, sort_col: usize, desc: bool, folders_on_top: bool) -> Result<Listing, FsError> {
+    let unc = format!("\\\\{server}");
+    let w = wide(&unc);
+    let dir: Arc<str> = Arc::from(unc.as_str());
+    let mut entries = Vec::new();
+    let mut resume: u32 = 0;
+    loop {
+        let mut buf: *mut u8 = std::ptr::null_mut();
+        let (mut read, mut total) = (0u32, 0u32);
+        let rc = unsafe { NetShareEnum(w.as_ptr(), 1, &mut buf, MAX_PREFERRED_LENGTH, &mut read, &mut total, &mut resume) };
+        if rc != 0 && rc != ERROR_MORE_DATA {
+            if !buf.is_null() {
+                unsafe {
+                    NetApiBufferFree(buf as *mut std::ffi::c_void);
+                }
+            }
+            return Err(FsError::win32(rc));
+        }
+        if !buf.is_null() {
+            let items = unsafe { std::slice::from_raw_parts(buf as *const SHARE_INFO_1, read as usize) };
+            for it in items {
+                if it.shi1_type & 0xFF != STYPE_DISKTREE || (it.shi1_type & STYPE_SPECIAL != 0 && !show_hidden) || it.shi1_netname.is_null() {
+                    continue;
+                }
+                let name = unsafe { from_wide_ptr(it.shi1_netname) };
+                if !name.is_empty() {
+                    entries.push(Entry { name, dir: dir.clone(), is_dir: true, size: 0, modified: 0, is_link: false });
+                }
+            }
+            unsafe {
+                NetApiBufferFree(buf as *mut std::ffi::c_void);
+            }
+        }
+        if rc == 0 || read == 0 {
+            break;
+        }
+    }
+    sorting::sort_entries(&mut entries, sort_col, desc, folders_on_top);
+    Ok(Listing { entries, skipped: 0 })
+}
+
+/// 網路位置要帳號密碼時，叫出 Windows 自己的登入視窗（有「記住我的認證」）。成功回傳 Ok；使用者按取消是
+/// Err(1223)。`remote` 是共用資料夾（`\\nas\share`），只有電腦名稱時用 `\\nas\IPC$`。
+/// 不加 CONNECT_UPDATE_PROFILE：不會變成永久的網路磁碟機對應。在背景執行緒呼叫。
+pub fn connect_interactive(owner: HWND, remote: &str) -> Result<(), u32> {
+    let w = wide(remote);
+    let ipc = remote.trim_end_matches(paths::is_sep).to_ascii_uppercase().ends_with("\\IPC$");
+    let nr = NETRESOURCEW {
+        dwScope: 0,
+        dwType: if ipc { RESOURCETYPE_ANY } else { RESOURCETYPE_DISK },
+        dwDisplayType: 0,
+        dwUsage: 0,
+        lpLocalName: std::ptr::null_mut(),
+        lpRemoteName: w.as_ptr() as *mut u16,
+        lpComment: std::ptr::null_mut(),
+        lpProvider: std::ptr::null_mut(),
+    };
+    let rc = unsafe { WNetAddConnection3W(owner, &nr, std::ptr::null(), std::ptr::null(), CONNECT_INTERACTIVE | CONNECT_PROMPT) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(rc)
+    }
+}
+
+/// 讀取失敗的錯誤碼是不是「需要帳號密碼」（存取被拒、密碼錯誤、登入失敗、尚未驗證）
+pub fn needs_credentials(code: Option<u32>) -> bool {
+    matches!(code, Some(5 | 86 | 1326 | 1244))
+}
+
+/// 單一項目的清單資料（剛新增的資料夾、Windows「新增 ▸」剛建立的項目）。找不到時回傳 None。
+pub fn entry_of(path: &str) -> Option<Entry> {
+    let dir = paths::parent(path)?;
+    let w = wide(&paths::to_long_path(paths::trim_end_sep(path)));
+    let mut data: WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
+    let handle = unsafe { FindFirstFileExW(w.as_ptr(), FIND_EX_INFO_BASIC, &mut data, FIND_EX_SEARCH_NAME_MATCH, std::ptr::null(), 0) };
+    if handle == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    let f = Finder { handle, data, first: false };
+    Some(f.entry(&Arc::from(dir.as_str())))
+}
+
 pub fn read_dir(path: &str, show_hidden: bool, sort_col: usize, desc: bool, folders_on_top: bool, cancel: &AtomicBool) -> Result<Listing, FsError> {
     require_dir(path, false)?;
     list_dir(path, show_hidden, sort_col, desc, folders_on_top, cancel)
@@ -225,14 +355,14 @@ fn list_dir(path: &str, show_hidden: bool, sort_col: usize, desc: bool, folders_
     let dir: Arc<str> = Arc::from(path);
     let mut entries = Vec::new();
     let skipped = 0usize;
-    let Some(mut f) = Finder::open(path).map_err(error_text)? else {
+    let Some(mut f) = Finder::open(path).map_err(FsError::win32)? else {
         return Ok(Listing { entries, skipped });
     };
     let mut count = 0usize;
     loop {
         match f.next() {
             Next::End => break,
-            Next::Error(code) => return Err(FsError::Message(error_text(code))),
+            Next::Error(code) => return Err(FsError::win32(code)),
             Next::Item => {}
         }
         count += 1;
@@ -301,7 +431,10 @@ struct Shared<'a> {
     /// 停止：取消、達到上限或根目錄讀取失敗
     halt: AtomicBool,
     cancel: &'a AtomicBool,
-    needle: feather_core::namematch::Needle,
+    /// 檔名、副檔名、大小與日期的條件（建立項目之前先判斷，不符合的不配置記憶體、不佔結果上限）
+    filter: &'a Filter,
+    /// 篩選籤的類型（「文件」）：要看副檔名分類，建立項目後判斷，一樣在計入上限之前
+    category: Option<Category>,
     recursive: bool,
     show_hidden: bool,
     computer: bool,
@@ -423,34 +556,41 @@ fn search_dir(sh: &Shared, dir: &str, depth: u16, subdirs: &mut Vec<(String, u16
                 subdirs.push((paths::join(dir, &name), depth + 1));
             }
         }
-        // 直接比對 UTF-16 檔名；不符合的項目不配置任何記憶體
-        if sh.needle.matches(feather_core::namematch::until_nul(&finder.data.cFileName)) {
+        // 直接用 UTF-16 檔名、大小與修改時間判斷；不符合的項目不配置任何記憶體
+        if sh.filter.matches(feather_core::namematch::until_nul(&finder.data.cFileName), is_dir, finder.size(), finder.modified()) {
+            let arc = dir_arc.get_or_insert_with(|| Arc::from(dir)).clone();
+            let entry = finder.entry(&arc);
+            if sh.category.is_some_and(|c| !c.matches(&entry)) {
+                continue;
+            }
             // 只有真的還有下一筆符合時，才標示為「已達上限」。
             if sh.matched.fetch_add(1, Ordering::Relaxed) >= SEARCH_MAX_RESULTS {
                 sh.truncated.store(true, Ordering::Relaxed);
                 sh.halt.store(true, Ordering::Relaxed);
                 break;
             }
-            let arc = dir_arc.get_or_insert_with(|| Arc::from(dir)).clone();
-            found.push(finder.entry(&arc));
+            found.push(entry);
         }
     }
     sh.scanned.fetch_add(scanned % 256, Ordering::Relaxed);
 }
 
-/// 只比對檔名，多個執行緒同時列舉資料夾。Scanned 含隱藏項目；Skipped 計算無法讀取的資料夾。
+/// 只比對檔名（與大小、修改日期等屬性），多個執行緒同時列舉資料夾。Scanned 含隱藏項目；Skipped 計算無法讀取的資料夾。
 /// 目錄重新解析點一律不遞迴。結果每 128 筆或 100 毫秒分批回報（在呼叫端的執行緒上）。
+/// 沒有檔名時也可以搜尋，只要有其他條件（`category` 是篩選籤的類型，None 是不限）。
 pub fn search(
     scope: &SearchScope,
-    query: &str,
+    filter: &Filter,
+    category: Option<Category>,
     recursive: bool,
     show_hidden: bool,
     cancel: &AtomicBool,
     mut report: impl FnMut(Vec<Entry>, usize, usize),
 ) -> Result<SearchSummary, FsError> {
-    let Some(needle) = feather_core::namematch::Needle::new(query) else {
-        return Err(FsError::Message(tr!("請輸入要搜尋的檔案名稱。", "Enter a file name to search for.").into()));
-    };
+    let category = category.filter(|c| *c != Category::All);
+    if filter.is_unrestricted() && category.is_none() {
+        return Err(FsError::msg(tr!("請輸入要搜尋的檔案名稱，或先選篩選條件。", "Enter a file name to search for, or pick a filter first.")));
+    }
     let (roots, computer) = match scope {
         SearchScope::Folder(root) => {
             require_dir(root, true)?;
@@ -459,7 +599,7 @@ pub fn search(
         SearchScope::Computer => {
             let roots = computer_roots();
             if roots.is_empty() {
-                return Err(FsError::Message(tr!("找不到可以搜尋的磁碟。", "Can't find any drives to search.").into()));
+                return Err(FsError::msg(tr!("找不到可以搜尋的磁碟。", "Can't find any drives to search.")));
             }
             (roots, true)
         }
@@ -470,7 +610,8 @@ pub fn search(
         ready: std::sync::Condvar::new(),
         halt: AtomicBool::new(false),
         cancel,
-        needle,
+        filter,
+        category,
         recursive,
         show_hidden,
         computer,
@@ -516,7 +657,7 @@ pub fn search(
     let scanned = sh.scanned.load(Ordering::Relaxed);
     let skipped = sh.skipped.load(Ordering::Relaxed);
     if let Some(message) = sh.fatal.lock().ok().and_then(|mut f| f.take()) {
-        return Err(FsError::Message(message));
+        return Err(FsError::msg(message));
     }
     report(batch, scanned, skipped);
     if cancel.load(Ordering::Relaxed) {
@@ -542,13 +683,13 @@ pub fn child_folders(path: &str, show_hidden: bool, cancel: &AtomicBool) -> Resu
     require_dir(path, false)?;
     let mut folders = Vec::new();
     let mut truncated = false;
-    let Some(mut f) = Finder::open(path).map_err(error_text)? else {
+    let Some(mut f) = Finder::open(path).map_err(FsError::win32)? else {
         return Ok(FolderListing { folders, truncated });
     };
     loop {
         match f.next() {
             Next::End => break,
-            Next::Error(code) => return Err(FsError::Message(error_text(code))),
+            Next::Error(code) => return Err(FsError::win32(code)),
             Next::Item => {}
         }
         if cancel.load(Ordering::Relaxed) {
@@ -584,17 +725,24 @@ pub struct MenuFolders {
 /// 麵包屑的子資料夾選單：`path` 底下的資料夾（不含檔案）。隱藏項目依清單的顯示設定，
 /// 順序與清單相同（`sort_col`、`desc` 是分頁目前的排序）。在背景執行緒呼叫。
 pub fn menu_folders(path: &str, show_hidden: bool, sort_col: usize, desc: bool, cancel: &AtomicBool) -> Result<MenuFolders, FsError> {
+    // 麵包屑的電腦那一段（`\\nas`）：列出它分享的資料夾
+    if let Some(server) = paths::unc_server(path) {
+        let mut folders = list_shares(server, show_hidden, sort_col, desc, true)?.entries;
+        let truncated = folders.len() > MENU_MAX_FOLDERS;
+        folders.truncate(MENU_MAX_FOLDERS);
+        return Ok(MenuFolders { folders, truncated });
+    }
     require_dir(path, false)?;
     let dir: Arc<str> = Arc::from(path);
     let mut folders = Vec::new();
     let mut truncated = false;
-    let Some(mut f) = Finder::open(path).map_err(error_text)? else {
+    let Some(mut f) = Finder::open(path).map_err(FsError::win32)? else {
         return Ok(MenuFolders { folders, truncated });
     };
     loop {
         match f.next() {
             Next::End => break,
-            Next::Error(code) => return Err(FsError::Message(error_text(code))),
+            Next::Error(code) => return Err(FsError::win32(code)),
             Next::Item => {}
         }
         if cancel.load(Ordering::Relaxed) {

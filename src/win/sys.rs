@@ -122,6 +122,55 @@ pub struct MENUITEMINFOW {
     pub hbmpItem: HBITMAP,
 }
 
+/// 捲軸的範圍、一頁的大小與位置（SetScrollInfo／GetScrollInfo）
+#[repr(C)]
+pub struct SCROLLINFO {
+    pub cbSize: u32,
+    pub fMask: u32,
+    pub nMin: i32,
+    pub nMax: i32,
+    pub nPage: u32,
+    pub nPos: i32,
+    pub nTrackPos: i32,
+}
+
+/// 自己畫的選單項目：系統問大小（WM_MEASUREITEM）
+#[repr(C)]
+pub struct MEASUREITEMSTRUCT {
+    pub CtlType: u32,
+    pub CtlID: u32,
+    pub itemID: u32,
+    pub itemWidth: u32,
+    pub itemHeight: u32,
+    pub itemData: usize,
+}
+
+/// 自己畫的選單項目：要畫的時候（WM_DRAWITEM）
+#[repr(C)]
+pub struct DRAWITEMSTRUCT {
+    pub CtlType: u32,
+    pub CtlID: u32,
+    pub itemID: u32,
+    pub itemAction: u32,
+    pub itemState: u32,
+    pub hwndItem: HWND,
+    pub hDC: HDC,
+    pub rcItem: RECT,
+    pub itemData: usize,
+}
+
+/// 選單的背景等設定（SetMenuInfo）
+#[repr(C)]
+pub struct MENUINFO {
+    pub cbSize: u32,
+    pub fMask: u32,
+    pub dwStyle: u32,
+    pub cyMax: u32,
+    pub hbrBack: HBRUSH,
+    pub dwContextHelpID: u32,
+    pub dwMenuData: usize,
+}
+
 /// TrackPopupMenuEx 的參數：選單不要蓋住的範圍（例如按鈕本身）
 #[repr(C)]
 pub struct TPMPARAMS {
@@ -782,6 +831,7 @@ pub const WM_SETCURSOR: u32 = 0x0020;
 pub const WM_MOUSEACTIVATE: u32 = 0x0021;
 pub const WM_GETMINMAXINFO: u32 = 0x0024;
 pub const WM_SETFONT: u32 = 0x0030;
+pub const WM_GETFONT: u32 = 0x0031;
 pub const WM_COPYDATA: u32 = 0x004A;
 pub const WM_NOTIFY: u32 = 0x004E;
 pub const WM_CONTEXTMENU: u32 = 0x007B;
@@ -950,6 +1000,15 @@ pub const MIIM_FTYPE: u32 = 0x0100;
 pub const MFT_STRING: u32 = 0x0000;
 pub const MFT_RADIOCHECK: u32 = 0x0200;
 pub const MFT_SEPARATOR: u32 = 0x0800;
+pub const MFT_OWNERDRAW: u32 = 0x0100;
+pub const MIIM_DATA: u32 = 0x0020;
+pub const MIM_BACKGROUND: u32 = 0x0002;
+pub const MIM_APPLYTOSUBMENUS: u32 = 0x8000_0000;
+pub const ODT_MENU: u32 = 1;
+pub const ODS_SELECTED: u32 = 0x0001;
+pub const ODS_GRAYED: u32 = 0x0002;
+pub const ODS_DISABLED: u32 = 0x0004;
+pub const SM_CXMENUCHECK: i32 = 71;
 pub const MFS_GRAYED: u32 = 0x0003;
 pub const MFS_CHECKED: u32 = 0x0008;
 pub const TPM_RETURNCMD: u32 = 0x0100;
@@ -963,6 +1022,9 @@ pub const WM_DRAWITEM: u32 = 0x002B;
 pub const WM_MEASUREITEM: u32 = 0x002C;
 pub const WM_INITMENUPOPUP: u32 = 0x0117;
 pub const WM_MENUCHAR: u32 = 0x0120;
+pub const MF_HILITE: u32 = 0x0080;
+/// WM_MENUCHAR 的回覆：選取（反白）第 N 個項目
+pub const MNC_SELECT: isize = 3;
 pub const CMF_NORMAL: u32 = 0x0;
 pub const CMF_ITEMMENU: u32 = 0x80;
 pub const CMF_EXTENDEDVERBS: u32 = 0x100;
@@ -978,6 +1040,7 @@ pub const IDC_ARROW: usize = 32512;
 pub const IDC_IBEAM: usize = 32513;
 pub const IDC_SIZEWE: usize = 32644;
 pub const IDC_HAND: usize = 32649;
+pub const IDC_NO: usize = 32648;
 
 pub const SM_CXSMICON: i32 = 49;
 /// 按住滑鼠移動多遠才算拖曳
@@ -1026,6 +1089,7 @@ pub const DWMWCP_ROUNDSMALL: u32 = 3;
 pub const VK_END: u32 = 0x23;
 pub const VK_HOME: u32 = 0x24;
 /// 標題列、邊框上按下滑鼠（拖曳標題列、縮放視窗之前）
+pub const WM_NCACTIVATE: u32 = 0x0086;
 pub const WM_NCLBUTTONDOWN: u32 = 0x00A1;
 pub const WM_NCRBUTTONDOWN: u32 = 0x00A4;
 pub const WM_NCMBUTTONDOWN: u32 = 0x00A7;
@@ -1048,9 +1112,25 @@ pub const CLSCTX_INPROC_SERVER: u32 = 1;
 pub const MK_SHIFT: u32 = 0x4;
 pub const MK_CONTROL: u32 = 0x8;
 pub const MK_ALT: u32 = 0x20;
+pub const WM_HSCROLL: u32 = 0x0114;
 pub const WM_VSCROLL: u32 = 0x0115;
 pub const SB_LINEUP: usize = 0;
 pub const SB_LINEDOWN: usize = 1;
+pub const SB_PAGEUP: usize = 2;
+pub const SB_PAGEDOWN: usize = 3;
+pub const SB_THUMBPOSITION: usize = 4;
+pub const SB_THUMBTRACK: usize = 5;
+pub const SB_TOP: usize = 6;
+pub const SB_BOTTOM: usize = 7;
+/// SetScrollInfo 的 nBar：視窗自己的垂直捲軸
+pub const SB_VERT: i32 = 1;
+pub const SIF_RANGE: u32 = 0x1;
+pub const SIF_PAGE: u32 = 0x2;
+pub const SIF_POS: u32 = 0x4;
+pub const SIF_TRACKPOS: u32 = 0x10;
+/// 不需要捲動時捲軸停用（不隱藏）：內容區的寬度不會跟著變
+pub const SIF_DISABLENOSCROLL: u32 = 0x8;
+pub const VK_F1: u32 = 0x70;
 pub const LVIS_DROPHILITED: u32 = 0x8;
 pub const TVGN_DROPHILITE: usize = 0x8;
 pub const TVIS_DROPHILITED: u32 = 0x8;
@@ -1066,6 +1146,8 @@ pub const FOF_NOCONFIRMATION: u16 = 0x0010;
 pub const FOF_ALLOWUNDO: u16 = 0x0040;
 pub const FOF_NOCONFIRMMKDIR: u16 = 0x0200;
 pub const FOF_WANTNUKEWARNING: u16 = 0x4000;
+/// SHGetSetSettings：SHELLSTATE 的 fNoConfirmRecycle（第一個 DWORD 的第 2 位元，見 shlobj_core.h）
+pub const SSF_NOCONFIRMRECYCLE: u32 = 0x0000_8000;
 
 pub const SHGFI_SMALLICON: u32 = 0x0001;
 pub const SHGFI_USEFILEATTRIBUTES: u32 = 0x0010;
@@ -1193,6 +1275,17 @@ pub const ICC_TREEVIEW_CLASSES: u32 = 0x2;
 pub const ICC_BAR_CLASSES: u32 = 0x4;
 pub const ICC_TAB_CLASSES: u32 = 0x8;
 pub const ICC_STANDARD_CLASSES: u32 = 0x4000;
+pub const ICC_DATE_CLASSES: u32 = 0x100;
+/// 一週的第一天：「0」是星期一……「6」是星期日
+pub const LOCALE_IFIRSTDAYOFWEEK: u32 = 0x100C;
+pub const DATETIMEPICK_CLASS: &str = "SysDateTimePick32";
+pub const DTS_SHORTDATEFORMAT: u32 = 0x0;
+pub const DTS_SHOWNONE: u32 = 0x2;
+pub const DTM_GETSYSTEMTIME: u32 = 0x1001;
+pub const DTM_SETSYSTEMTIME: u32 = 0x1002;
+pub const DTM_SETMCCOLOR: u32 = 0x1006;
+pub const GDT_VALID: usize = 0;
+pub const GDT_NONE: usize = 1;
 
 pub const ILC_MASK: u32 = 0x1;
 pub const ILC_COLOR32: u32 = 0x20;
@@ -1239,6 +1332,7 @@ pub const LVM_SCROLL: u32 = 0x1014;
 pub const LVM_REDRAWITEMS: u32 = 0x1015;
 pub const LVM_GETEDITCONTROL: u32 = 0x1018;
 pub const LVM_GETCOLUMNWIDTH: u32 = 0x101D;
+pub const LVM_GETSUBITEMRECT: u32 = 0x1038;
 pub const LVM_SETCOLUMNWIDTH: u32 = 0x101E;
 pub const LVM_GETHEADER: u32 = 0x101F;
 pub const LVM_SETTEXTCOLOR: u32 = 0x1024;
@@ -1411,6 +1505,12 @@ pub const TTS_ALWAYSTIP: u32 = 0x01;
 pub const TTS_NOPREFIX: u32 = 0x02;
 pub const TTF_IDISHWND: u32 = 0x0001;
 pub const TTF_SUBCLASS: u32 = 0x0010;
+pub const TTF_TRACK: u32 = 0x0020;
+pub const TTF_ABSOLUTE: u32 = 0x0080;
+pub const TTF_TRANSPARENT: u32 = 0x0100;
+pub const TTM_TRACKACTIVATE: u32 = WM_USER + 17;
+pub const TTM_TRACKPOSITION: u32 = WM_USER + 18;
+pub const TTM_GETBUBBLESIZE: u32 = WM_USER + 30;
 pub const TTM_SETMAXTIPWIDTH: u32 = WM_USER + 24;
 /// 立刻收起正在顯示的提示
 pub const TTM_POP: u32 = WM_USER + 28;
@@ -1424,6 +1524,22 @@ pub const WAIT_OBJECT_0: u32 = 0;
 pub const DBT_DEVICEREMOVECOMPLETE: usize = 0x8004;
 
 // ---------------------------------------------------------------- 函式
+
+#[repr(C)]
+pub struct OSVERSIONINFOW {
+    pub dwOSVersionInfoSize: u32,
+    pub dwMajorVersion: u32,
+    pub dwMinorVersion: u32,
+    pub dwBuildNumber: u32,
+    pub dwPlatformId: u32,
+    pub szCSDVersion: [u16; 128],
+}
+
+#[cfg_attr(windows, link(name = "ntdll", kind = "raw-dylib"))]
+extern "system" {
+    /// 不受相容性資訊清單影響的真正版本（GetVersionEx 沒有資訊清單時會說是 Windows 8）
+    pub fn RtlGetVersion(info: *mut OSVERSIONINFOW) -> i32;
+}
 
 #[cfg_attr(windows, link(name = "kernel32", kind = "raw-dylib"))]
 extern "system" {
@@ -1477,6 +1593,9 @@ extern "system" {
     pub fn Process32NextW(snapshot: HANDLE, entry: *mut PROCESSENTRY32W) -> BOOL;
     pub fn GetModuleFileNameW(module: HMODULE, buf: *mut u16, len: u32) -> u32;
     pub fn GetLocalTime(st: *mut SYSTEMTIME);
+    pub fn TzSpecificLocalTimeToSystemTime(tz: *const c_void, local: *const SYSTEMTIME, utc: *mut SYSTEMTIME) -> BOOL;
+    pub fn SystemTimeToFileTime(st: *const SYSTEMTIME, ft: *mut FILETIME) -> BOOL;
+    pub fn GetLocaleInfoEx(locale: *const u16, lctype: u32, data: *mut u16, len: i32) -> i32;
     pub fn MultiByteToWideChar(code_page: u32, flags: u32, src: *const u8, src_len: i32, dst: *mut u16, dst_len: i32) -> i32;
     pub fn QueryPerformanceCounter(count: *mut i64) -> BOOL;
     pub fn QueryPerformanceFrequency(freq: *mut i64) -> BOOL;
@@ -1551,6 +1670,7 @@ extern "system" {
     pub fn IsWindowVisible(hwnd: HWND) -> BOOL;
     pub fn IsWindow(hwnd: HWND) -> BOOL;
     pub fn IsChild(parent: HWND, hwnd: HWND) -> BOOL;
+    pub fn IsZoomed(hwnd: HWND) -> BOOL;
     pub fn IsIconic(hwnd: HWND) -> BOOL;
     pub fn GetParent(hwnd: HWND) -> HWND;
     pub fn GetAncestor(hwnd: HWND, flags: u32) -> HWND;
@@ -1581,6 +1701,8 @@ extern "system" {
     pub fn AllowSetForegroundWindow(pid: u32) -> BOOL;
     pub fn SetForegroundWindow(hwnd: HWND) -> BOOL;
     pub fn GetForegroundWindow() -> HWND;
+    pub fn GetActiveWindow() -> HWND;
+    pub fn EnumThreadWindows(thread: u32, func: unsafe extern "system" fn(HWND, LPARAM) -> BOOL, lparam: LPARAM) -> BOOL;
     pub fn WindowFromPoint(pt: POINT) -> HWND;
     pub fn FlashWindow(hwnd: HWND, invert: BOOL) -> BOOL;
     pub fn SetTimer(hwnd: HWND, id: usize, ms: u32, func: *const c_void) -> usize;
@@ -1596,8 +1718,12 @@ extern "system" {
     pub fn TrackPopupMenuEx(menu: HMENU, flags: u32, x: i32, y: i32, hwnd: HWND, params: *const c_void) -> BOOL;
     pub fn InsertMenuItemW(menu: HMENU, item: u32, by_position: BOOL, info: *const MENUITEMINFOW) -> BOOL;
     pub fn GetMenuItemCount(menu: HMENU) -> i32;
+    pub fn SetMenuInfo(menu: HMENU, info: *const MENUINFO) -> BOOL;
+    pub fn SetScrollInfo(hwnd: HWND, bar: i32, info: *const SCROLLINFO, redraw: BOOL) -> i32;
+    pub fn GetScrollInfo(hwnd: HWND, bar: i32, info: *mut SCROLLINFO) -> BOOL;
     pub fn GetMenuItemID(menu: HMENU, pos: i32) -> u32;
     pub fn GetMenuState(menu: HMENU, id: u32, flags: u32) -> u32;
+    pub fn GetMenuItemInfoW(menu: HMENU, item: u32, by_position: BOOL, info: *mut MENUITEMINFOW) -> BOOL;
     pub fn DeleteMenu(menu: HMENU, position: u32, flags: u32) -> BOOL;
     pub fn SetMenuDefaultItem(menu: HMENU, item: u32, by_position: u32) -> BOOL;
     pub fn DestroyMenu(menu: HMENU) -> BOOL;
@@ -1674,6 +1800,15 @@ extern "system" {
     pub fn SaveDC(hdc: HDC) -> i32;
     pub fn RestoreDC(hdc: HDC, saved: i32) -> BOOL;
     pub fn IntersectClipRect(hdc: HDC, left: i32, top: i32, right: i32, bottom: i32) -> i32;
+    pub fn ExcludeClipRect(hdc: HDC, left: i32, top: i32, right: i32, bottom: i32) -> i32;
+    pub fn BeginPath(hdc: HDC) -> BOOL;
+    pub fn EndPath(hdc: HDC) -> BOOL;
+    pub fn CloseFigure(hdc: HDC) -> BOOL;
+    pub fn FillPath(hdc: HDC) -> BOOL;
+    pub fn StrokePath(hdc: HDC) -> BOOL;
+    pub fn MoveToEx(hdc: HDC, x: i32, y: i32, old: *mut POINT) -> BOOL;
+    pub fn LineTo(hdc: HDC, x: i32, y: i32) -> BOOL;
+    pub fn PolyBezierTo(hdc: HDC, points: *const POINT, count: u32) -> BOOL;
 }
 
 #[cfg_attr(windows, link(name = "shell32", kind = "raw-dylib"))]
@@ -1683,6 +1818,8 @@ extern "system" {
     pub fn ILCombine(parent: *const c_void, child: *const c_void) -> *mut c_void;
     pub fn SHGetPathFromIDListEx(pidl: *const c_void, path: *mut u16, cch: u32, flags: u32) -> BOOL;
     pub fn SHFileOperationW(op: *mut SHFILEOPSTRUCTW) -> i32;
+    /// 讀寫殼層設定（SHELLSTATE）。這裡只讀「刪除時顯示確認」（SSF_NOCONFIRMRECYCLE）
+    pub fn SHGetSetSettings(state: *mut c_void, mask: u32, set: BOOL);
     pub fn SHGetFileInfoW(path: *const u16, attrs: u32, info: *mut SHFILEINFOW, size: u32, flags: u32) -> usize;
     pub fn SHGetStockIconInfo(id: i32, flags: u32, info: *mut SHSTOCKICONINFO) -> HRESULT;
     pub fn SHGetKnownFolderPath(id: *const GUID, flags: u32, token: HANDLE, path: *mut *mut u16) -> HRESULT;
@@ -1739,6 +1876,45 @@ extern "system" {
 #[cfg_attr(windows, link(name = "comdlg32", kind = "raw-dylib"))]
 extern "system" {
     pub fn ChooseColorW(cc: *mut CHOOSECOLORW) -> BOOL;
+}
+
+/// NetShareEnum level 1
+#[repr(C)]
+pub struct SHARE_INFO_1 {
+    pub shi1_netname: *mut u16,
+    pub shi1_type: u32,
+    pub shi1_remark: *mut u16,
+}
+pub const STYPE_DISKTREE: u32 = 0;
+pub const STYPE_SPECIAL: u32 = 0x8000_0000;
+pub const MAX_PREFERRED_LENGTH: u32 = u32::MAX;
+pub const ERROR_MORE_DATA: u32 = 234;
+
+#[cfg_attr(windows, link(name = "netapi32", kind = "raw-dylib"))]
+extern "system" {
+    pub fn NetShareEnum(server: *const u16, level: u32, buf: *mut *mut u8, prefmaxlen: u32, entriesread: *mut u32, totalentries: *mut u32, resume: *mut u32) -> u32;
+    pub fn NetApiBufferFree(buf: *mut c_void) -> u32;
+}
+
+#[repr(C)]
+pub struct NETRESOURCEW {
+    pub dwScope: u32,
+    pub dwType: u32,
+    pub dwDisplayType: u32,
+    pub dwUsage: u32,
+    pub lpLocalName: *mut u16,
+    pub lpRemoteName: *mut u16,
+    pub lpComment: *mut u16,
+    pub lpProvider: *mut u16,
+}
+pub const RESOURCETYPE_ANY: u32 = 0;
+pub const RESOURCETYPE_DISK: u32 = 1;
+pub const CONNECT_INTERACTIVE: u32 = 0x0000_0008;
+pub const CONNECT_PROMPT: u32 = 0x0000_0010;
+
+#[cfg_attr(windows, link(name = "mpr", kind = "raw-dylib"))]
+extern "system" {
+    pub fn WNetAddConnection3W(owner: HWND, resource: *const NETRESOURCEW, password: *const u16, user: *const u16, flags: u32) -> u32;
 }
 
 #[cfg_attr(windows, link(name = "advapi32", kind = "raw-dylib"))]
@@ -1900,6 +2076,12 @@ mod layout_tests {
         assert_eq!(size_of::<TOOLINFOW>(), 72);
         assert_eq!(size_of::<WIN32_FIND_DATAW>(), 592);
         assert_eq!(size_of::<SHFILEOPSTRUCTW>(), 56);
+        assert_eq!(size_of::<MEASUREITEMSTRUCT>(), 32);
+        assert_eq!(size_of::<DRAWITEMSTRUCT>(), 64);
+        assert_eq!(std::mem::offset_of!(DRAWITEMSTRUCT, rcItem), 40);
+        assert_eq!(size_of::<MENUINFO>(), 40);
+        assert_eq!(size_of::<SCROLLINFO>(), 28);
+        assert_eq!(size_of::<MENUITEMINFOW>(), 80);
         assert_eq!(size_of::<SHFILEINFOW>(), 696);
         assert_eq!(size_of::<SHSTOCKICONINFO>(), 544);
         assert_eq!(size_of::<SHELLEXECUTEINFOW>(), 112);

@@ -18,6 +18,52 @@ pub fn is_unc(p: &str) -> bool {
     b.len() >= 2 && is_sep(b[0] as char) && is_sep(b[1] as char) && !is_extended(p)
 }
 
+/// 只有電腦名稱、沒有共用資料夾名稱的網路路徑（`\\nas`、`\\nas\`、`\\192.168.1.10`、`//nas`、
+/// `\\?\UNC\nas`）：回傳電腦名稱（`nas`）。這一層要列出那台電腦的共用資料夾，不是真的資料夾。
+/// 後面有共用資料夾名稱（`\\nas\share`）、裝置路徑（`\\.\`、`\\?\C:\`）時回傳 None。
+pub fn unc_server(p: &str) -> Option<&str> {
+    let rest = if p.len() >= 8 && p.is_char_boundary(8) && normalize_separators(&p[..8]).eq_ignore_ascii_case("\\\\?\\UNC\\") {
+        &p[8..]
+    } else {
+        let b = p.as_bytes();
+        if b.len() < 3 || !is_sep(b[0] as char) || !is_sep(b[1] as char) {
+            return None;
+        }
+        &p[2..]
+    };
+    let rest = rest.trim_end_matches(is_sep);
+    if rest.is_empty() || rest.contains(is_sep) || rest == "?" || rest == "." {
+        return None;
+    }
+    Some(rest)
+}
+
+/// 網路路徑的共用資料夾根目錄（`\\nas\share\sub` → `\\nas\share`），連線、登入時用。
+/// 只有電腦名稱時回傳 None。
+pub fn unc_share_root(p: &str) -> Option<String> {
+    let p = normalize_separators(p);
+    let p = p.strip_prefix("\\\\?\\UNC\\").map(|r| format!("\\\\{r}")).unwrap_or(p);
+    if !is_unc(&p) || is_extended(&p) {
+        return None;
+    }
+    let rl = root_len(&p);
+    (rl > 2).then(|| trim_end_sep(&p[..rl]).to_string())
+}
+
+/// 「上一層」要去的地方：一般是 [`parent`]；在共用資料夾的根目錄（`\\nas\share`）時是那台電腦的共用資料夾清單（`\\nas`）。
+pub fn up_target(p: &str) -> Option<String> {
+    parent(p).or_else(|| {
+        let root = unc_share_root(p).filter(|r| same_path(r, p))?;
+        let server = &root[2..root[2..].find(is_sep)? + 2];
+        Some(format!("\\\\{server}"))
+    })
+}
+
+/// 是不是共用資料夾本身（`\\nas\share`）：在共用資料夾清單裡那一列，不能刪除、移動、重新命名
+pub fn is_share_root(p: &str) -> bool {
+    unc_share_root(p).is_some_and(|r| same_path(&r, p))
+}
+
 /// 磁碟機路徑（`C:\...`、`\\?\C:\...`）的根目錄（`C:\`，給 GetDriveTypeW 用）；
 /// 網路共用、裝置路徑、不完整的路徑回傳 None。
 pub fn drive_root(p: &str) -> Option<String> {
@@ -194,6 +240,10 @@ pub fn same_path(a: &str, b: &str) -> bool {
 /// 拖放目標檢查：不能放進被拖曳的項目本身或它的子資料夾，
 /// 也不必放回它們原本所在的資料夾（全部都已經在那裡）。
 pub fn drop_target_ok(target: &str, sources: &[String]) -> bool {
+    // 只有電腦名稱的那一層（`\\nas`）是共用資料夾清單，不是真的資料夾
+    if unc_server(target).is_some() {
+        return false;
+    }
     if sources.iter().any(|s| is_same_or_descendant(s, target)) {
         return false;
     }
@@ -318,7 +368,7 @@ pub fn extension_lower(name: &str) -> String {
 
 /// 麵包屑：把路徑拆成（顯示名稱, 完整路徑）。
 /// `C:\Users\a` → [("C:", "C:\"), ("Users", "C:\Users"), ("a", "C:\Users\a")]；
-/// UNC 的第一段是整個 `\\server\share`。
+/// 網路路徑分成電腦（`\\nas`，點了列出它的共用資料夾）與共用資料夾（`share`）兩段。
 pub fn segments(path: &str) -> Vec<(String, String)> {
     let p = normalize_separators(path);
     let p = trim_end_sep(&p);
@@ -327,12 +377,24 @@ pub fn segments(path: &str) -> Vec<(String, String)> {
         return if p.is_empty() { vec![] } else { vec![(p.to_string(), p.to_string())] };
     }
     let root = &p[..rl];
-    let (label, mut current) = if root.len() <= 3 && root.as_bytes().get(1) == Some(&b':') {
-        (root[..2].to_string(), format!("{}\\", &root[..2]))
+    let mut out = Vec::new();
+    let mut current = if root.len() <= 3 && root.as_bytes().get(1) == Some(&b':') {
+        let current = format!("{}\\", &root[..2]);
+        out.push((root[..2].to_string(), current.clone()));
+        current
     } else {
-        (trim_end_sep(root).to_string(), trim_end_sep(root).to_string())
+        let root = trim_end_sep(root);
+        // \\server\share：電腦一段、共用資料夾一段
+        match root[2..].find(is_sep) {
+            Some(i) if root.starts_with("\\\\") && !is_extended(root) => {
+                let server = &root[..2 + i];
+                out.push((server.to_string(), server.to_string()));
+                out.push((root[2 + i + 1..].to_string(), root.to_string()));
+            }
+            _ => out.push((root.to_string(), root.to_string())),
+        }
+        root.to_string()
     };
-    let mut out = vec![(label, current.clone())];
     for part in p[rl..].split(is_sep).filter(|c| !c.is_empty()) {
         current = join(&current, part);
         out.push((part.to_string(), current.clone()));
@@ -446,6 +508,36 @@ mod tests {
     }
 
     #[test]
+    fn server_only_paths() {
+        for p in ["\\\\nas", "\\\\nas\\", "//nas", "//nas/", "\\\\?\\UNC\\nas", "\\\\?\\unc\\nas\\"] {
+            assert_eq!(unc_server(p), Some("nas"), "{p}");
+        }
+        assert_eq!(unc_server("\\\\192.168.1.10"), Some("192.168.1.10"));
+        for p in ["\\\\nas\\share", "//nas/share/x", "\\\\?\\UNC\\nas\\share", "C:\\", "\\\\?\\C:\\", "\\\\.\\pipe", "\\\\", "\\\\?\\", "nas", ""] {
+            assert_eq!(unc_server(p), None, "{p}");
+        }
+        assert_eq!(unc_share_root("\\\\nas\\share\\sub\\x").as_deref(), Some("\\\\nas\\share"));
+        assert_eq!(unc_share_root("//nas/share").as_deref(), Some("\\\\nas\\share"));
+        assert_eq!(unc_share_root("\\\\?\\UNC\\nas\\share\\a").as_deref(), Some("\\\\nas\\share"));
+        assert_eq!(unc_share_root("\\\\nas"), None);
+        assert_eq!(unc_share_root("C:\\x"), None);
+        assert!(is_share_root("\\\\nas\\share"));
+        assert!(is_share_root("\\\\NAS\\Share\\"));
+        assert!(!is_share_root("\\\\nas\\share\\sub"));
+        assert!(!is_share_root("\\\\nas"));
+        assert_eq!(up_target("\\\\nas\\share").as_deref(), Some("\\\\nas"));
+        assert_eq!(up_target("\\\\nas\\share\\a").as_deref(), Some("\\\\nas\\share"));
+        assert_eq!(up_target("\\\\nas"), None);
+        assert_eq!(up_target("C:\\"), None);
+        // 共用資料夾清單的分頁標題是電腦名稱；共用資料夾根目錄照舊是整個 \\nas\share
+        assert_eq!(tab_title("\\\\nas"), "nas");
+        assert_eq!(tab_title("\\\\nas\\share"), "\\\\nas\\share");
+        // 共用資料夾清單那一層不接受拖放；共用資料夾本身可以
+        assert!(!drop_target_ok("\\\\nas", &["C:\\a.txt".to_string()]));
+        assert!(drop_target_ok("\\\\nas\\share", &["C:\\a.txt".to_string()]));
+    }
+
+    #[test]
     fn breadcrumb_segments() {
         let v = segments("C:\\Users\\pity0\\桌面\\");
         assert_eq!(v.len(), 4);
@@ -453,9 +545,12 @@ mod tests {
         assert_eq!(v[1], ("Users".to_string(), "C:\\Users".to_string()));
         assert_eq!(v[3], ("桌面".to_string(), "C:\\Users\\pity0\\桌面".to_string()));
         assert_eq!(segments("D:\\"), vec![("D:".to_string(), "D:\\".to_string())]);
+        // 網路路徑：電腦、共用資料夾、子資料夾各一段（點電腦那一段列出它的共用資料夾）
         let u = segments("\\\\nas\\share\\photos");
-        assert_eq!(u[0], ("\\\\nas\\share".to_string(), "\\\\nas\\share".to_string()));
-        assert_eq!(u[1], ("photos".to_string(), "\\\\nas\\share\\photos".to_string()));
+        assert_eq!(u[0], ("\\\\nas".to_string(), "\\\\nas".to_string()));
+        assert_eq!(u[1], ("share".to_string(), "\\\\nas\\share".to_string()));
+        assert_eq!(u[2], ("photos".to_string(), "\\\\nas\\share\\photos".to_string()));
+        assert_eq!(segments("\\\\nas"), vec![("\\\\nas".to_string(), "\\\\nas".to_string())]);
         assert!(segments("").is_empty());
     }
 

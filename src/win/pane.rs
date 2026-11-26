@@ -16,7 +16,6 @@ use feather_core::entry::Entry;
 use feather_core::folderviews;
 use feather_core::format::format_size;
 use feather_core::paths;
-use feather_core::sorting;
 use feather_core::typeahead;
 use feather_core::view::{self, ViewMode};
 use feather_core::workspace::{Side, TabId};
@@ -32,28 +31,32 @@ const COLUMNS: [(&str, &str, i32, i32); 5] = [
 
 /// 名稱欄最寬多少（邏輯像素，含左邊的縮排）；再寬的空間留白
 const NAME_MAX: i32 = 320;
-/// 最後一欄右邊至少留多少空白（邏輯像素）
+/// 最後一欄右邊至少留多少空白（邏輯像素）；平常留清單寬度的 1/6（見 [`column_widths`]）
 const RIGHT_BLANK: i32 = 32;
 /// 名稱欄至少要有多寬（邏輯像素，跟著文字大小放大）；不夠時其他欄讓位
 const NAME_MIN: i32 = 180;
+/// 所在位置欄的寬度（邏輯像素，跟著文字大小放大）。路徑通常比這長：被截斷時滑鼠停上去顯示完整位置
+const LOCATION_WANT: i32 = 160;
 /// 所在位置欄窄於這個寬度就不顯示（邏輯像素，跟著文字大小放大）
-const LOCATION_MIN: i32 = 160;
+const LOCATION_MIN: i32 = 110;
 
 /// 詳細資料各欄的寬度（實際像素，依欄位順序：名稱、大小、類型、修改日期、所在位置）。
 /// `s` 依 DPI 縮放，`st` 再乘上文字大小。名稱欄優先：放不下時所在位置欄先縮窄，
 /// 搜尋時（所在位置有用）再拿掉類型欄換位置，最後才拿掉所在位置；名稱仍不夠寬就拿掉類型欄。
-/// 名稱欄不撐滿整個寬度：右邊留下沒有資訊的空白（同檔案總管），選取的底色只到最後一欄，
-/// 可以從那裡框選、點一下取消選取（見 marquee.rs）。
+/// 欄位不撐滿整個寬度：右邊留下約清單寬度 1/6 的空白（同檔案總管），選取的底色只到最後一欄，
+/// 可以從那裡框選、點一下取消選取（見 marquee.rs）。名稱欄不夠 NAME_MIN 時才吃掉這段空白（最少留 RIGHT_BLANK）。
 fn column_widths(avail: i32, search: bool, s: impl Fn(i32) -> i32, st: impl Fn(i32) -> i32) -> [i32; 5] {
     let wide_mode = avail >= st(430);
     let size = if wide_mode { st(78) } else { st(62) };
     let date = if wide_mode { st(140) } else { st(112) };
     let kind_full = if wide_mode { st(118) } else { 0 };
-    let fixed = size + date + s(RIGHT_BLANK);
+    let blank_min = s(RIGHT_BLANK);
+    let blank = (avail / 6).max(blank_min);
+    let fixed = size + date + blank;
     // 名稱欄保留 NAME_MIN 之後，還剩多少給所在位置
     let room = |kind: i32| avail - fixed - kind - st(NAME_MIN);
     let want_location = (search && avail >= st(600)) || avail >= st(800);
-    let wanted = st(280).min(avail / 3);
+    let wanted = st(LOCATION_WANT);
     let (kind, location) = if !want_location {
         (kind_full, 0)
     } else if room(kind_full) >= st(LOCATION_MIN) {
@@ -64,7 +67,8 @@ fn column_widths(avail: i32, search: bool, s: impl Fn(i32) -> i32, st: impl Fn(i
         (kind_full, 0)
     };
     let kind = if room(kind) < location { 0 } else { kind };
-    let name = (avail - fixed - kind - location).min(st(NAME_MAX)).max(s(80));
+    let others = size + date + kind + location;
+    let name = (avail - others - blank).max((avail - others - blank_min).min(st(NAME_MIN))).min(st(NAME_MAX)).max(s(80));
     [name, size, kind, date, location]
 }
 
@@ -82,6 +86,14 @@ fn tile_columns(mode: ViewMode, is_dir: bool) -> &'static [u32] {
         (ViewMode::Content, true) => &[2, 3],
         _ => &[],
     }
+}
+
+/// 只選取第 `index` 列（也是焦點），並捲到看得見。
+pub(super) fn select_only(list: HWND, index: usize) {
+    set_item_state(list, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+    set_item_state(list, index as isize, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+    send(list, LVM_SETSELECTIONMARK, 0, index as LPARAM);
+    send(list, LVM_ENSUREVISIBLE, index, 0);
 }
 
 fn set_item_state(list: HWND, index: isize, state: u32, mask: u32) {
@@ -313,6 +325,10 @@ impl App {
         self.refresh_list(side, true);
         // 背景分頁不掃描：設定變更或檔案作業後標記為過期，切回時才重新讀取。
         if let Some(id) = new_id {
+            // 隱藏期間顯示的資料夾被刪除或搬走（見 follow_moved_or_deleted）：說明改顯示哪裡
+            if let Some(note) = self.tabs.get_mut(&id).and_then(|t| t.notice.take()) {
+                self.set_footer(note);
+            }
             // 還原的分頁：第一次顯示時才讀取
             self.load_restored(id);
             if self.tabs.get(&id).is_some_and(|t| t.stale && !t.working() && !t.search_mode) {
@@ -325,6 +341,7 @@ impl App {
 
     /// 同步清單筆數；reset 時重新套用選取與捲動位置。
     pub(super) fn refresh_list(&mut self, side: Side, reset: bool) {
+        self.hide_location_tip();
         self.cancel_marquee(side);
         let list = self.lists[side.index()];
         let Some(id) = self.bound[side.index()] else {
@@ -502,7 +519,7 @@ impl App {
         let header = header_of(list);
         let (col, desc, show) = self.bound[side.index()]
             .and_then(|id| self.tabs.get(&id))
-            .map(|t| (t.sort_col, t.desc, !t.search_mode || !t.searching))
+            .map(|t| (t.sort_col, t.desc, true))
             .unwrap_or((0, false, false));
         for i in 0..COLUMNS.len() {
             let mut item: HDITEMW = unsafe { std::mem::zeroed() };
@@ -601,6 +618,10 @@ impl App {
             self.show_footer(tr!("請選取一個項目再重新命名", "Select one item to rename"));
             return;
         }
+        if self.active_tab().is_some_and(|t| paths::unc_server(&t.path).is_some()) {
+            self.show_footer(tr!("共用資料夾的名稱要在分享它的那台電腦上修改。", "Rename a shared folder on the computer that shares it."));
+            return;
+        }
         unsafe {
             SetFocus(list);
         }
@@ -665,8 +686,9 @@ impl App {
 
     pub(super) fn sort_to(&mut self, side: Side, col: usize, desc: bool) {
         let Some(id) = self.bound[side.index()] else { return };
+        // 搜尋中也可以換排序（之後的結果依新的排序併進來）；讀資料夾時不行
         let _fade = match self.tabs.get(&id) {
-            Some(t) if !t.working() && (t.sort_col != col || t.desc != desc) => {
+            Some(t) if !t.loading && (t.sort_col != col || t.desc != desc) => {
                 self.crossfade(vec![self.layout.panes[side.index()].inflate(self.s(4), self.s(6))], anim::CROSSFADE_MS)
             }
             _ => anim::Crossfade::none(),
@@ -674,12 +696,12 @@ impl App {
         let selected = self.selected_paths(side);
         let folders_on_top = self.settings.folders_on_top;
         let Some(tab) = self.tabs.get_mut(&id) else { return };
-        if tab.working() {
+        if tab.loading {
             return;
         }
         tab.desc = desc;
         tab.sort_col = col;
-        sorting::sort_entries(&mut tab.entries, col, tab.desc, folders_on_top);
+        tab.resort(folders_on_top);
         tab.refilter();
         tab.pending_select = selected;
         tab.view = Default::default();
@@ -1075,7 +1097,8 @@ impl App {
     }
 
     fn preview_opts(&self) -> preview::Opts {
-        preview::Opts { images: self.settings.image_preview, pdf: self.settings.pdf_preview, space: self.settings.space_preview }
+        // 圖片、影片與 PDF 一律預覽：設定只剩總開關與預覽方式（以前的個別開關 image_preview、pdf_preview 不再使用）
+        preview::Opts { images: true, pdf: true, space: self.settings.preview && self.settings.space_preview }
     }
 
     /// 開啟選取項目的快速預覽；`hold` 表示按住空白鍵開啟（放開就關閉），否則（右鍵選單）維持開著。
@@ -1148,10 +1171,11 @@ impl App {
     ///
     /// 這個提示會蓋在滑鼠所在的那一列上：滑鼠底下變成提示視窗，懸停預覽就以為滑鼠離開了清單而不換項目，
     /// 卡在上一個檔案；提示也會和預覽疊在一起。預覽的標題本來就顯示完整名稱，所以：
-    /// - 一般模式（滑鼠停著就預覽）：一律不顯示提示。
-    /// - 「按空白鍵預覽」：按住空白鍵或預覽開著時關掉，放開後恢復。
+    /// - 懸停預覽（滑鼠停著就預覽）：一律不顯示提示。
+    /// - 空白鍵預覽、關閉快速預覽：按住空白鍵或預覽開著時關掉，其他時候顯示。
     pub(super) fn sync_label_tips(&mut self) {
-        let want = self.settings.space_preview && !self.hover.gate && !preview::is_open(&self.preview);
+        let hover_mode = self.settings.preview && !self.settings.space_preview;
+        let want = !hover_mode && !self.hover.gate && !preview::is_open(&self.preview);
         if self.hover.label_tips == Some(want) {
             return;
         }
@@ -1173,7 +1197,7 @@ impl App {
 
     /// 滑鼠底下的視窗算不算「在清單上」：清單本身、清單自己的提示視窗，或滑鼠穿透的預覽視窗。
     fn under_list(&self, list: HWND, under: HWND) -> bool {
-        under == list || under == self.preview.popup || (under != 0 && under == send(list, LVM_GETTOOLTIPS, 0, 0) as HWND)
+        under == list || under == self.preview.popup || (under != 0 && (under == self.loc_tip || under == send(list, LVM_GETTOOLTIPS, 0, 0) as HWND))
     }
 
     /// 點擊、按鍵等：關掉懸停的預覽，滑鼠移到別的項目之前不再出現。
@@ -1196,6 +1220,7 @@ impl App {
         }
         self.hover.last = Some((side, pt.x, pt.y));
         self.track_pointer(side, pt);
+        self.update_location_tip(side, pt);
         let list = self.lists[side.index()];
         if !self.hover.tracking[side.index()] {
             let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: list, dwHoverTime: 0 };
@@ -1223,9 +1248,114 @@ impl App {
         }
     }
 
-    /// 現在可以懸停預覽嗎：一般是隨時；「按空白鍵預覽」時只在空白鍵按著的時候。
+    // ------------------------------------------------------------ 所在位置的提示
+
+    /// 所在位置欄被截斷（欄寬放不下整個路徑）時，滑鼠停在那一格就在格子正下方顯示完整位置；
+    /// 移到別格、離開清單、捲動、點擊、按鍵時收起。提示在格子下方，不會蓋住滑鼠，懸停預覽照常。
+    fn update_location_tip(&mut self, side: Side, pt: POINT) {
+        match self.location_tip_target(side, pt) {
+            Some((row, text, cell)) => {
+                if self.loc_tip_at != Some((side, row)) {
+                    self.show_location_tip(side, row, &text, cell);
+                }
+            }
+            None => self.hide_location_tip(),
+        }
+    }
+
+    /// 滑鼠下是被截斷的所在位置格子：回傳列、完整位置與格子的範圍（清單用戶區座標）
+    fn location_tip_target(&self, side: Side, pt: POINT) -> Option<(usize, String, RECT)> {
+        if self.loc_tip == 0 || self.view[side.index()] != ViewMode::Details {
+            return None;
+        }
+        let list = self.lists[side.index()];
+        let col = COLUMNS.len() - 1;
+        if send(list, LVM_GETCOLUMNWIDTH, col, 0) <= 0 {
+            return None;
+        }
+        let mut ht = LVHITTESTINFO { pt, flags: 0, iItem: -1, iSubItem: 0, iGroup: 0 };
+        let index = send(list, LVM_SUBITEMHITTEST, 0, &mut ht as *mut LVHITTESTINFO as LPARAM);
+        if index < 0 || ht.iSubItem != col as i32 || ht.flags & LVHT_ONITEM == 0 {
+            return None;
+        }
+        let tab = self.bound[side.index()].and_then(|id| self.tabs.get(&id))?;
+        let text = tab.row(index as usize)?.dir.to_string();
+        let mut cell = RECT { left: LVIR_BOUNDS, top: col as i32, right: 0, bottom: 0 };
+        if send(list, LVM_GETSUBITEMRECT, index as usize, &mut cell as *mut RECT as LPARAM) == 0 {
+            return None;
+        }
+        // 清單左右各留約 6 像素：放得下就沒有被截斷，不必提示
+        let text_w = unsafe {
+            let hdc = GetDC(list);
+            let font = send(list, WM_GETFONT, 0, 0) as HFONT;
+            let w = theme::text_width(hdc, &text, if font != 0 { font } else { self.theme.fonts.body });
+            ReleaseDC(list, hdc);
+            w
+        };
+        (text_w + self.s(12) > cell.width()).then_some((index as usize, text, cell))
+    }
+
+    fn show_location_tip(&mut self, side: Side, row: usize, text: &str, cell: RECT) {
+        let list = self.lists[side.index()];
+        let mut buf = wide(text);
+        let info = TOOLINFOW {
+            cbSize: std::mem::size_of::<TOOLINFOW>() as u32,
+            uFlags: TTF_TRACK | TTF_ABSOLUTE | TTF_TRANSPARENT,
+            hwnd: self.hwnd,
+            uId: 1,
+            rect: RECT::default(),
+            hinst: 0,
+            lpszText: buf.as_mut_ptr(),
+            lParam: 0,
+            lpReserved: std::ptr::null_mut(),
+        };
+        unsafe {
+            send_ptr(self.loc_tip, TTM_UPDATETIPTEXTW, 0, &info);
+            // 貼在格子正下方、和格子左邊對齊；超出螢幕右邊時往左移
+            let mut at = POINT { x: cell.left, y: cell.bottom + self.s(2) };
+            ClientToScreen(list, &mut at);
+            let size = send_ptr(self.loc_tip, TTM_GETBUBBLESIZE, 0, &info) as u32;
+            let (w, h) = ((size & 0xFFFF) as i32, (size >> 16) as i32);
+            let mon = MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
+            let mut mi: MONITORINFO = std::mem::zeroed();
+            mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(mon, &mut mi) != 0 {
+                let work = mi.rcWork;
+                at.x = at.x.min(work.right - w).max(work.left);
+                if at.y + h > work.bottom {
+                    // 清單最下面一列：改放在格子上方
+                    let mut top = POINT { x: cell.left, y: cell.top - self.s(2) };
+                    ClientToScreen(list, &mut top);
+                    at.y = top.y - h;
+                }
+            }
+            send(self.loc_tip, TTM_TRACKPOSITION, 0, ((at.y as u32 & 0xFFFF) << 16 | (at.x as u32 & 0xFFFF)) as LPARAM);
+            send_ptr(self.loc_tip, TTM_TRACKACTIVATE, 1, &info);
+        }
+        self.loc_tip_at = Some((side, row));
+    }
+
+    /// 收起所在位置的提示
+    pub(super) fn hide_location_tip(&mut self) {
+        if self.loc_tip_at.take().is_some() && self.loc_tip != 0 {
+            let info = TOOLINFOW {
+                cbSize: std::mem::size_of::<TOOLINFOW>() as u32,
+                uFlags: TTF_TRACK | TTF_ABSOLUTE | TTF_TRANSPARENT,
+                hwnd: self.hwnd,
+                uId: 1,
+                rect: RECT::default(),
+                hinst: 0,
+                lpszText: std::ptr::null_mut(),
+                lParam: 0,
+                lpReserved: std::ptr::null_mut(),
+            };
+            send_ptr(self.loc_tip, TTM_TRACKACTIVATE, 0, &info);
+        }
+    }
+
+    /// 現在可以懸停預覽嗎：懸停預覽是隨時；空白鍵預覽只在空白鍵按著的時候；關閉快速預覽時永遠不行。
     fn hover_allowed(&self) -> bool {
-        !self.settings.space_preview || self.hover.gate
+        self.settings.preview && (!self.settings.space_preview || self.hover.gate)
     }
 
     /// 「按空白鍵預覽」的空白鍵是否正按著。
@@ -1317,6 +1447,7 @@ impl App {
     }
 
     pub(super) fn on_list_mouse_leave(&mut self, side: Side) {
+        self.hide_location_tip();
         self.hover.tracking[side.index()] = false;
         self.hover.last = None;
         if self.hover.item.is_some_and(|(s, _)| s == side) || preview::mode(&self.preview) == Some(preview::Mode::Hover) {
@@ -1426,7 +1557,7 @@ impl App {
                 if r.width() > self.s(8) {
                     let (sorted, desc) = self.bound[side.index()]
                         .and_then(|id| self.tabs.get(&id))
-                        .map(|t| (t.sort_col == col && !t.searching, t.desc))
+                        .map(|t| (t.sort_col == col, t.desc))
                         .unwrap_or((false, false));
                     let title = COLUMNS.get(col).map(column_title).unwrap_or("");
                     let right_align = COLUMNS.get(col).is_some_and(|c| c.3 == LVCFMT_RIGHT);
@@ -1516,7 +1647,10 @@ unsafe extern "system" fn list_subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lp
     let side = Side::from_index(sub_id);
     if let Some(a) = app::app_opt() {
         match msg {
+            // 捲動、按鍵：格子換了位置，所在位置的提示收起（滑鼠再動一下才重新判斷）
+            WM_MOUSEWHEEL | WM_VSCROLL | WM_HSCROLL | WM_KEYDOWN => a.hide_location_tip(),
             WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+                a.hide_location_tip();
                 a.cancel_hover();
                 a.activate(side);
                 // 詳細資料檢視按在空白處（項目旁邊、最後一列下面）：框選、點一下取消選取、右鍵是空白處的選單（見 marquee.rs）
@@ -1578,11 +1712,21 @@ mod tests {
     }
 
     #[test]
-    fn standard_text_keeps_previous_layout() {
-        // 100%、1280×720 視窗的清單寬度：跟改之前一樣
-        assert_eq!(widths(945, true, 100), [297, 78, 118, 140, 280]);
-        assert_eq!(widths(945, false, 100), [297, 78, 118, 140, 280]);
-        assert_eq!(widths(700, false, 100), [320, 78, 118, 140, 0]);
+    fn standard_layout_leaves_blank_space() {
+        // 100%、1280×720 視窗的清單寬度：所在位置欄窄一點，右邊留約 1/6 的空白
+        assert_eq!(widths(945, true, 100), [292, 78, 118, 140, 160]);
+        assert_eq!(widths(945, false, 100), [292, 78, 118, 140, 160]);
+        assert_eq!(widths(700, false, 100), [248, 78, 118, 140, 0]);
+        // 夠寬時右邊一定留下至少 1/6 的空白，可以點空白處取消選取、框選
+        for pct in [100, 115, 130, 150] {
+            for avail in (800..2400).step_by(53) {
+                for search in [false, true] {
+                    let w = widths(avail, search, pct);
+                    let blank = avail - w.iter().sum::<i32>();
+                    assert!(blank >= avail / 6, "{avail} {search} {pct} {w:?} blank {blank}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -1591,7 +1735,7 @@ mod tests {
         let [name, _, kind, _, location] = widths(945, true, 150);
         assert!(name >= 270, "{name}");
         assert_eq!(kind, 0);
-        assert!(location >= 240, "{location}");
+        assert!(location >= LOCATION_MIN * 150 / 100, "{location}");
         // 150% 一般資料夾：保留類型欄
         let [name, _, kind, _, location] = widths(945, false, 150);
         assert!(name >= 270 && kind > 0 && location == 0, "{name} {kind} {location}");

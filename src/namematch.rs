@@ -1,5 +1,10 @@
 //! 檔名比對（搜尋用）：直接比對 Windows 傳回的 UTF-16 檔名，不分大小寫，不配置記憶體。
 //!
+//! - [`Needle`]：檔名「包含」這個詞。
+//! - [`Pattern`]：一個搜尋詞。有 `*`、`?` 時是萬用字元，要比對整個檔名（同檔案總管、Everything：
+//!   `*.pdf` 是結尾為 .pdf 的檔名，`報告*` 是開頭為「報告」的檔名）；沒有時就是「包含」。
+//! - [`all_match`]：多個詞都要有，順序不限（`報告 2025`）。
+//!
 //! 大小寫以查表處理：每個 BMP 字元對應到它的小寫（`char::to_lowercase` 只產生一個 BMP 字元時），
 //! 其餘（代理字組、會變成多個字元的少數字母）保持原樣。關鍵字與檔名用同一張表，所以結果一致；
 //! 一般的英文、全形英文、希臘與西里爾字母都不分大小寫，中日韓文字不受影響。
@@ -74,6 +79,79 @@ impl Needle {
     }
 }
 
+const STAR: u16 = b'*' as u16;
+const QUESTION: u16 = b'?' as u16;
+
+/// 一個搜尋詞：包含，或（有 `*`、`?` 時）比對整個檔名的萬用字元
+pub enum Pattern {
+    Contains(Needle),
+    /// 已轉成比對用的小寫；`*` 是任意長度（含 0），`?` 是任一個字元
+    Wildcard(Vec<u16>),
+}
+
+impl Pattern {
+    /// 前後空白不算；空字串回傳 None。
+    pub fn new(text: &str) -> Option<Pattern> {
+        let t = text.trim();
+        if t.is_empty() {
+            return None;
+        }
+        if t.contains(['*', '?']) {
+            let _ = table();
+            // 連續的 * 等於一個
+            let mut units: Vec<u16> = Vec::new();
+            for c in t.encode_utf16().map(fold) {
+                if !(c == STAR && units.last() == Some(&STAR)) {
+                    units.push(c);
+                }
+            }
+            Some(Pattern::Wildcard(units))
+        } else {
+            Needle::new(t).map(Pattern::Contains)
+        }
+    }
+
+    pub fn is_wildcard(&self) -> bool {
+        matches!(self, Pattern::Wildcard(_))
+    }
+
+    /// `name` 不含結尾的 0
+    pub fn matches(&self, name: &[u16]) -> bool {
+        match self {
+            Pattern::Contains(n) => n.matches(name),
+            Pattern::Wildcard(p) => wildcard(p, name),
+        }
+    }
+}
+
+/// 所有的詞都要有（順序不限）；沒有詞時一律符合
+pub fn all_match(patterns: &[Pattern], name: &[u16]) -> bool {
+    patterns.iter().all(|p| p.matches(name))
+}
+
+/// 萬用字元比對整個檔名（不分大小寫）。回溯只記最後一個 `*` 的位置，不配置記憶體，最壞 O(m·n)。
+fn wildcard(p: &[u16], name: &[u16]) -> bool {
+    let (mut pi, mut ni) = (0usize, 0usize);
+    let mut star: Option<(usize, usize)> = None;
+    while ni < name.len() {
+        if pi < p.len() && p[pi] == STAR {
+            star = Some((pi, ni));
+            pi += 1;
+        } else if pi < p.len() && (p[pi] == QUESTION || p[pi] == fold(name[ni])) {
+            pi += 1;
+            ni += 1;
+        } else if let Some((sp, sn)) = star {
+            // 讓上一個 * 多吃一個字元再試
+            pi = sp + 1;
+            ni = sn + 1;
+            star = Some((sp, sn + 1));
+        } else {
+            return false;
+        }
+    }
+    p[pi..].iter().all(|c| *c == STAR)
+}
+
 /// Windows 檔名緩衝區（以 0 結尾）中實際的檔名部分。
 pub fn until_nul(buf: &[u16]) -> &[u16] {
     let end = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
@@ -131,6 +209,41 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn w(pattern: &str, name: &str) -> bool {
+        let n: Vec<u16> = name.encode_utf16().collect();
+        Pattern::new(pattern).unwrap().matches(&n)
+    }
+
+    #[test]
+    fn wildcards_match_the_whole_name() {
+        assert!(w("*.pdf", "年度報告.PDF"));
+        assert!(!w("*.pdf", "a.pdf.txt"));
+        assert!(w("報告*", "報告 2025.docx"));
+        assert!(!w("報告*", "年度報告.docx"));
+        assert!(w("*報告*", "年度報告.docx"));
+        assert!(w("a?c.txt", "ABC.txt"));
+        assert!(!w("a?c.txt", "ac.txt"));
+        assert!(w("*", ""));
+        assert!(w("**a**", "banana"));
+        assert!(w("*a*a*a*", "banana"));
+        assert!(!w("*a*a*a*a*", "banana"));
+        assert!(w("img_???.jpg", "IMG_007.JPG"));
+        // 沒有萬用字元：照舊是「包含」
+        assert!(w("port", "Report.pdf"));
+        assert!(!Pattern::new("port").unwrap().is_wildcard());
+        assert!(Pattern::new(" ").is_none());
+    }
+
+    #[test]
+    fn every_term_must_match_in_any_order() {
+        let terms: Vec<Pattern> = ["報告", "2025"].iter().filter_map(|t| Pattern::new(t)).collect();
+        let name = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+        assert!(all_match(&terms, &name("2025 年度報告.pdf")));
+        assert!(all_match(&terms, &name("報告-final-2025.docx")));
+        assert!(!all_match(&terms, &name("2024 年度報告.pdf")));
+        assert!(all_match(&[], &name("anything")));
     }
 
     #[test]

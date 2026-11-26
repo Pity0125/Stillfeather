@@ -1,13 +1,15 @@
 //! 配色、字型與深色模式。
 //!
-//! 預設配色：淺色以米白為底、白色卡片、淺燕麥色側欄；深色以近黑灰為主。
-//! 重點色是柔和的陶土橘，圓角卡片與膠囊按鈕。
-//! 使用者可在設定中自訂重點色與背景色，其餘顏色會依背景亮度推導。
+//! 配色來自預先調好的主題（`feather_core::themes`，每一組都有淺色與深色）；預設是「陶土」：
+//! 淺色以米白為底、白色卡片、淺燕麥色側欄，深色以近黑灰為主，重點色是柔和的陶土橘。
+//! 「進階」可以自訂重點色與背景色取代主題的顏色；自訂背景時，卡片、側欄與文字只從那個背景推導
+//! （不和主題的側欄色混合，否則淺色模式配深色背景會出現灰色的側欄）。
 
 use super::sys::*;
 use super::util::*;
 use feather_core::category::Category;
 use feather_core::settings::{parse_color, Settings, ThemeMode};
+use feather_core::themes::{self, Rgb};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
@@ -37,8 +39,6 @@ pub struct Palette {
     pub chip: COLORREF,
     pub chip_active: COLORREF,
     pub chip_active_ink: COLORREF,
-    /// 側欄底部的淡杏色提示卡
-    pub peach: COLORREF,
     /// 卡片陰影的兩層顏色
     pub shadow_near: COLORREF,
     pub shadow_far: COLORREF,
@@ -70,71 +70,67 @@ pub fn is_dark_color(c: COLORREF) -> bool {
     brightness(c) < 0.5
 }
 
-/// 放在指定底色上的文字顏色（深或淺）。
+fn to_rgb(c: COLORREF) -> Rgb {
+    ((c & 0xFF) as u8, ((c >> 8) & 0xFF) as u8, ((c >> 16) & 0xFF) as u8)
+}
+
+fn from_rgb(c: Rgb) -> COLORREF {
+    rgb(c.0, c.1, c.2)
+}
+
+/// 放在指定底色上的文字顏色：深色或淺色文字中對比較高的那一個。
 pub fn contrast_text(bg: COLORREF) -> COLORREF {
-    let (r, g, b) = parts(bg);
-    if r * 0.299 + g * 0.587 + b * 0.114 > 150.0 {
-        rgb(43, 33, 28)
-    } else {
-        rgb(255, 250, 244)
-    }
+    from_rgb(themes::text_on(to_rgb(bg)))
+}
+
+/// 主題某一套配色的顏色（底色、側欄、卡片、重點色），設定視窗的主題選項用來畫小預覽
+pub fn preset_swatch(c: &themes::Colors) -> [COLORREF; 4] {
+    [from_rgb(c.background), from_rgb(c.sidebar), from_rgb(c.surface), from_rgb(c.accent)]
 }
 
 pub fn system_uses_dark() -> bool {
     reg_dword("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "AppsUseLightTheme") == Some(0)
 }
 
-/// 預設配色的原色。
-mod base {
-    use super::rgb;
-    use super::COLORREF;
-    // 淺色：米白底、白卡片、淺燕麥色側欄、暖炭灰文字。
-    pub const LIGHT_BACKGROUND: COLORREF = rgb(248, 246, 242);
-    pub const LIGHT_SURFACE: COLORREF = rgb(255, 255, 255);
-    pub const LIGHT_SIDEBAR: COLORREF = rgb(240, 237, 232);
-    pub const LIGHT_INK: COLORREF = rgb(46, 43, 41);
-    pub const LIGHT_ACCENT: COLORREF = rgb(210, 118, 86);
-    pub const LIGHT_PEACH: COLORREF = rgb(249, 235, 226);
-    // 深色：近黑底、深灰卡片與側欄（中性灰，不帶色偏）。
-    pub const DARK_BACKGROUND: COLORREF = rgb(18, 18, 18);
-    pub const DARK_SURFACE: COLORREF = rgb(30, 30, 30);
-    pub const DARK_SIDEBAR: COLORREF = rgb(25, 25, 25);
-    pub const DARK_INK: COLORREF = rgb(236, 234, 231);
-    pub const DARK_ACCENT: COLORREF = rgb(232, 150, 118);
-    pub const DARK_PEACH: COLORREF = rgb(42, 34, 30);
+/// 深淺色設定下要不要用深色：跟隨系統時看 Windows 的「應用程式模式」
+pub fn mode_is_dark(mode: ThemeMode) -> bool {
+    mode == ThemeMode::Dark || (mode == ThemeMode::System && system_uses_dark())
 }
 
 impl Palette {
     pub fn from_settings(s: &Settings) -> Palette {
-        let is_dark = s.theme_mode == ThemeMode::Dark || (s.theme_mode == ThemeMode::System && system_uses_dark());
-        let (mut background, mut surface, mut sidebar, mut peach) = if is_dark {
-            (base::DARK_BACKGROUND, base::DARK_SURFACE, base::DARK_SIDEBAR, base::DARK_PEACH)
-        } else {
-            (base::LIGHT_BACKGROUND, base::LIGHT_SURFACE, base::LIGHT_SIDEBAR, base::LIGHT_PEACH)
-        };
-        let mut accent = if is_dark { base::DARK_ACCENT } else { base::LIGHT_ACCENT };
+        let preset = themes::find(&s.theme);
+        let mut dark = mode_is_dark(s.theme_mode);
+        let c = preset.colors(dark);
+        let mut background = from_rgb(c.background);
+        let mut surface = from_rgb(c.surface);
+        let mut sidebar = from_rgb(c.sidebar);
+        let mut ink = from_rgb(c.ink);
+        let mut accent = from_rgb(c.accent);
+        // 進階：自訂重點色
         if let Some((r, g, b)) = s.accent_color.as_deref().and_then(parse_color) {
             accent = rgb(r, g, b);
         }
-        let custom_bg = s.background_color.as_deref().and_then(parse_color).map(|(r, g, b)| rgb(r, g, b));
-        if let Some(bg) = custom_bg {
-            // 自訂背景：卡片比背景稍亮（或稍暗），側欄與提示卡往背景色靠攏。
-            let light = brightness(bg) >= 0.5;
+        // 進階：自訂背景色。深淺跟著這個背景（主題的深色文字、淺色文字哪一個在上面比較清楚）；
+        // 卡片、側欄與文字都只從它推導
+        if let Some(bg) = s.background_color.as_deref().and_then(parse_color).map(|(r, g, b)| rgb(r, g, b)) {
+            let light = themes::contrast(preset.light.ink, to_rgb(bg)) >= themes::contrast(preset.dark.ink, to_rgb(bg));
+            dark = !light;
             background = bg;
-            surface = if light { blend(rgb(255, 255, 255), bg, 0.55) } else { blend(rgb(255, 255, 255), bg, 0.07) };
-            sidebar = blend(sidebar, bg, 0.45);
-            peach = blend(accent, bg, 0.22);
+            if light {
+                // 卡片比背景亮、側欄比背景暗一點點
+                surface = blend(rgb(255, 255, 255), bg, 0.6);
+                sidebar = blend(rgb(0, 0, 0), bg, 0.035);
+                ink = from_rgb(preset.light.ink);
+            } else {
+                surface = blend(rgb(255, 255, 255), bg, 0.07);
+                sidebar = blend(rgb(255, 255, 255), bg, 0.035);
+                ink = from_rgb(preset.dark.ink);
+            }
         }
-        let dark = brightness(surface) < 0.5;
-        let ink = if custom_bg.is_none() {
-            if is_dark { base::DARK_INK } else { base::LIGHT_INK }
-        } else if dark {
-            base::DARK_INK
-        } else {
-            base::LIGHT_INK
-        };
-        let sidebar_dark = brightness(sidebar) < 0.5;
-        let sidebar_ink = if sidebar_dark { base::DARK_INK } else { base::LIGHT_INK };
+        // 側欄和清單一定同深淺（自訂背景時兩者都從同一個背景推導），文字色也相同
+        let sidebar_dark = dark;
+        let sidebar_ink = ink;
         let shadow_base = if dark { rgb(0, 0, 0) } else { rgb(90, 80, 70) };
         Palette {
             ink,
@@ -153,7 +149,6 @@ impl Palette {
             chip: blend(ink, background, 0.045),
             chip_active: if dark { blend(ink, surface, 0.9) } else { ink },
             chip_active_ink: if dark { surface } else { rgb(252, 250, 247) },
-            peach,
             shadow_near: blend(shadow_base, background, if dark { 0.35 } else { 0.07 }),
             shadow_far: blend(shadow_base, background, if dark { 0.18 } else { 0.035 }),
             dark,
@@ -223,8 +218,9 @@ pub struct Fonts {
     pub icon_small: HFONT,
     /// 單行文字高度（像素）。
     pub ui_height: i32,
-    /// 內容文字：檔名與欄位、側欄、分頁、狀態列。跟著文字大小放大（`text_size` 百分比；設定視窗另外用
-    /// `ui_font` 建立同樣比例的字型），頂列與動作列的按鈕、選單、其他對話方塊維持 `ui` 的大小，版面才不會被撐開。
+    /// 內容文字：檔名與欄位、側欄、分頁、狀態列、路徑列、篩選籤、搜尋框。跟著文字大小放大（`text_size` 百分比；
+    /// 對話方塊與設定視窗另外用 `ui_font` 建立同樣比例的字型）。看得到的文字都用 `body*`；只有圖示按鈕的提示、
+    /// 選單（Windows 畫的）維持 `ui` 的大小。
     pub body: HFONT,
     pub body_bold: HFONT,
     /// 內容的小字：欄位標題、側欄的區段標籤、提示列
@@ -232,8 +228,14 @@ pub struct Fonts {
     pub body_small_bold: HFONT,
     /// `body` 的單行文字高度（像素）
     pub body_height: i32,
-    /// 路徑列最後一段（目前資料夾），取代原本的大標題
-    pub heading: HFONT,
+    /// 路徑列最後一段（目前資料夾），取代原本的大標題。跟著文字大小放大
+    pub body_heading: HFONT,
+    /// `body_heading` 的單行文字高度（像素）
+    pub body_heading_height: i32,
+    /// 路徑列的小箭頭等，跟著文字大小放大的小圖示字
+    pub body_icon_small: HFONT,
+    /// 圖示字型的名稱（Segoe Fluent Icons，舊版 Windows 是 Segoe MDL2 Assets）：對話方塊依自己的比例建立
+    pub icon_face: &'static str,
 }
 
 fn create_font(face: &str, points: i32, weight: i32, dpi: u32) -> HFONT {
@@ -252,6 +254,16 @@ fn create_font_scaled(face: &str, points: i32, percent: u32, weight: i32, dpi: u
 /// 設定視窗依文字大小建立自己的字型、預覽各個文字大小時用。
 pub fn ui_font(points: i32, percent: u32, bold: bool, dpi: u32) -> HFONT {
     create_font_scaled(UI_FACE, points, percent, if bold { FW_SEMIBOLD } else { FW_NORMAL }, dpi)
+}
+
+/// 同 [`ui_font`]，可指定字重（標題用 FW_BOLD）
+pub fn ui_font_weight(points: i32, percent: u32, weight: i32, dpi: u32) -> HFONT {
+    create_font_scaled(UI_FACE, points, percent, weight, dpi)
+}
+
+/// 圖示字型 `points` 點放大 `percent`%。呼叫端負責 DeleteObject。
+pub fn icon_font(face: &str, points: i32, percent: u32, dpi: u32) -> HFONT {
+    create_font_scaled(face, points, percent, FW_NORMAL, dpi)
 }
 
 /// 字型的單行高度（以中英混排的樣本量）
@@ -282,7 +294,7 @@ fn font_exists(font: HFONT, face: &str) -> bool {
 }
 
 const UI_FACE: &str = "Microsoft JhengHei UI";
-const FW_BOLD: i32 = 700;
+pub const FW_BOLD: i32 = 700;
 
 impl Fonts {
     fn new(dpi: u32, text_size: u32) -> Fonts {
@@ -308,13 +320,49 @@ impl Fonts {
         let body_small = create_font_scaled(UI_FACE, 8, text_size, FW_NORMAL, dpi);
         let body_small_bold = create_font_scaled(UI_FACE, 8, text_size, FW_SEMIBOLD, dpi);
         let body_height = line_height(body);
-        let heading = create_font(UI_FACE, 12, FW_SEMIBOLD, dpi);
-        Fonts { ui, ui_bold, small, small_bold, brand, title, icon, icon_small, ui_height, body, body_bold, body_small, body_small_bold, body_height, heading }
+        let body_heading = create_font_scaled(UI_FACE, 12, text_size, FW_SEMIBOLD, dpi);
+        let body_heading_height = line_height(body_heading);
+        let body_icon_small = create_font_scaled(icon_face, 8, text_size, FW_NORMAL, dpi);
+        Fonts {
+            ui,
+            ui_bold,
+            small,
+            small_bold,
+            brand,
+            title,
+            icon,
+            icon_small,
+            ui_height,
+            body,
+            body_bold,
+            body_small,
+            body_small_bold,
+            body_height,
+            body_heading,
+            body_heading_height,
+            body_icon_small,
+            icon_face,
+        }
     }
 
     fn destroy(&mut self) {
         unsafe {
-            for f in [self.ui, self.ui_bold, self.small, self.small_bold, self.brand, self.title, self.icon, self.icon_small, self.body, self.body_bold, self.body_small, self.body_small_bold, self.heading] {
+            for f in [
+                self.ui,
+                self.ui_bold,
+                self.small,
+                self.small_bold,
+                self.brand,
+                self.title,
+                self.icon,
+                self.icon_small,
+                self.body,
+                self.body_bold,
+                self.body_small,
+                self.body_small_bold,
+                self.body_heading,
+                self.body_icon_small,
+            ] {
                 if f != 0 {
                     DeleteObject(f);
                 }
@@ -376,9 +424,47 @@ impl Drop for Theme {
 
 /// 標題列深淺色。
 pub fn apply_title_bar(hwnd: HWND, dark: bool) {
+    let build = windows_build();
+    // Windows 10 1809～1909 的屬性編號是 19，之後是 20；更舊的 Windows 10 沒有深色標題列
+    let Some(attr) = feather_core::winver::dark_mode_attribute(build) else { return };
     let value: BOOL = dark as BOOL;
     unsafe {
-        DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &value as *const BOOL as *const std::ffi::c_void, 4);
+        if DwmSetWindowAttribute(hwnd, attr, &value as *const BOOL as *const std::ffi::c_void, 4) < 0 && attr != DWMWA_USE_IMMERSIVE_DARK_MODE {
+            DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &value as *const BOOL as *const std::ffi::c_void, 4);
+        }
+        if IsWindowVisible(hwnd) == 0 {
+            // 還沒顯示：第一次畫標題列時就是新的顏色
+            return;
+        }
+        // 已經顯示的視窗（切換深淺色、跟著 Windows 換色）：要求重畫框線
+        SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        if feather_core::winver::caption_needs_nudge(build) {
+            // Windows 10 的標題列要等啟用狀態改變才換色：送一次相反、再送回原本的啟用狀態
+            let active = (GetActiveWindow() == hwnd) as WPARAM;
+            SendMessageW(hwnd, WM_NCACTIVATE, active ^ 1, 0);
+            SendMessageW(hwnd, WM_NCACTIVATE, active, 0);
+        }
+    }
+}
+
+/// 同一個執行緒的其他頂層視窗（開著的對話方塊、設定）跟著換深淺色標題列。主視窗自己另外處理。
+pub fn restyle_thread_captions(main: HWND, pal: &Palette) {
+    struct Ctx<'a> {
+        main: HWND,
+        pal: &'a Palette,
+    }
+    unsafe extern "system" fn each(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let ctx = &*(lparam as *const Ctx);
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        if hwnd != ctx.main && IsWindowVisible(hwnd) != 0 && style & WS_CAPTION == WS_CAPTION {
+            style_caption(hwnd, ctx.pal, ctx.pal.surface);
+            InvalidateRect(hwnd, std::ptr::null(), 1);
+        }
+        1
+    }
+    let ctx = Ctx { main, pal };
+    unsafe {
+        EnumThreadWindows(GetCurrentThreadId(), each, &ctx as *const Ctx as LPARAM);
     }
 }
 
@@ -563,15 +649,18 @@ pub mod glyph {
     pub const CLOSE: char = '\u{E8BB}';
     pub const CHEVRON_LEFT: char = '\u{E76B}';
     pub const CHEVRON_RIGHT: char = '\u{E76C}';
+    /// 勾號（選單的勾選項目）
+    pub const CHECK_MARK: char = '\u{E73E}';
+    /// 鍵盤（說明頁的快速鍵）
+    pub const KEYBOARD: char = '\u{E765}';
     pub const CHECKBOX: char = '\u{E739}';
     pub const CHECKBOX_CHECKED: char = '\u{E73A}';
     pub const SEARCH: char = '\u{E721}';
     pub const FOLDER: char = '\u{E8B7}';
+    /// 調色盤（設定的「主題與顏色」）
+    pub const PALETTE: char = '\u{E790}';
     /// 篩選（選擇器的檔案類型）
     pub const FILTER: char = '\u{E71C}';
-    pub const MOON: char = '\u{E708}';
-    pub const SUN: char = '\u{E706}';
-    pub const PALETTE: char = '\u{E790}';
     pub const SORT_UP: char = '\u{E70E}';
     pub const SORT_DOWN: char = '\u{E70D}';
     pub const CHEVRON_DOWN_SMALL: char = '\u{E96E}';

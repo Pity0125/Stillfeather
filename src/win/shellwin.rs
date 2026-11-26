@@ -1533,7 +1533,7 @@ unsafe fn select(b: *mut Browser, child: *const c_void, flags: u32) -> HRESULT {
 }
 
 /// 子項目識別碼 → 完整路徑。照文件是相對於資料夾的子項目；也接受完整的識別碼（有些呼叫端直接傳完整的）。
-unsafe fn item_path(folder: &str, child: *const c_void) -> Option<String> {
+pub(super) unsafe fn item_path(folder: &str, child: *const c_void) -> Option<String> {
     let combined = combined_path(folder, child);
     if combined.as_deref().is_some_and(|p| std::path::Path::new(p).exists()) {
         return combined;

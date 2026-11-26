@@ -11,6 +11,7 @@ pub mod crumbmenu;
 pub mod crumbs;
 pub mod dialog;
 pub mod dragdrop;
+pub mod help;
 pub mod fileicons;
 pub mod fileops;
 pub mod fs;
@@ -18,6 +19,7 @@ pub mod icons;
 pub mod instance;
 pub mod marquee;
 pub mod menu;
+pub mod menusite;
 pub mod pane;
 pub mod perf;
 pub mod picker;
@@ -180,7 +182,7 @@ pub fn entry() -> i32 {
     }
     let icc = INITCOMMONCONTROLSEX {
         dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
-        dwICC: ICC_LISTVIEW_CLASSES | ICC_TREEVIEW_CLASSES | ICC_BAR_CLASSES | ICC_TAB_CLASSES | ICC_STANDARD_CLASSES,
+        dwICC: ICC_LISTVIEW_CLASSES | ICC_TREEVIEW_CLASSES | ICC_BAR_CLASSES | ICC_TAB_CLASSES | ICC_STANDARD_CLASSES | ICC_DATE_CLASSES,
     };
     unsafe {
         (comctl().init_common_controls_ex)(&icc);
@@ -195,6 +197,14 @@ pub fn entry() -> i32 {
     // 效能量測：不開視窗、不佔用單一實例，Stillfeather 開著時也可以跑
     if args.first().map(String::as_str) == Some("--perf") {
         return perf::run(&args[1..]);
+    }
+    if args.first().is_some_and(|s| s == "--detached-tab") {
+        crashlog::install();
+        unsafe {
+            CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            OleInitialize(std::ptr::null_mut());
+        }
+        return app::run_detached();
     }
     // Win+E（設為預設檔案總管時）帶 --open-home：在新分頁開首頁
     let open_home = args.iter().any(|a| a == feather_core::install::OPEN_HOME_ARG);

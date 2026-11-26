@@ -1,5 +1,5 @@
 //! 自繪的扁平按鈕：平時沒有外框，懸停與按下以低調底色回應，停用時淡化，
-//! 鍵盤焦點以重點色細框表示。也用作勾選方塊（Toggle）與分段選項（Segment）。
+//! 鍵盤焦點以重點色細框表示。也用作勾選方塊（Toggle）、分段選項（Segment）與主題選項（Swatch）。
 //! 懸停、按下與勾選狀態都以短動畫淡入淡出。
 
 use super::access;
@@ -16,7 +16,7 @@ pub const BUTTON_CLASS: &str = "FeatherFiles.Button";
 pub enum Kind {
     /// 只有圖示字形，平時透明，懸停時出現圓形底色；視窗文字作為提示與螢幕閱讀器名稱。
     Icon(char),
-    /// 圓形按鈕：卡片色底與細框（像參考圖右上角的月亮、鈴鐺）。
+    /// 圓形按鈕：卡片色底與細框（右上角的雙欄、設定）。
     Round(char),
     /// 膠囊形文字按鈕；設為 primary 時以重點色實心顯示。
     Text,
@@ -30,6 +30,9 @@ pub enum Kind {
     Segment,
     /// 側邊導覽的項目（設定視窗的分類）：圖示字形＋靠左的文字，選取時以側欄的選取膠囊顯示。
     Nav(char),
+    /// 主題選項：上面是那個主題的小視窗預覽（側欄、底色、卡片、重點色，以 [`set_swatch`] 設定），
+    /// 下面是名稱；選取時以重點色外框顯示。
+    Swatch,
 }
 
 /// 按鈕所在區域的底色。
@@ -41,8 +44,6 @@ pub enum Surface {
     Card,
     /// 側欄卡片
     Sidebar,
-    /// 側欄的淡杏色提示卡
-    Peach,
 }
 
 struct Data {
@@ -58,6 +59,8 @@ struct Data {
     subtle: bool,
     /// 文字用的字型（一般、粗體）；None 用介面字型（`Fonts::ui`）。設定視窗跟著文字大小放大時設定
     fonts: Option<(HFONT, HFONT)>,
+    /// 主題選項的顏色：底色、側欄、卡片、重點色
+    swatch: [COLORREF; 4],
     /// 動畫中的懸停、按下與勾選程度（0～1）
     hover_fx: Tween,
     press_fx: Tween,
@@ -98,6 +101,7 @@ pub fn create(parent: HWND, id: u16, kind: Kind, text: &str, surface: Surface, f
         primary: false,
         subtle: false,
         fonts: None,
+        swatch: [0; 4],
         hover_fx: Tween::new(0.0),
         press_fx: Tween::new(0.0),
         check_fx: Tween::new(0.0),
@@ -122,7 +126,7 @@ pub fn create(parent: HWND, id: u16, kind: Kind, text: &str, surface: Surface, f
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(data) as isize);
         // 螢幕閱讀器：系統只把這個類別當成一般的窗格，補上角色（名稱就是視窗文字）
         match kind {
-            Kind::Toggle | Kind::Segment | Kind::Nav(_) => {
+            Kind::Toggle | Kind::Segment | Kind::Nav(_) | Kind::Swatch => {
                 access::set_role(hwnd, if kind == Kind::Toggle { access::ROLE_CHECKBUTTON } else { access::ROLE_RADIOBUTTON });
                 access::set_check_state(hwnd, false, false);
             }
@@ -134,7 +138,19 @@ pub fn create(parent: HWND, id: u16, kind: Kind, text: &str, surface: Surface, f
 
 /// 有勾選狀態的按鈕（核取方塊、分段選項）
 fn checkable(d: &Data) -> bool {
-    matches!(d.kind, Kind::Toggle | Kind::Segment | Kind::Nav(_))
+    matches!(d.kind, Kind::Toggle | Kind::Segment | Kind::Nav(_) | Kind::Swatch)
+}
+
+/// 主題選項要畫的顏色：底色、側欄、卡片、重點色（見 `theme::preset_swatch`）
+pub fn set_swatch(hwnd: HWND, colors: [COLORREF; 4]) {
+    unsafe {
+        if let Some(d) = data(hwnd) {
+            if d.swatch != colors {
+                d.swatch = colors;
+                invalidate(hwnd);
+            }
+        }
+    }
 }
 
 unsafe fn data<'a>(hwnd: HWND) -> Option<&'a mut Data> {
@@ -156,25 +172,6 @@ pub fn set_checked(hwnd: HWND, checked: bool) {
                 if checkable(d) {
                     access::set_check_state(hwnd, checked, true);
                 }
-                invalidate(hwnd);
-            }
-        }
-    }
-}
-
-/// 更換圖示字形（例如深淺色切換鈕的月亮／太陽）。
-pub fn set_glyph(hwnd: HWND, g: char) {
-    unsafe {
-        if let Some(d) = data(hwnd) {
-            let new = match d.kind {
-                Kind::Icon(_) => Kind::Icon(g),
-                Kind::Round(_) => Kind::Round(g),
-                Kind::Pill(_) => Kind::Pill(g),
-                Kind::Menu(_) => Kind::Menu(g),
-                k => k,
-            };
-            if new != d.kind {
-                d.kind = new;
                 invalidate(hwnd);
             }
         }
@@ -344,7 +341,6 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
             Surface::Page => p.background,
             Surface::Card => p.surface,
             Surface::Sidebar => p.sidebar,
-            Surface::Peach => p.peach,
         };
         theme::fill(dc, &rect, base);
         let enabled = IsWindowEnabled(hwnd) != 0;
@@ -459,6 +455,42 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
                 let tr = RECT { left: gr.right + t.s(4), top: rect.top, right: rect.right - t.s(4), bottom: rect.bottom };
                 theme::draw_text(dc, &text, &tr, font_ui, normal_ink, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             }
+            Kind::Swatch => {
+                // 外框：選取時是重點色粗框，懸停時加深
+                let [bg, side, card, accent] = d.swatch;
+                let radius = t.s(12);
+                let fill = anim::mix(hover_on(base), p.selected_tint, ck * 0.6);
+                theme::round_rect(dc, &inner, radius, Some(fill), Some(anim::mix(theme::blend(p.ink, base, 0.18 + 0.12 * h), p.accent, ck)));
+                if ck > 0.0 {
+                    let ring = inner.inflate(-1, -1);
+                    theme::round_rect(dc, &ring, radius - 1, None, Some(anim::mix(fill, p.accent, ck)));
+                }
+                // 名稱在下面
+                let name_h = theme::line_height(font_ui) + t.s(6);
+                let pad = t.s(6);
+                let preview = RECT { left: inner.left + pad, top: inner.top + pad, right: inner.right - pad, bottom: inner.bottom - name_h };
+                if preview.height() > t.s(8) && preview.width() > t.s(16) {
+                    // 小視窗：左邊側欄、右邊底色上的卡片，卡片上有一條重點色底線和一個重點色圓點
+                    let r = t.s(7);
+                    theme::round_rect(dc, &preview, r, Some(bg), Some(theme::blend(p.ink, bg, 0.12)));
+                    let side_w = preview.width() * 3 / 10;
+                    let sr = RECT { left: preview.left + t.s(3), top: preview.top + t.s(3), right: preview.left + side_w, bottom: preview.bottom - t.s(3) };
+                    theme::round_rect(dc, &sr, t.s(4), Some(side), None);
+                    let cr = RECT { left: sr.right + t.s(4), top: preview.top + t.s(3), right: preview.right - t.s(3), bottom: preview.bottom - t.s(3) };
+                    theme::round_rect(dc, &cr, t.s(4), Some(card), None);
+                    let bar_w = (cr.width() * 2 / 5).max(t.s(6));
+                    let bar = RECT { left: cr.left + t.s(5), top: cr.top + t.s(5), right: cr.left + t.s(5) + bar_w, bottom: cr.top + t.s(5) + t.s(3) };
+                    theme::round_rect(dc, &bar, t.s(2), Some(accent), None);
+                    let dot = t.s(9);
+                    let dr = RECT::new(cr.right - t.s(5) - dot, cr.bottom - t.s(5) - dot, dot, dot);
+                    if dr.top > bar.bottom {
+                        theme::circle(dc, &dr, Some(accent), None);
+                    }
+                }
+                let nr = RECT { left: inner.left + t.s(4), top: inner.bottom - name_h, right: inner.right - t.s(4), bottom: inner.bottom - t.s(2) };
+                let font = if d.checked { font_bold } else { font_ui };
+                theme::draw_text(dc, &text, &nr, font, normal_ink, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            }
             Kind::Nav(g) => {
                 // 同側欄的樹狀圖：選取時是側欄的選取膠囊，懸停時淡淡的底色
                 let fill = anim::mix(hover_on(base), p.sidebar_selected, ck);
@@ -480,6 +512,7 @@ unsafe fn paint(hwnd: HWND, d: &mut Data) {
             match d.kind {
                 Kind::Icon(_) | Kind::Round(_) => theme::circle(dc, &inner, None, Some(p.accent)),
                 Kind::Nav(_) => theme::round_rect(dc, &inner, t.s(12), None, Some(p.accent)),
+                Kind::Swatch => theme::round_rect(dc, &inner, t.s(12), None, Some(p.accent)),
                 _ => theme::round_rect(dc, &inner, pill, None, Some(p.accent)),
             }
         }

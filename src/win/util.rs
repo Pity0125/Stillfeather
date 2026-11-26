@@ -85,6 +85,32 @@ pub fn get_y_lparam(l: LPARAM) -> i32 {
 
 /// Windows 錯誤碼的系統訊息（使用系統語言，繁中系統會是中文）。
 pub fn error_text(code: u32) -> String {
+    // 網路位置常見的錯誤：Windows 原本的訊息看不出該怎麼辦，補上說明
+    match code {
+        53 | 67 => {
+            return tr!(
+                "找不到電腦或共用資料夾。請確認對方電腦開著、在同一個網路、有開啟檔案共用。",
+                "Can't find the computer or shared folder. Make sure the other computer is on, on the same network, and has file sharing turned on."
+            )
+            .into()
+        }
+        1219 => {
+            return tr!(
+                "已經用另一組帳號連到這台電腦。Windows 對同一台電腦只能用一組帳號。",
+                "You're already connected to this computer with a different account. Windows allows only one account per computer."
+            )
+            .into()
+        }
+        1223 => return tr!("已取消。", "Cancelled.").into(),
+        1272 => {
+            return tr!(
+                "Windows 的安全性原則封鎖了訪客存取。Windows 11 24H2 之後，很多 NAS 的訪客共用都會遇到，需要在 NAS 上設定帳號。",
+                "Windows security policy blocks guest access. Many NAS guest shares hit this on Windows 11 24H2 and later; set up an account on the NAS."
+            )
+            .into()
+        }
+        _ => {}
+    }
     let mut buf = [0u16; 512];
     let n = unsafe {
         FormatMessageW(
@@ -235,6 +261,49 @@ pub fn format_filetime(ft: u64) -> String {
     }
 }
 
+/// 今天（本地時間）
+pub fn local_today() -> feather_core::searchquery::Ymd {
+    let mut st = SYSTEMTIME::default();
+    unsafe {
+        GetLocalTime(&mut st);
+    }
+    feather_core::searchquery::Ymd::new(st.wYear as i32, st.wMonth as u32, st.wDay as u32).unwrap_or(feather_core::searchquery::Ymd { y: 2000, m: 1, d: 1 })
+}
+
+/// 使用者地區設定的一週第一天：0 是星期一……6 是星期日（讀不到時用星期一）
+pub fn first_day_of_week() -> u32 {
+    let mut buf = [0u16; 8];
+    let n = unsafe { GetLocaleInfoEx(std::ptr::null(), LOCALE_IFIRSTDAYOFWEEK, buf.as_mut_ptr(), buf.len() as i32) };
+    if n <= 0 {
+        return 0;
+    }
+    String::from_utf16_lossy(feather_core::namematch::until_nul(&buf)).trim().parse::<u32>().ok().filter(|d| *d <= 6).unwrap_or(0)
+}
+
+/// 本地時間某一天 0 點的 FILETIME（UTC）。日光節約時間由 Windows 依當天的規則換算。
+pub fn local_midnight(d: feather_core::searchquery::Ymd) -> u64 {
+    let local = SYSTEMTIME { wYear: d.y as u16, wMonth: d.m as u16, wDayOfWeek: 0, wDay: d.d as u16, wHour: 0, wMinute: 0, wSecond: 0, wMilliseconds: 0 };
+    let mut utc = SYSTEMTIME::default();
+    let mut ft = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+    unsafe {
+        if TzSpecificLocalTimeToSystemTime(std::ptr::null(), &local, &mut utc) == 0 || SystemTimeToFileTime(&utc, &mut ft) == 0 {
+            return 0;
+        }
+    }
+    ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64
+}
+
+/// 日期條件換算成 FILETIME 範圍（本地的日界線；「本週」從地區設定的一週第一天開始）
+pub fn date_range(spec: &feather_core::searchquery::DateSpec) -> feather_core::searchquery::TimeRange {
+    let (from, to) = spec.local_days(local_today(), first_day_of_week());
+    feather_core::searchquery::TimeRange { from: from.map_or(0, local_midnight), to: to.map_or(u64::MAX, local_midnight) }
+}
+
+/// 搜尋框的多個日期條件換算後取交集；沒有日期條件時是 None
+pub fn query_time(q: &feather_core::searchquery::Query) -> Option<feather_core::searchquery::TimeRange> {
+    q.dates.iter().map(date_range).reduce(|a, b| a.intersect(b))
+}
+
 /// GetFullPathNameW + 展開環境變數 + 去掉引號，對應 C# 的 Path.GetFullPath(ExpandEnvironmentVariables(...))。
 pub fn full_path(input: &str) -> Result<String, String> {
     full_path_in(input, None)
@@ -317,6 +386,20 @@ pub fn reg_dword(sub: &str, value: &str) -> Option<u32> {
 /// 暫時把游標換成指定樣式（例如沙漏）。
 pub fn load_cursor(id: usize) -> HCURSOR {
     unsafe { LoadCursorW(0, id as *const u16) }
+}
+
+/// Windows 的組建編號（RtlGetVersion，不受相容性資訊清單影響）；取不到時當成 Windows 11（0 以外的最小值不會誤判成舊版）
+pub fn windows_build() -> u32 {
+    static BUILD: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *BUILD.get_or_init(|| unsafe {
+        let mut info: OSVERSIONINFOW = std::mem::zeroed();
+        info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
+        if RtlGetVersion(&mut info) == 0 && info.dwBuildNumber > 0 {
+            info.dwBuildNumber
+        } else {
+            feather_core::winver::WINDOWS_11
+        }
+    })
 }
 
 pub fn scale(v: i32, dpi: u32) -> i32 {
