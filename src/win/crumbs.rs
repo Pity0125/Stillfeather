@@ -51,24 +51,7 @@ struct Layout {
 }
 
 pub fn register(hinst: HINSTANCE) {
-    let class = wide(CRUMBS_CLASS);
-    let wc = WNDCLASSEXW {
-        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-        style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
-        lpfnWndProc: crumbs_proc,
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: hinst,
-        hIcon: 0,
-        hCursor: load_cursor(IDC_ARROW),
-        hbrBackground: 0,
-        lpszMenuName: std::ptr::null(),
-        lpszClassName: class.as_ptr(),
-        hIconSm: 0,
-    };
-    unsafe {
-        RegisterClassExW(&wc);
-    }
+    register_class(hinst, CRUMBS_CLASS, CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS, crumbs_proc, IDC_ARROW);
 }
 
 pub fn create(parent: HWND) -> HWND {
@@ -266,13 +249,7 @@ unsafe extern "system" fn crumbs_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         }
         WM_MOUSEMOVE => {
             if !d.tracking {
-                let mut tme = TRACKMOUSEEVENT {
-                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                    dwFlags: TME_LEAVE,
-                    hwndTrack: hwnd,
-                    dwHoverTime: 0,
-                };
-                TrackMouseEvent(&mut tme);
+                track_mouse_leave(hwnd);
                 d.tracking = true;
                 // 進來時就在空白處：要畫出提示
                 invalidate(hwnd);
@@ -298,6 +275,13 @@ unsafe extern "system" fn crumbs_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
             if let (Hit::Arrow(i), _) = current_hit(hwnd, x, y) {
                 post_menu(i, false);
+            }
+            return 0;
+        }
+        // 中鍵點一段：在新分頁開啟那一層（最後一段是目前的資料夾，也可以）
+        WM_MBUTTONUP => {
+            if let (Hit::Segment(i), _) = current_hit(hwnd, x, y) {
+                PostMessageW(app::main_hwnd(), WM_APP_CRUMB, i, 1);
             }
             return 0;
         }

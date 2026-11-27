@@ -119,21 +119,9 @@ pub fn check_writable(dir: &str) -> Access {
 
 // ---------------------------------------------------------------- 執行中的 Stillfeather
 
-fn user_tag() -> String {
-    let mut buf = [0u16; 257];
-    let mut len = buf.len() as u32;
-    let name = if unsafe { GetUserNameW(buf.as_mut_ptr(), &mut len) } != 0 {
-        let n = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
-        String::from_utf16_lossy(&buf[..n])
-    } else {
-        "user".into()
-    };
-    name.chars().map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect()
-}
-
 /// Stillfeather 的主視窗（與主程式 instance.rs 的類別名稱相同）
 fn main_window() -> HWND {
-    let class = w(&format!("FeatherFiles.Rust.Main.{}", user_tag()));
+    let class = w(&format!("FeatherFiles.Rust.Main.{}", shellreg::user_tag()));
     unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) }
 }
 

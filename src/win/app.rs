@@ -36,6 +36,8 @@ use feather_core::format::{format_size, group_digits};
 use feather_core::install;
 use feather_core::paths;
 use feather_core::plan::OpKind;
+use feather_core::recent::{self, RecentSearch};
+use feather_core::runline;
 use feather_core::searchquery::{format_bytes, parse_size, DateSpec, Filter, Query, Scorer, SizeRange, TimeRange, DATE_PRESETS, SIZE_PRESETS};
 use feather_core::sorting;
 use feather_core::session::{Session, SideTabs};
@@ -72,6 +74,8 @@ pub const WM_APP_SEARCH: u32 = WM_APP + 5;
 /// 選取剛建立的項目並進入改名（「新增資料夾」、Windows 的「新增 ▸」）。`lparam` 是 `Box<NewItem>`。
 /// 用貼出去的訊息：在按鈕或選單的點擊處理裡直接開始編輯，滑鼠放開、焦點轉移時編輯框會馬上被收掉。
 pub const WM_APP_BEGIN_RENAME: u32 = WM_APP + 18;
+/// 清單的選取改了（`wparam` 是哪一欄）：同一輪訊息裡的多次通知合併成一次再更新狀態列等（見 `App::selection_changed`）
+pub const WM_APP_SELECTION: u32 = WM_APP + 19;
 
 /// [`WM_APP_BEGIN_RENAME`] 的內容
 pub struct NewItem {
@@ -88,6 +92,8 @@ pub const TIMER_SHELL_REFRESH: usize = 3;
 pub const TIMER_SEARCH: usize = 5;
 /// 狀態列的「Ctrl+Z 可復原」提示用重點色顯示一段時間，時間到換回一般顏色
 pub const TIMER_FOOTER_HOT: usize = 18;
+/// 按著滑鼠拖曳選取（框選）時，狀態列等隔一下才跟上選取
+pub const TIMER_SELECTION: usize = 19;
 /// 「Ctrl+Z 可復原」用重點色顯示多久（毫秒）：刪除、移動不再確認，提示要夠顯眼
 const FOOTER_HOT_MS: u32 = 8000;
 /// 最多記住幾個剛關掉的分頁
@@ -442,6 +448,8 @@ pub struct App {
     global_btn: HWND,
     /// 全域搜尋是否勾選（新的搜尋都套用）
     search_global: bool,
+    /// 搜尋框目前的淡色提示（跟著搜尋範圍變，見 `sync_search_cue`）
+    search_cue: String,
     /// 收合時代表搜尋的圓形按鈕
     search_btn: HWND,
     /// 右上角的圓形按鈕（雙欄、隱藏項目、深淺色、設定）
@@ -492,6 +500,12 @@ pub struct App {
     pub(super) default_path: String,
     suppress_query_change: bool,
     pub(super) updating_list: bool,
+    /// 這一欄的選取改了，狀態列等還沒跟上（見 `selection_changed`）
+    pub(super) selection_dirty: [bool; 2],
+    /// 上次讓狀態列等跟上選取的時間（`anim::now`）
+    pub(super) selection_flushed: f64,
+    /// 清單內建的框選開始了（圖示等檢視；見 `drag_selecting`）
+    pub(super) builtin_marquee: [bool; 2],
     /// 視窗失去作用時記住焦點，切回來時還原（一般視窗沒有對話方塊管理員代勞）。
     last_focus: HWND,
     /// 路徑列目前是可輸入的文字框（否則顯示麵包屑）。
@@ -515,6 +529,8 @@ pub struct App {
     pub(super) pending_pins: Vec<(Vec<String>, Option<String>)>,
     /// 從側欄刪除的資料夾節點：刪除完成後若資料夾已不在就移除節點
     pub(super) pending_tree_delete: Option<(HTREEITEM, String)>,
+    /// 側欄大標籤的拖曳排序（見 tree.rs）
+    pub(super) section_drag: Option<super::tree::SectionDrag>,
     /// 復原紀錄（Ctrl+Z）
     pub(super) history: feather_core::undo::History,
     /// 進行中的移動／刪除：完成後依結果寫入復原紀錄
@@ -824,6 +840,7 @@ fn run_window(paths_in: Vec<String>, pick: Option<super::picker::Picker>, incomi
         clear_btn: 0,
         global_btn: 0,
         search_global: false,
+        search_cue: String::new(),
         search_btn: 0,
         top_buttons: Vec::new(),
         action_buttons: Vec::new(),
@@ -859,6 +876,9 @@ fn run_window(paths_in: Vec<String>, pick: Option<super::picker::Picker>, incomi
         default_path: fs::profile_dir(),
         suppress_query_change: false,
         updating_list: false,
+        selection_dirty: [false, false],
+        selection_flushed: 0.0,
+        builtin_marquee: [false, false],
         last_focus: 0,
         address_editing: false,
         typeahead: TypeAhead::default(),
@@ -874,6 +894,7 @@ fn run_window(paths_in: Vec<String>, pick: Option<super::picker::Picker>, incomi
         drop_pin: false,
         pending_pins: Vec::new(),
         pending_tree_delete: None,
+        section_drag: None,
         history: feather_core::undo::History::default(),
         op_pending: None,
         undo_select: Vec::new(),
@@ -1660,8 +1681,11 @@ impl App {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
             let hdc = BeginPaint(self.hwnd, &mut ps);
             let rect = client_rect(self.hwnd);
+            // 只重畫需要的範圍（例如只有狀態列換了內容、在淡入）：緩衝區只開那麼大
+            let dirty = RECT { left: ps.rcPaint.left.max(rect.left), top: ps.rcPaint.top.max(rect.top), right: ps.rcPaint.right.min(rect.right), bottom: ps.rcPaint.bottom.min(rect.bottom) };
+            let dirty = if dirty.width() > 0 && dirty.height() > 0 { dirty } else { rect };
             {
-                let buf = theme::Buffered::new(hdc, rect);
+                let buf = theme::Buffered::part(hdc, dirty);
                 let dc = buf.hdc;
                 let p = self.theme.pal;
                 let f = &self.theme.fonts;
@@ -1827,6 +1851,7 @@ impl App {
             super::shellwin::set_location(location);
         }
         self.sync_search();
+        self.sync_search_cue();
         show(self.clear_btn, self.clear_shown());
         controls::set_checked(self.dual_btn, self.ws.dual);
         if !self.op_busy && !self.footer_sticky {
@@ -1840,15 +1865,7 @@ impl App {
             self.footer = trn!(self.ws.tab_count(); "{} 個分頁 · {}", "{} tab · {}", "{} tabs · {}", self.ws.tab_count(), where_);
         }
         let info = self.compute_footer_info(side);
-        if info.title != self.footer_info.title || info.detail != self.footer_info.detail || info.link != self.footer_info.link {
-            // 狀態列內容換了：文字淡入並稍微上浮。連續快速變化（例如按住方向鍵）時不重播，避免文字一直閃。
-            let now = anim::now();
-            if now - self.footer_changed > 350.0 {
-                self.footer_fx.restart(0.25, 1.0, now, anim::dur(anim::TOGGLE_MS));
-            }
-            self.footer_changed = now;
-        }
-        self.footer_info = info;
+        self.set_footer_info(info);
         for i in 0..2 {
             if let Some(t) = self.bound[i].and_then(|id| self.tabs.get(&id)) {
                 set_window_text(self.pane_status[i], &t.status);
@@ -1881,6 +1898,35 @@ impl App {
     /// 浮動狀態列左側：選取一個項目時顯示其圖示、名稱與細節；多選時顯示數量與合計大小。
     /// 底部狀態列的文字。沒有選取時是資料夾的項目總數與摘要（見 folder_status_line）；
     /// 選取時是「已選取 N 個項目」與大小等資訊（一個項目時是它的名稱、類型、大小與修改日期）。
+    /// 換上狀態列左邊的內容；內容換了時回傳 true（文字淡入並稍微上浮。連續快速變化，
+    /// 例如按住方向鍵、框選時不重播，避免文字一直閃）
+    fn set_footer_info(&mut self, info: FooterInfo) -> bool {
+        let changed = info.title != self.footer_info.title || info.detail != self.footer_info.detail || info.link != self.footer_info.link;
+        if changed {
+            let now = anim::now();
+            if now - self.footer_changed > 350.0 {
+                self.footer_fx.restart(0.25, 1.0, now, anim::dur(anim::TOGGLE_MS));
+            }
+            self.footer_changed = now;
+        }
+        self.footer_info = info;
+        changed
+    }
+
+    /// 選取改了：只重算狀態列左邊的選取資訊、只重畫狀態列。`update_chrome` 會重畫整個主視窗與分頁列等，
+    /// 框選、按住方向鍵時每次都那樣做會卡。狀態列右邊原本顯示著操作結果時，換回分頁數要整個重新整理。
+    pub(super) fn update_selection_footer(&mut self) {
+        if self.footer_sticky {
+            self.clear_footer_message();
+            self.update_chrome();
+            return;
+        }
+        let info = self.compute_footer_info(self.active_side());
+        if self.set_footer_info(info) {
+            self.invalidate_footer();
+        }
+    }
+
     fn compute_footer_info(&mut self, side: Side) -> FooterInfo {
         let count = self.selected_count(side);
         if count == 0 {
@@ -1901,10 +1947,21 @@ impl App {
             }
         }
         let detail = if count <= 5_000 {
-            let entries = self.selected_entries(side);
-            let bytes: u64 = entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
-            let folders = entries.iter().filter(|e| e.is_dir).count();
-            trf!("{} 個資料夾 · {} 個檔案 · {}", "{} folders · {} files · {}", folders, entries.len() - folders, format_size(Some(bytes)))
+            // 直接看清單上的項目，不複製（框選時每 0.1 秒就算一次）
+            let (mut bytes, mut folders, mut files) = (0u64, 0usize, 0usize);
+            if let Some(tab) = self.bound[side.index()].and_then(|id| self.tabs.get(&id)) {
+                for i in self.list_selected_indices(self.lists[side.index()]) {
+                    match tab.row(i) {
+                        Some(e) if e.is_dir => folders += 1,
+                        Some(e) => {
+                            files += 1;
+                            bytes += e.size;
+                        }
+                        None => {}
+                    }
+                }
+            }
+            trf!("{} 個資料夾 · {} 個檔案 · {}", "{} folders · {} files · {}", folders, files, format_size(Some(bytes)))
         } else {
             tr!("大小未計算（選取項目過多）", "Size not calculated (too many items selected)").to_string()
         };
@@ -2149,13 +2206,19 @@ impl App {
     }
 
     /// 麵包屑：前往上層資料夾（並選取原本所在的子資料夾），或切換成輸入模式。
-    fn crumb_action(&mut self, index: usize) {
+    /// `new_tab`：中鍵點的，在新分頁開啟（見 `open_in_background_tab`）
+    fn crumb_action(&mut self, index: usize, new_tab: bool) {
         if index == crumbs::EDIT {
             self.begin_address_edit();
             return;
         }
         let segments = crumb_model();
         let Some((_, target)) = segments.get(index) else { return };
+        if new_tab {
+            let target = target.clone();
+            self.open_in_background_tab(self.active_side(), &target);
+            return;
+        }
         let select: Vec<String> = segments.get(index + 1).map(|s| vec![s.1.clone()]).unwrap_or_default();
         let id = self.active_tab_id();
         self.navigate(id, &target.clone(), NavKind::Normal, select);

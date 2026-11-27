@@ -535,7 +535,7 @@ impl App {
         let side = self.active_side();
         let Some(entry) = self.selected_entries(side).into_iter().next() else { return };
         let id = self.active_tab_id();
-        self.navigate(id, &entry.dir.to_string(), NavKind::Normal, vec![entry.full_path()]);
+        self.navigate(id, &entry.dir, NavKind::Normal, vec![entry.full_path()]);
     }
 
     pub(in crate::win) fn open_selection(&mut self, side: Side) {
@@ -616,6 +616,11 @@ impl App {
                 }
                 settings.favorites.push(p.clone());
             } else if group.is_none() {
+                // 已經釘選、放在某個標籤裡：拖到「常用位置」就移回常用位置
+                if settings.group_of(&p).is_some() {
+                    settings.move_bookmark(&p, None);
+                    added += 1;
+                }
                 continue;
             }
             if let Some(group) = group {
@@ -635,11 +640,11 @@ impl App {
             self.build_tree();
         }
         self.update_chrome();
-        self.set_footer(trn!(
-            added;
-            "已釘選 {added} 個資料夾到常用位置{}", "Pinned {added} folder to Favorites{}", "Pinned {added} folders to Favorites{}",
-            if ignored > 0 { trf!("，{ignored} 個不是資料夾或已達上限", "; {ignored} weren't folders or the limit was reached") } else { String::new() }
-        ));
+        let skipped = if ignored > 0 { trf!("，{ignored} 個不是資料夾或已達上限", "; {ignored} weren't folders or the limit was reached") } else { String::new() };
+        self.set_footer(match group {
+            Some(name) => trn!(added; "已把 {added} 個資料夾放進「{name}」{skipped}", "Added {added} folder to “{name}”{skipped}", "Added {added} folders to “{name}”{skipped}"),
+            None => trn!(added; "已釘選 {added} 個資料夾到常用位置{skipped}", "Pinned {added} folder to Favorites{skipped}", "Pinned {added} folders to Favorites{skipped}"),
+        });
     }
 
     pub(in crate::win) fn remove_favorite(&mut self, path: &str) {

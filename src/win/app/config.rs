@@ -213,7 +213,8 @@ impl App {
     pub(in crate::win) fn apply_settings(&mut self, new: Settings) {
         let _fade = self.crossfade(vec![client_rect(self.hwnd)], anim::THEME_MS);
         let compact_changed = new.compact_rows != self.settings.compact_rows;
-        let favorites_changed = new.favorites != self.settings.favorites || new.bookmark_groups != self.settings.bookmark_groups;
+        let favorites_changed = new.favorites != self.settings.favorites || new.bookmark_groups != self.settings.bookmark_groups || new.sidebar_order != self.settings.sidebar_order
+            || new.collapsed_sections != self.settings.collapsed_sections;
         self.keymap = keymap::Keymap::with_overrides(&new.shortcuts).0;
         let text_changed = new.text_size != self.settings.text_size;
         self.settings = new;

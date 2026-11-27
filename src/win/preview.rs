@@ -186,24 +186,7 @@ impl State {
 }
 
 pub fn register(hinst: HINSTANCE) {
-    let class = wide(POPUP_CLASS);
-    let wc = WNDCLASSEXW {
-        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-        style: CS_DROPSHADOW,
-        lpfnWndProc: popup_proc,
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: hinst,
-        hIcon: 0,
-        hCursor: load_cursor(IDC_ARROW),
-        hbrBackground: 0,
-        lpszMenuName: std::ptr::null(),
-        lpszClassName: class.as_ptr(),
-        hIconSm: 0,
-    };
-    unsafe {
-        RegisterClassExW(&wc);
-    }
+    register_class(hinst, POPUP_CLASS, CS_DROPSHADOW, popup_proc, IDC_ARROW);
 }
 
 pub fn create_popup(owner: HWND) -> HWND {
@@ -950,8 +933,7 @@ unsafe extern "system" fn popup_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
         WM_MOUSEMOVE => {
             let st = &mut a.preview;
             if !st.tracking {
-                let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
-                TrackMouseEvent(&mut tme);
+                track_mouse_leave(hwnd);
                 st.tracking = true;
             }
             let h = hit(st, hwnd, get_x_lparam(lparam), get_y_lparam(lparam));

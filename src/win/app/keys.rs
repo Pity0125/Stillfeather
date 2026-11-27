@@ -38,6 +38,10 @@ impl App {
         if vk == VK_ESCAPE && tabs::cancel_drag() {
             return true;
         }
+        // 拖曳側欄的大標籤中按 Esc：取消，標籤留在原位
+        if vk == VK_ESCAPE && self.cancel_section_drag() {
+            return true;
+        }
         // 麵包屑的子資料夾選單開著：方向鍵、Enter、Esc 與打字交給選單，其他按鍵不作用在後面的清單上
         if crumbmenu::is_open(&self.crumb_menu) {
             match crumbmenu::key(&mut self.crumb_menu, vk, ctrl, alt) {
@@ -109,6 +113,15 @@ impl App {
             self.picker_finish(feather_core::picker::EXIT_CANCEL);
             return true;
         }
+        // 開最近搜尋選單時貼給自己的 ↓：選單開著時由選單收走，沒開成時到這裡收掉
+        if vk == VK_DOWN && msg.lParam == search::RECENT_KEY_MARK {
+            return true;
+        }
+        // 搜尋框按 ↓（或 Alt+↓）：最近搜尋
+        if focus == self.query && vk == VK_DOWN && !ctrl && !shift {
+            self.recent_search_menu();
+            return true;
+        }
         // 快速鍵表（feather_core::keymap）：分頁、雙欄、檢視、導覽、剪貼簿、刪除等。說明的快速鍵一覽也從同一張表產生。
         if let Some(cmd) = self.keymap.lookup(vk, ctrl, shift, alt, in_edit, self.side_of_list(focus).is_some()) {
             self.run_key_command(cmd, focus);
@@ -128,20 +141,7 @@ impl App {
                 VK_RETURN => {
                     if focus == self.address {
                         let text = window_text(self.address);
-                        let id = self.active_tab_id();
-                        // 相對路徑（..、子資料夾名稱、\Windows）以目前的資料夾為準
-                        let here = self.active_tab().map(|t| t.path.clone()).unwrap_or_default();
-                        // 輸入的是檔案路徑：開啟所在資料夾並選取該檔案（不直接執行）。
-                        // 網路上的位置不在這裡檢查（離線時要等 SMB 逾時、視窗凍住），交給背景讀取時再判斷（見 navigate_or_reveal）
-                        match full_path_in(&text, Some(&here)) {
-                            Ok(full) if !fs::on_local_drive(&full) => self.navigate_or_reveal(id, &full, NavKind::Normal),
-                            Ok(full) if fs::is_file(&full) => {
-                                let parent = paths::parent(&full).unwrap_or_else(|| full.clone());
-                                self.navigate(id, &parent, NavKind::Normal, vec![full]);
-                            }
-                            Ok(full) => self.navigate(id, &full, NavKind::Normal, vec![]),
-                            _ => self.navigate(id, &text, NavKind::Normal, vec![]),
-                        }
+                        self.address_enter(&text);
                         self.end_address_edit();
                         self.focus_list(self.active_side());
                     } else {

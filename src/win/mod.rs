@@ -17,6 +17,7 @@ pub mod fileops;
 pub mod fs;
 pub mod icons;
 pub mod instance;
+pub mod keylist;
 pub mod marquee;
 pub mod menu;
 pub mod menusite;

@@ -415,6 +415,48 @@ pub fn rename(from: &str, to: &str) -> Result<(), String> {
     }
 }
 
+/// 路徑列執行程式、指令或網址（同 Win+R）：`file` 是完整路徑、不含路徑的指令（Windows 自己去 PATH、App Paths 找）
+/// 或網址，`args` 是參數，`dir` 是工作資料夾。在 UAC 視窗按「否」不算錯誤。`pidl` 不是空的時開啟那個位置
+/// （`shell:` 解析出來、不在檔案系統裡的位置，例如控制台），`file` 只用在錯誤訊息。
+pub fn run(owner: HWND, file: &str, args: &str, dir: Option<&str>, pidl: *mut std::ffi::c_void) -> Result<(), String> {
+    let f = wide(file);
+    let a = wide(args);
+    let d = dir.filter(|d| !d.is_empty()).map(wide);
+    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    info.fMask = SEE_MASK_FLAG_NO_UI;
+    info.hwnd = owner;
+    if pidl.is_null() {
+        info.lpFile = f.as_ptr();
+        if !args.is_empty() {
+            info.lpParameters = a.as_ptr();
+        }
+    } else {
+        info.fMask |= SEE_MASK_IDLIST;
+        info.lpIDList = pidl;
+    }
+    if let Some(d) = &d {
+        info.lpDirectory = d.as_ptr();
+    }
+    info.nShow = SW_SHOWNORMAL;
+    if unsafe { ShellExecuteExW(&mut info) } != 0 {
+        return Ok(());
+    }
+    let code = unsafe { GetLastError() };
+    Err(match code {
+        // ERROR_CANCELLED：UAC 視窗按了「否」
+        1223 => return Ok(()),
+        2 | 3 => trf!(
+            "找不到「{file}」。請確認名稱是否正確，再試一次。路徑列可以輸入資料夾、檔案、程式或指令（例如 cmd、notepad）。",
+            "Couldn't find “{file}”. Make sure the name is right and try again. The path bar accepts folders, files, programs and commands (such as cmd or notepad)."
+        ),
+        5 => trf!("無法執行「{file}」：拒絕存取。", "Couldn't run “{file}”: access denied."),
+        // ERROR_NO_ASSOCIATION
+        1155 => trf!("沒有可以開啟「{file}」的應用程式。", "No app is set up to open “{file}”."),
+        _ => trf!("無法執行「{file}」：{}", "Couldn't run “{file}”: {}", error_text(code)),
+    })
+}
+
 /// 以系統關聯程式開啟檔案。
 pub fn shell_open(owner: HWND, path: &str) -> Result<(), String> {
     let file = wide(path);

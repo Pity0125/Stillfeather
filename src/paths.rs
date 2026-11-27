@@ -351,8 +351,8 @@ pub fn to_long_path(p: &str) -> String {
     if p.len() < 240 || is_extended(p) {
         return p.to_string();
     }
-    if p.starts_with("\\\\") {
-        format!("\\\\?\\UNC\\{}", &p[2..])
+    if let Some(rest) = p.strip_prefix("\\\\") {
+        format!("\\\\?\\UNC\\{rest}")
     } else {
         format!("\\\\?\\{p}")
     }

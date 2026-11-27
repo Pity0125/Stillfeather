@@ -120,24 +120,7 @@ impl State {
 }
 
 pub fn register(hinst: HINSTANCE) {
-    let class = wide(CLASS);
-    let wc = WNDCLASSEXW {
-        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-        style: CS_HREDRAW | CS_VREDRAW,
-        lpfnWndProc: help_proc,
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: hinst,
-        hIcon: 0,
-        hCursor: load_cursor(IDC_ARROW),
-        hbrBackground: 0,
-        lpszMenuName: std::ptr::null(),
-        lpszClassName: class.as_ptr(),
-        hIconSm: 0,
-    };
-    unsafe {
-        RegisterClassExW(&wc);
-    }
+    register_class(hinst, CLASS, CS_HREDRAW | CS_VREDRAW, help_proc, IDC_ARROW);
 }
 
 unsafe fn state<'a>(hwnd: HWND) -> Option<&'a mut State> {
@@ -510,8 +493,8 @@ pub fn pages(settings: &Settings, keymap: &Keymap) -> Vec<Page> {
 
     // ---- 快速鍵
     let mut blocks = vec![Block::Text(s(tr!(
-        "在清單或側欄直接打字，可以跳到名稱開頭相符的項目。下面的快速鍵依目前的設定列出。",
-        "Type in the list or the sidebar to jump to an item whose name starts with what you type. The shortcuts below reflect your current settings."
+        "在清單或側欄直接打字，可以跳到名稱開頭相符的項目。下面的快速鍵依目前的設定列出；在「設定 › 快速鍵」點一下命令、再直接按鍵盤就能改。",
+        "Type in the list or the sidebar to jump to an item whose name starts with what you type. The shortcuts below reflect your current settings; to change one, click it in Settings › Shortcuts and press the new keys."
     )))];
     for (section, list) in keymap.help_sections() {
         blocks.push(Block::Section(s(section.title())));
@@ -535,6 +518,8 @@ pub fn pages(settings: &Settings, keymap: &Keymap) -> Vec<Page> {
     blocks.push(Block::Keys(rows(&[
         (tr!("滑鼠側鍵", "Mouse side buttons"), tr!("上一頁／下一頁", "Back/forward")),
         (tr!("分頁上按中鍵", "Middle-click a tab"), tr!("關閉分頁", "Close the tab")),
+        (tr!("資料夾上按中鍵", "Middle-click a folder"), tr!("在新分頁開啟，不切過去（按住 Shift 時切過去）；清單、側欄與路徑列都可以", "Open it in a new tab without switching to it (hold Shift to switch); works in the list, the sidebar and the path bar")),
+        (tr!("拖曳側欄的標籤標題", "Drag a sidebar section heading"), tr!("調整「常用位置」「磁碟」與自訂標籤的順序", "Reorder Favorites, Drives and your own sections")),
         (tr!("拖曳分頁", "Drag a tab"), tr!("調整順序；雙欄時也可以拖到另一欄", "Reorder tabs; in dual-pane mode you can drag to the other pane")),
         (tr!("拖曳空白處", "Drag in empty space"), tr!("框選多個項目（Ctrl 反轉、Shift 加入原本的選取）", "Select several items with a box (Ctrl inverts, Shift adds)")),
     ])));
@@ -549,6 +534,11 @@ pub fn pages(settings: &Settings, keymap: &Keymap) -> Vec<Page> {
             Block::Text(s(tr!(
                 "按 Ctrl+F 或右上角的放大鏡，輸入檔名後按 Enter。預設搜尋目前的資料夾（勾選「含子資料夾」時連子資料夾一起）；勾選搜尋框裡的「全域搜尋」會搜尋整台電腦的本機與卸除式磁碟。只比對檔名，不讀取檔案內容；結果邊找邊出現，按 Esc 取消。",
                 "Press Ctrl+F or the magnifier at the top right, type a file name and press Enter. Search covers the current folder (and its subfolders when “Include subfolders” is checked); check “Whole PC” in the search box to search every local and removable drive. Only file names are matched, not contents. Results appear as they're found; press Esc to cancel."
+            ))),
+            Block::Section(s(tr!("最近搜尋", "Recent searches"))),
+            Block::Text(s(tr!(
+                "在搜尋框按 ↓ 列出最近 10 次搜尋，連篩選條件（類型、日期、大小）與範圍（整台電腦、含不含子資料夾）一起記；選一個就照樣再搜一次。最下面的「清除最近搜尋」可以清掉紀錄。搜尋框空著時的淡色提示會寫出這次搜尋的範圍，例如「在「下載」及子資料夾中搜尋…」。",
+                "Press ↓ in the search box to list your last 10 searches, remembered with their filters (type, date, size) and scope (whole PC, with or without subfolders); pick one to run it again. “Clear recent searches” at the bottom clears the list. While the box is empty, its hint shows where the search will look, such as “Search “Downloads” and its subfolders…”."
             ))),
             Block::Section(s(tr!("篩選條件", "Filters"))),
             Block::Text(s(tr!(
@@ -616,9 +606,17 @@ pub fn pages(settings: &Settings, keymap: &Keymap) -> Vec<Page> {
         blocks: vec![
             Block::Section(s(tr!("拖放", "Drag and drop"))),
             Block::Text(s(tr!(
-                "檔案與資料夾可以直接拖到資料夾、另一欄、側欄的資料夾或磁碟。規則和檔案總管一樣：同一個磁碟移動、不同磁碟複製；按住 Ctrl 複製、Shift 移動、Alt 建立捷徑，用右鍵拖曳會跳出選單。拖到分頁上停一下就切換到那個分頁。把資料夾拖到側欄的「常用位置」標題就會釘選。",
-                "Drag files and folders onto a folder, the other pane, or a folder or drive in the sidebar. The rules match File Explorer: the same drive moves, another drive copies; hold Ctrl to copy, Shift to move or Alt to create a shortcut, or drag with the right button for a menu. Pause over a tab to switch to it. Drag a folder onto the sidebar's “Favorites” heading to pin it."
+                "檔案與資料夾可以直接拖到資料夾、另一欄、側欄的資料夾或磁碟。規則和檔案總管一樣：同一個磁碟移動、不同磁碟複製；按住 Ctrl 複製、Shift 移動、Alt 建立捷徑，用右鍵拖曳會跳出選單。拖到分頁上停一下就切換到那個分頁。把資料夾拖到側欄的「常用位置」或自訂標籤的標題，就會釘選在那個標籤裡。",
+                "Drag files and folders onto a folder, the other pane, or a folder or drive in the sidebar. The rules match File Explorer: the same drive moves, another drive copies; hold Ctrl to copy, Shift to move or Alt to create a shortcut, or drag with the right button for a menu. Pause over a tab to switch to it. Drag a folder onto the sidebar's “Favorites” heading, or one of your own section headings, to pin it there."
             ))),
+            Block::Section(s(tr!("側欄的標籤", "Sidebar sections"))),
+            Block::Bullets(vec![
+                s(tr!("在側欄的空白處或標籤的標題按右鍵，選「新增標籤…」，就多一個和「常用位置」「磁碟」同一層的標籤（例如「工作」「照片」）。", "Right-click empty space in the sidebar or a section heading and choose “New section…” to add a section alongside Favorites and Drives (for example Work or Photos).")),
+                s(tr!("把資料夾拖到標籤的標題上就放進那個標籤；已經釘選的資料夾按右鍵「移到其他標籤…」可以換位置。", "Drag a folder onto a section heading to add it there; right-click a pinned folder and choose “Move to another section…” to move it.")),
+                s(tr!("點標籤的標題收起或展開（下次開啟時照樣）；收起來時標題後面有「›」。", "Click a section heading to collapse or expand it (it stays that way next time); a collapsed section shows “›” after its name.")),
+                s(tr!("按住標籤的標題上下拖曳可以調整順序（常用位置與磁碟也可以），也可以在標題按右鍵選「往上移」「往下移」。", "Drag a section heading up or down to reorder it (Favorites and Drives too), or right-click it and choose “Move up” or “Move down”.")),
+                s(tr!("自訂標籤可以重新命名、刪除；刪除時裡面的資料夾移回「常用位置」，資料夾本身不會刪除。", "Your own sections can be renamed or deleted; deleting one moves its folders back to Favorites, and the folders themselves aren't deleted.")),
+            ]),
             Block::Section(s(tr!("刪除與復原", "Delete and undo"))),
             Block::Bullets(vec![
                 s(tr!("Delete 送到資源回收筒；要不要先確認照 Windows 資源回收筒「內容」裡的設定。", "Delete sends items to the Recycle Bin; whether it asks first follows the Recycle Bin's own setting in Windows.")),
@@ -629,6 +627,10 @@ pub fn pages(settings: &Settings, keymap: &Keymap) -> Vec<Page> {
             Block::Text(s(tr!(
                 "按路徑列的任何一層直接前往，按每一層右邊的箭頭列出那一層的子資料夾。Ctrl+E 改成輸入框，可以輸入完整路徑、相對路徑（..、子資料夾名稱）或檔案路徑（開啟所在資料夾並選取它）。輸入 \\\\電腦名稱 列出那台電腦或 NAS 分享的資料夾，需要帳號密碼時會跳出 Windows 的登入視窗。",
                 "Click any part of the path bar to go there, or the arrow beside it to list its subfolders. Ctrl+E turns it into a text box for a full path, a relative path (.., a subfolder name) or a file path (opens its folder and selects it). Type \\\\computer-name to list what that PC or NAS shares; Windows asks for a user name and password when needed."
+            ))),
+            Block::Text(s(tr!(
+                "路徑列也可以像 Win+R 一樣執行：程式、批次檔、捷徑（.exe、.bat、.cmd、.lnk…）直接執行；不含路徑的指令（cmd、notepad、cmd /k dir）和網址交給 Windows 執行，工作資料夾是目前的資料夾（在這裡輸入 cmd 就在這裡開命令提示字元）。shell:startup、shell:downloads 這類位置會解析後開啟，控制台等不在檔案系統裡的位置交給 Windows 開。",
+                "The path bar can also run things like Win+R: programs, batch files and shortcuts (.exe, .bat, .cmd, .lnk…) run directly; commands without a path (cmd, notepad, cmd /k dir) and web addresses are handed to Windows, starting in the current folder (type cmd to open a command prompt right here). Locations such as shell:startup or shell:downloads are resolved and opened; ones outside the file system, such as Control Panel, open in Windows."
             ))),
             Block::Section(s(tr!("右鍵選單", "Right-click menu"))),
             Block::Text(s(tr!(

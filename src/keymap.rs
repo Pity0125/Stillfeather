@@ -420,6 +420,11 @@ impl Combo {
     pub fn label(&self) -> String {
         label(&Binding { key: self.key, ctrl: self.ctrl, shift: self.shift, alt: self.alt, scope: Global, cmd: Refresh, help: true })
     }
+
+    /// 寫成文字（存進設定檔）再讀回來還是同一組按鍵：認不得名稱的按鍵（例如某些標點、數字鍵台）存不進去
+    pub fn round_trips(&self) -> bool {
+        parse_combo(&self.label()) == Some(*self)
+    }
 }
 
 /// 一筆快速鍵的寫法，例如「Ctrl+Shift+D」
@@ -646,6 +651,18 @@ impl Keymap {
         if keys.is_empty() { name.into() } else { format!("{name}{separator}{keys}") }
     }
 
+    /// 把 `combo` 給 `cmd` 用的話，哪些可以自訂的命令會失去這個按法（同一個地方已經在用的；舊快速鍵的提示不算）
+    pub fn taken_by(&self, cmd: Cmd, combo: Combo) -> Vec<Cmd> {
+        let new = Binding { key: combo.key, ctrl: combo.ctrl, shift: combo.shift, alt: combo.alt, scope: cmd.scope(), cmd, help: true };
+        let mut out: Vec<Cmd> = Vec::new();
+        for b in &self.bindings {
+            if b.cmd != cmd && Cmd::CUSTOMIZABLE.contains(&b.cmd) && clash(b, &new) && !out.contains(&b.cmd) {
+                out.push(b.cmd);
+            }
+        }
+        out
+    }
+
     /// 某個命令目前的按法
     pub fn combos(&self, cmd: Cmd) -> Vec<Combo> {
         self.bindings.iter().filter(|b| b.cmd == cmd).map(|b| Combo { key: b.key, ctrl: b.ctrl, shift: b.shift, alt: b.alt }).collect()
@@ -846,5 +863,24 @@ mod tests {
         assert_eq!(find("永久刪除").as_deref(), Some("Shift+Delete"));
         // 不列出的：舊的 Ctrl+Shift+D、鍵盤上的上一頁鍵、Backspace
         assert!(rows.iter().all(|(k, _)| !k.contains("Ctrl+Shift+D") && !k.contains("Backspace") && !k.contains("0xA6")));
+    }
+
+    #[test]
+    fn capture_helpers() {
+        let map = Keymap::default();
+        let ctrl = |key: u32| Combo { key, ctrl: true, shift: false, alt: false };
+        // Ctrl+W 是關閉分頁：給新分頁用的話，關閉分頁就沒有這個按法了
+        assert_eq!(map.taken_by(NewTab, ctrl(vk::letter(b'W'))), vec![CloseTab]);
+        // 自己原本的按法、沒人用的按法：不算被搶走
+        assert!(map.taken_by(NewTab, ctrl(vk::letter(b'T'))).is_empty());
+        assert!(map.taken_by(NewTab, ctrl(vk::letter(b'J'))).is_empty());
+        // 舊快速鍵的提示（Ctrl+Shift+D）不問
+        assert!(map.taken_by(NewTab, Combo { key: vk::letter(b'D'), ctrl: true, shift: true, alt: false }).is_empty());
+        // 寫成文字再讀回來
+        for c in [ctrl(vk::letter(b'K')), Combo { key: vk::F5, ctrl: false, shift: true, alt: true }, Combo { key: vk::LEFT, ctrl: false, shift: false, alt: true }] {
+            assert!(c.round_trips(), "{}", c.label());
+        }
+        // 沒有名稱的按鍵（數字鍵台的 *）存不進設定檔
+        assert!(!Combo { key: 0x6A, ctrl: true, shift: false, alt: false }.round_trips());
     }
 }

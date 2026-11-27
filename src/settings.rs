@@ -3,6 +3,8 @@
 
 use crate::json::{self, Value};
 use crate::paths;
+use crate::recent::{self, RecentSearch};
+use crate::sidebar::{self, Section};
 use crate::view::ViewMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,7 +106,14 @@ pub struct Settings {
     /// false 是懸停預覽（Rust 版專用）
     pub space_preview: bool,
     pub favorites: Vec<String>,
+    /// 側欄的自訂標籤（和「常用位置」「磁碟」同一層的大標籤）：名稱與放在裡面的資料夾（資料夾也列在 `favorites`）
     pub bookmark_groups: Vec<(String, Vec<String>)>,
+    /// 側欄大標籤由上到下的順序（見 sidebar.rs；Rust 版專用）
+    pub sidebar_order: Vec<String>,
+    /// 收起來的側欄大標籤（名稱同 `sidebar_order`；Rust 版專用）
+    pub collapsed_sections: Vec<String>,
+    /// 最近搜尋，最新的在前面（見 recent.rs；Rust 版專用）
+    pub recent_searches: Vec<RecentSearch>,
     pub shortcuts: Vec<(String, Vec<String>)>,
     /// 以前側欄底部「個人化」卡片是否收合。卡片已經拿掉（設定在右上角的齒輪），只為了讀寫舊的設定檔而保留
     pub personalize_collapsed: bool,
@@ -143,6 +152,9 @@ impl Default for Settings {
             space_preview: false,
             favorites: Vec::new(),
             bookmark_groups: Vec::new(),
+            sidebar_order: Vec::new(),
+            collapsed_sections: Vec::new(),
+            recent_searches: Vec::new(),
             shortcuts: Vec::new(),
             personalize_collapsed: false,
             view_mode: ViewMode::Details,
@@ -192,6 +204,115 @@ fn encode_lists(entries: &[(String, Vec<String>)]) -> String {
 }
 
 impl Settings {
+    fn group_names(&self) -> Vec<&str> {
+        self.bookmark_groups.iter().map(|(n, _)| n.as_str()).collect()
+    }
+
+    /// 側欄由上到下的大標籤（常用位置、自訂標籤、磁碟）
+    pub fn sidebar_sections(&self) -> Vec<Section> {
+        sidebar::sections(&self.sidebar_order, &self.group_names())
+    }
+
+    pub fn set_sidebar_sections(&mut self, sections: &[Section]) {
+        self.sidebar_order = sidebar::order_names(sections, &self.group_names());
+    }
+
+    /// 新增自訂標籤，放在 `after` 那個標籤的下面（None：磁碟前面）。名稱有問題時回傳原因。
+    pub fn add_group(&mut self, name: &str, after: Option<Section>) -> Result<usize, String> {
+        let name = name.trim();
+        if self.bookmark_groups.len() >= sidebar::MAX_GROUPS {
+            return Err(trf!("側欄最多 {} 個自訂標籤。", "Up to {} custom sections are allowed.", sidebar::MAX_GROUPS));
+        }
+        if let Some(e) = sidebar::name_error(name, &self.group_names(), None) {
+            return Err(e);
+        }
+        let mut sections = self.sidebar_sections();
+        let index = self.bookmark_groups.len();
+        self.bookmark_groups.push((name.to_string(), Vec::new()));
+        let at = match after.and_then(|a| sections.iter().position(|s| *s == a)) {
+            Some(i) => i + 1,
+            None => sections.iter().position(|s| *s == Section::Drives).unwrap_or(sections.len()),
+        };
+        sections.insert(at, Section::Group(index));
+        self.set_sidebar_sections(&sections);
+        Ok(index)
+    }
+
+    pub fn rename_group(&mut self, index: usize, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if index >= self.bookmark_groups.len() {
+            return Ok(());
+        }
+        if let Some(e) = sidebar::name_error(name, &self.group_names(), Some(index)) {
+            return Err(e);
+        }
+        let sections = self.sidebar_sections();
+        let collapsed = self.is_collapsed(Section::Group(index));
+        self.set_collapsed(Section::Group(index), false);
+        self.bookmark_groups[index].0 = name.to_string();
+        self.set_sidebar_sections(&sections);
+        self.set_collapsed(Section::Group(index), collapsed);
+        Ok(())
+    }
+
+    /// 設定檔裡代表這個大標籤的名稱
+    fn section_name(&self, section: Section) -> Option<String> {
+        sidebar::order_names(&[section], &self.group_names()).into_iter().next()
+    }
+
+    /// 這個大標籤收起來了
+    pub fn is_collapsed(&self, section: Section) -> bool {
+        self.section_name(section).is_some_and(|n| self.collapsed_sections.iter().any(|c| c.to_lowercase() == n.to_lowercase()))
+    }
+
+    /// 記下大標籤收起來或展開；回傳有沒有變
+    pub fn set_collapsed(&mut self, section: Section, collapsed: bool) -> bool {
+        if self.is_collapsed(section) == collapsed {
+            return false;
+        }
+        let Some(name) = self.section_name(section) else { return false };
+        if collapsed {
+            self.collapsed_sections.push(name);
+        } else {
+            self.collapsed_sections.retain(|c| c.to_lowercase() != name.to_lowercase());
+        }
+        true
+    }
+
+    /// 刪除自訂標籤：裡面的資料夾移回「常用位置」（資料夾本身與釘選都還在）
+    pub fn remove_group(&mut self, index: usize) {
+        if index >= self.bookmark_groups.len() {
+            return;
+        }
+        self.set_collapsed(Section::Group(index), false);
+        let sections: Vec<Section> = self
+            .sidebar_sections()
+            .into_iter()
+            .filter(|s| *s != Section::Group(index))
+            .map(|s| match s {
+                Section::Group(i) if i > index => Section::Group(i - 1),
+                other => other,
+            })
+            .collect();
+        self.bookmark_groups.remove(index);
+        self.set_sidebar_sections(&sections);
+    }
+
+    /// 把資料夾放進第 `group` 個自訂標籤（None：移回「常用位置」）；不在常用位置的不動
+    pub fn move_bookmark(&mut self, path: &str, group: Option<usize>) {
+        for (_, members) in &mut self.bookmark_groups {
+            members.retain(|p| !paths::eq_ignore_case(p, path));
+        }
+        if let Some((_, members)) = group.and_then(|g| self.bookmark_groups.get_mut(g)) {
+            members.push(path.to_string());
+        }
+    }
+
+    /// 資料夾在哪個自訂標籤裡（None：在「常用位置」或沒有釘選）
+    pub fn group_of(&self, path: &str) -> Option<usize> {
+        self.bookmark_groups.iter().position(|(_, members)| members.iter().any(|p| paths::eq_ignore_case(p, path)))
+    }
+
     /// 與 C# `SettingsService.Validate` 相同的規則；常用位置會去除重複（不分大小寫）。
     pub fn validate(&mut self) -> Result<(), String> {
         if !(SIDEBAR_MIN..=SIDEBAR_MAX).contains(&self.sidebar_width) {
@@ -304,12 +425,35 @@ impl Settings {
             Some(_) => return Err(tr!("常用位置必須是字串陣列。", "Favorites must be an array of strings.").into()),
         }
         s.bookmark_groups = string_lists(&root, "BookmarkGroups")?;
+        match root.get("SidebarOrder") {
+            None | Some(Value::Null) => {}
+            Some(Value::Arr(items)) => {
+                for item in items.iter().take(sidebar::MAX_GROUPS + 2) {
+                    if let Value::Str(name) = item {
+                        s.sidebar_order.push(name.clone());
+                    }
+                }
+            }
+            Some(_) => return Err(tr!("SidebarOrder 必須是字串陣列。", "SidebarOrder must be an array of strings.").into()),
+        }
+        // 收起來的標籤只是外觀：看不懂就當成都展開
+        if let Some(Value::Arr(items)) = root.get("CollapsedSections") {
+            for item in items.iter().take(sidebar::MAX_GROUPS + 2) {
+                if let Value::Str(name) = item {
+                    s.collapsed_sections.push(name.clone());
+                }
+            }
+        }
+        // 最近搜尋只是方便用的紀錄：看不懂的那一筆略過，不讓整個設定檔讀不進來
+        s.recent_searches = recent::from_json(root.get("RecentSearches"));
         s.shortcuts = string_lists(&root, "Shortcuts")?;
         s.validate()?;
         Ok(s)
     }
 
     pub fn to_json(&self) -> String {
+        let sidebar_order = format!("[{}]", self.sidebar_order.iter().map(|n| json::quote(n)).collect::<Vec<_>>().join(", "));
+        let collapsed = format!("[{}]", self.collapsed_sections.iter().map(|n| json::quote(n)).collect::<Vec<_>>().join(", "));
         let opt = |v: &Option<String>| v.as_deref().map(json::quote).unwrap_or_else(|| "null".to_string());
         let favorites = if self.favorites.is_empty() {
             "[]".to_string()
@@ -318,7 +462,7 @@ impl Settings {
             format!("[\n{}\n  ]", items.join(",\n"))
         };
         format!(
-            "{{\n  \"ThemeMode\": {},\n  \"Theme\": {},\n  \"AccentColor\": {},\n  \"BackgroundColor\": {},\n  \"SidebarWidth\": {},\n  \"SplitPercent\": {},\n  \"CompactRows\": {},\n  \"ShowExtensions\": {},\n  \"ShowHidden\": {},\n  \"Preview\": {},\n  \"ImagePreview\": {},\n  \"PdfPreview\": {},\n  \"SpacePreview\": {},\n  \"PersonalizeCollapsed\": {},\n  \"ViewMode\": {},\n  \"UpdateReminders\": {},\n  \"RestoreTabs\": {},\n  \"MediaFolderIcons\": {},\n  \"Language\": {},\n  \"FoldersOnTop\": {},\n  \"TextSize\": {},\n  \"BookmarkGroups\": {},\n  \"Shortcuts\": {},\n  \"Favorites\": {}\n}}",
+            "{{\n  \"ThemeMode\": {},\n  \"Theme\": {},\n  \"AccentColor\": {},\n  \"BackgroundColor\": {},\n  \"SidebarWidth\": {},\n  \"SplitPercent\": {},\n  \"CompactRows\": {},\n  \"ShowExtensions\": {},\n  \"ShowHidden\": {},\n  \"Preview\": {},\n  \"ImagePreview\": {},\n  \"PdfPreview\": {},\n  \"SpacePreview\": {},\n  \"PersonalizeCollapsed\": {},\n  \"ViewMode\": {},\n  \"UpdateReminders\": {},\n  \"RestoreTabs\": {},\n  \"MediaFolderIcons\": {},\n  \"Language\": {},\n  \"FoldersOnTop\": {},\n  \"TextSize\": {},\n  \"BookmarkGroups\": {},\n  \"SidebarOrder\": {},\n  \"CollapsedSections\": {},\n  \"RecentSearches\": {},\n  \"Shortcuts\": {},\n  \"Favorites\": {}\n}}",
             json::quote(self.theme_mode.as_str()),
             json::quote(&self.theme),
             opt(&self.accent_color),
@@ -341,6 +485,9 @@ impl Settings {
             self.folders_on_top,
             self.text_size,
             encode_lists(&self.bookmark_groups),
+            sidebar_order,
+            collapsed,
+            recent::to_json(&self.recent_searches),
             encode_lists(&self.shortcuts),
             favorites
         )
@@ -393,6 +540,16 @@ mod tests {
             space_preview: true,
             favorites: vec!["C:\\Users\\pity0\\桌面\\專案".into(), "\\\\nas\\共用".into()],
             bookmark_groups: vec![("專案".into(), vec![r"\\nas\共用".into()])],
+            sidebar_order: vec!["專案".into(), "::favorites".into(), "::drives".into()],
+            collapsed_sections: vec!["::drives".into()],
+            recent_searches: vec![crate::recent::RecentSearch {
+                text: "報告".into(),
+                global: false,
+                recursive: false,
+                category: crate::category::Category::Document,
+                date: Some(crate::searchquery::DateSpec::ThisWeek),
+                size: None,
+            }],
             shortcuts: vec![("new-tab".into(), vec!["Ctrl+K".into()]), ("refresh".into(), vec![])],
             personalize_collapsed: true,
             view_mode: ViewMode::Tiles,
@@ -424,6 +581,50 @@ mod tests {
         // 舊的設定檔沒有 Theme：預設主題（自訂的重點色照樣保留，在「進階」）
         assert_eq!(s.theme, crate::themes::DEFAULT);
         assert_eq!(s.accent_color.as_deref(), Some("#005FB8"));
+    }
+
+    #[test]
+    fn sidebar_sections_follow_groups() {
+        use crate::sidebar::Section::*;
+        let mut s = Settings { favorites: vec![r"C:\工作".into(), r"D:\照片".into()], ..Settings::default() };
+        assert_eq!(s.sidebar_sections(), vec![Favorites, Drives]);
+        // 從空白處新增：放在磁碟前面；從某個標籤新增：放在它下面
+        assert_eq!(s.add_group("工作", None), Ok(0));
+        assert_eq!(s.add_group("照片", Some(Favorites)), Ok(1));
+        assert_eq!(s.sidebar_sections(), vec![Favorites, Group(1), Group(0), Drives]);
+        assert!(s.add_group("照片", None).is_err());
+        s.move_bookmark(r"C:\工作", Some(0));
+        s.move_bookmark(r"d:\照片", Some(1));
+        assert_eq!(s.group_of(r"c:\工作"), Some(0));
+        s.move_bookmark(r"C:\工作", Some(1));
+        assert_eq!(s.group_of(r"C:\工作"), Some(1));
+        // 收起來：存的是名稱，改名時跟著改
+        assert!(s.set_collapsed(Group(1), true));
+        assert!(!s.set_collapsed(Group(1), true));
+        assert!(s.set_collapsed(Drives, true));
+        assert!(s.is_collapsed(Group(1)) && s.is_collapsed(Drives) && !s.is_collapsed(Favorites));
+        // 改名：順序與收起來的狀態跟著
+        s.rename_group(1, "相片").unwrap();
+        assert!(s.is_collapsed(Group(1)));
+        assert_eq!(s.collapsed_sections, vec!["::drives".to_string(), "相片".into()]);
+        assert_eq!(s.sidebar_order, vec!["::favorites".to_string(), "相片".into(), "工作".into(), "::drives".into()]);
+        assert!(s.rename_group(1, "工作").is_err());
+        // 刪掉第一個：後面的索引往前，裡面的資料夾回到常用位置（還在 favorites）
+        s.remove_group(0);
+        assert_eq!(s.bookmark_groups.len(), 1);
+        assert_eq!(s.sidebar_sections(), vec![Favorites, Group(0), Drives]);
+        s.remove_group(0);
+        assert_eq!(s.group_of(r"C:\工作"), None);
+        // 刪掉的標籤不再記著收起來
+        assert_eq!(s.collapsed_sections, vec!["::drives".to_string()]);
+        assert_eq!(s.favorites.len(), 2);
+        let back = Settings::from_json(&s.to_json()).unwrap();
+        assert_eq!(back, s);
+        // 看不懂的最近搜尋略過，不影響其他設定
+        let t = Settings::from_json("{\"RecentSearches\": [{\"Text\": 1}, {\"Text\": \"報告\"}], \"SidebarOrder\": [\"::drives\"]}").unwrap();
+        assert_eq!(t.recent_searches.len(), 1);
+        assert_eq!(t.sidebar_sections(), vec![Favorites, Drives]);
+        assert!(Settings::from_json("{\"SidebarOrder\": 3}").is_err());
     }
 
     #[test]

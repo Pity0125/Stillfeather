@@ -2,6 +2,7 @@
 //! 第二次啟動以 WM_COPYDATA 把路徑交給既有視窗，得到確認（回傳 1）後才結束。
 //! 視窗類別名稱與互斥鎖都含使用者名稱；Local\ 命名空間本身就以工作階段區隔。
 
+use super::shellreg::user_tag;
 use super::sys::*;
 use super::util::*;
 use feather_core::ipc;
@@ -10,14 +11,6 @@ use std::time::{Duration, Instant};
 pub struct Instance {
     mutex: HANDLE,
     pub primary: bool,
-}
-
-fn user_tag() -> String {
-    let mut buf = [0u16; 257];
-    let mut len = buf.len() as u32;
-    let name = if unsafe { GetUserNameW(buf.as_mut_ptr(), &mut len) } != 0 { from_wide(&buf) } else { "user".into() };
-    // 物件名稱不可含反斜線
-    name.chars().map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect()
 }
 
 pub fn main_class() -> String {

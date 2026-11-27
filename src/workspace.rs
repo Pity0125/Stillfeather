@@ -206,6 +206,18 @@ impl Workspace {
         id
     }
 
+    /// 在背景開分頁（中鍵點資料夾）：插在第 `at` 個位置，原本選取的分頁維持選取、作用中的欄位不變
+    pub fn insert_tab_background(&mut self, side: Side, at: usize) -> TabId {
+        let id = self.alloc();
+        let g = &mut self.groups[side.index()];
+        let at = at.min(g.tabs.len());
+        g.tabs.insert(at, id);
+        if !g.tabs.is_empty() && at <= g.selected && g.tabs.len() > 1 {
+            g.selected += 1;
+        }
+        id
+    }
+
     /// 拖曳排序：把同一欄的第 `from` 個分頁移到第 `gap` 個縫（0 是最前面，`len` 是最後面）。
     /// 原本選取的分頁維持選取；回傳是否有移動。
     pub fn move_tab_to(&mut self, side: Side, from: usize, gap: usize) -> bool {
@@ -317,6 +329,27 @@ mod tests {
             }
         }
         ws
+    }
+
+    #[test]
+    fn background_tab_keeps_current_and_active_side() {
+        let mut ws = ws_with(3, 2);
+        ws.select(Side::Left, 1);
+        let current = ws.current(Side::Left);
+        // 插在目前分頁的後面：選取不變，作用中的欄位不變
+        let id = ws.insert_tab_background(Side::Left, 2);
+        assert_eq!(ws.current(Side::Left), current);
+        assert_eq!(ws.groups[0].tabs[2], id);
+        assert_eq!(ws.active, Side::Left);
+        // 插在目前分頁的前面：選取跟著往後一格，仍是同一個分頁
+        ws.insert_tab_background(Side::Left, 0);
+        assert_eq!(ws.current(Side::Left), current);
+        assert_eq!(ws.groups[0].tabs.len(), 5);
+        // 另一欄：作用中的欄位不會跳過去
+        let before = ws.current(Side::Right);
+        ws.insert_tab_background(Side::Right, 99);
+        assert_eq!(ws.current(Side::Right), before);
+        assert_eq!(ws.active, Side::Left);
     }
 
     #[test]

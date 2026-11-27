@@ -1,5 +1,9 @@
-//! 左側樹狀導覽：常用位置與磁碟。展開時才在背景讀取子資料夾，收合後釋放；
-//! 磁碟清單依 Windows 裝置通知更新，沒有閒置輪詢。
+//! 左側樹狀導覽：大標籤（常用位置、使用者自己新增的標籤、磁碟）與底下的資料夾。展開時才在背景讀取子資料夾，
+//! 收合後釋放；磁碟清單依 Windows 裝置通知更新，沒有閒置輪詢。
+//!
+//! 點大標籤的標題收起或展開（記在設定檔），平常不顯示展開箭頭，收起來時標題後面有「›」；
+//! 按住標題拖曳可以調整順序（順序見 feather_core::sidebar）；
+//! 在標題或側欄的空白處按右鍵可以新增標籤，自訂標籤可以改名、刪除。把資料夾拖到標籤上就放進那個標籤。
 
 use super::app::{self, id, App, NavKind, Node, NodeKind, WorkerMsg, WM_APP_TREE_RESET};
 use super::anim;
@@ -14,6 +18,7 @@ use super::sys::*;
 use super::theme::{self, glyph};
 use super::util::*;
 use feather_core::paths;
+use feather_core::sidebar::{self, Section};
 use feather_core::typeahead;
 use feather_core::watch::{self, Step};
 use std::sync::atomic::AtomicBool;
@@ -21,6 +26,19 @@ use std::sync::atomic::AtomicBool;
 pub(super) const FAVORITES_KEY: &str = "::favorites";
 const BOOKMARK_MOVE: u16 = 450;
 const DRIVES_KEY: &str = "::drives";
+/// 自訂標籤標題節點的路徑：後面接 `BookmarkGroups` 的索引
+pub(super) const GROUP_PREFIX: &str = "::bookmark-group/";
+
+/// 側欄大標籤的拖曳排序：按住標題、移動超過拖曳距離後開始，放開時移到最近的縫
+pub(super) struct SectionDrag {
+    item: HTREEITEM,
+    /// 第幾個大標籤（由上到下）
+    from: usize,
+    start: POINT,
+    active: bool,
+    /// 要放進第幾個縫（0 是最上面）
+    slot: Option<usize>,
+}
 
 impl App {
     pub(super) fn create_tree(&mut self) -> HWND {
@@ -144,55 +162,141 @@ impl App {
         send_ptr(self.tree, TVM_SETITEMW, 0, &tv);
     }
 
-    /// 重建整棵樹：常用位置（含自訂捷徑）與磁碟。
+    fn insert_header(&mut self, text: &str, key: String) -> HTREEITEM {
+        let blank = self.icons.tree_blank;
+        self.insert_node(TVI_ROOT, text, blank, true, true, Node { path: key, kind: NodeKind::Header, loaded: true, token: 0 })
+    }
+
+    /// 重建整棵樹：照設定的順序放大標籤——常用位置（內建的資料夾與沒放進標籤的釘選）、自訂標籤、磁碟。
     pub(super) fn build_tree(&mut self) {
         send(self.tree, TVM_DELETEITEM, 0, TVI_ROOT);
         self.nodes.clear();
         self.tree_fx.clear();
         self.tree_top = 0;
+        // 拖曳標籤到一半側欄重建了（例如另一個視窗改了設定）：取消拖曳、放開滑鼠
+        self.cancel_section_drag();
         let folder = self.icons.tree_blank;
-        let fav = self.insert_node(TVI_ROOT, tr!("常用位置", "Favorites"), folder, true, true, Node {
-            path: FAVORITES_KEY.into(),
-            kind: NodeKind::Header,
-            loaded: true,
-            token: 0,
-        });
-        let known = [
-            (tr!("使用者", "User"), Some(fs::profile_dir())),
-            (tr!("桌面", "Desktop"), fs::known_folder(&fs::FOLDERID_DESKTOP)),
-            (tr!("文件", "Documents"), fs::known_folder(&fs::FOLDERID_DOCUMENTS)),
-            (tr!("下載", "Downloads"), fs::known_folder(&fs::FOLDERID_DOWNLOADS)),
-            (tr!("圖片", "Pictures"), fs::known_folder(&fs::FOLDERID_PICTURES)),
-        ];
-        for (label, path) in known {
-            if let Some(p) = path {
-                self.insert_node(fav, label, folder, true, false, Node { path: p, kind: NodeKind::Favorite { custom: false }, loaded: false, token: 0 });
+        let favorites = self.settings.favorites.clone();
+        let groups = self.settings.bookmark_groups.clone();
+        let in_group = |p: &str| groups.iter().position(|(_, members)| members.iter().any(|m| paths::eq_ignore_case(m, p)));
+        for section in self.settings.sidebar_sections() {
+            let header = match section {
+                Section::Favorites => {
+                    let fav = self.insert_header(tr!("常用位置", "Favorites"), FAVORITES_KEY.into());
+                    let known = [
+                        (tr!("使用者", "User"), Some(fs::profile_dir())),
+                        (tr!("桌面", "Desktop"), fs::known_folder(&fs::FOLDERID_DESKTOP)),
+                        (tr!("文件", "Documents"), fs::known_folder(&fs::FOLDERID_DOCUMENTS)),
+                        (tr!("下載", "Downloads"), fs::known_folder(&fs::FOLDERID_DOWNLOADS)),
+                        (tr!("圖片", "Pictures"), fs::known_folder(&fs::FOLDERID_PICTURES)),
+                    ];
+                    for (label, path) in known {
+                        if let Some(p) = path {
+                            self.insert_node(fav, label, folder, true, false, Node { path: p, kind: NodeKind::Favorite { custom: false }, loaded: false, token: 0 });
+                        }
+                    }
+                    for p in favorites.iter().filter(|p| in_group(p).is_none()) {
+                        let label = paths::tab_title(p);
+                        self.insert_node(fav, &label, folder, true, false, Node { path: p.clone(), kind: NodeKind::Favorite { custom: true }, loaded: false, token: 0 });
+                    }
+                    fav
+                }
+                Section::Group(i) => {
+                    let Some((name, _)) = groups.get(i) else { continue };
+                    let node = self.insert_header(name, format!("{GROUP_PREFIX}{i}"));
+                    let mut any = false;
+                    for p in favorites.iter().filter(|p| in_group(p) == Some(i)) {
+                        let label = paths::tab_title(p);
+                        self.insert_node(node, &label, folder, true, false, Node { path: p.clone(), kind: NodeKind::Favorite { custom: true }, loaded: false, token: 0 });
+                        any = true;
+                    }
+                    if !any {
+                        // 空的標籤：提示怎麼放資料夾進來（拖放到這一行也算放進這個標籤）
+                        self.info_node(node, tr!("把資料夾拖到這裡", "Drag folders here"));
+                    }
+                    node
+                }
+                Section::Drives => {
+                    let drives = self.insert_header(tr!("磁碟", "Drives"), DRIVES_KEY.into());
+                    self.fill_drives(drives);
+                    drives
+                }
+            };
+            if !self.settings.is_collapsed(section) {
+                send(self.tree, TVM_EXPAND, TVE_EXPAND, header);
             }
         }
-        let mut parents = Vec::new();
-        for (index, (name, members)) in self.settings.bookmark_groups.clone().into_iter().enumerate() {
-            let node = self.insert_node(fav, &name, folder, !members.is_empty(), false, Node {
-                path: format!("::bookmark-group/{index}"), kind: NodeKind::Header, loaded: true, token: 0,
-            });
-            parents.push((node, members));
+    }
+
+    /// 點大標籤的標題（或在標題上按 Enter）：收起或展開
+    fn toggle_section(&mut self, item: HTREEITEM) {
+        let expanded = send(self.tree, TVM_GETITEMSTATE, item as usize, TVIS_EXPANDED as LPARAM) as u32 & TVIS_EXPANDED != 0;
+        send(self.tree, TVM_EXPAND, if expanded { TVE_COLLAPSE } else { TVE_EXPAND }, item);
+        self.remember_section_state(item);
+    }
+
+    /// 記下大標籤現在是收起來還是展開（存不進設定檔時就算了，下次開啟照舊展開）
+    fn remember_section_state(&mut self, item: HTREEITEM) {
+        let Some(section) = self.section_of(item) else { return };
+        let expanded = send(self.tree, TVM_GETITEMSTATE, item as usize, TVIS_EXPANDED as LPARAM) as u32 & TVIS_EXPANDED != 0;
+        let mut settings = self.settings.clone();
+        if settings.set_collapsed(section, !expanded) && app::write_settings(&settings).is_ok() {
+            self.settings = settings;
         }
-        for p in self.settings.favorites.clone() {
-            let parent = parents.iter().find(|(_, members)| members.iter().any(|m| paths::eq_ignore_case(m, &p))).map_or(fav, |(node, _)| *node);
-            let label = paths::tab_title(&p);
-            self.insert_node(parent, &label, folder, true, false, Node { path: p, kind: NodeKind::Favorite { custom: true }, loaded: false, token: 0 });
+        invalidate(self.tree);
+    }
+
+    /// 標題節點是哪一個大標籤
+    pub(super) fn section_of(&self, item: HTREEITEM) -> Option<Section> {
+        let n = self.nodes.get(&item).filter(|n| n.kind == NodeKind::Header)?;
+        match n.path.as_str() {
+            FAVORITES_KEY => Some(Section::Favorites),
+            DRIVES_KEY => Some(Section::Drives),
+            p => p.strip_prefix(GROUP_PREFIX)?.parse().ok().map(Section::Group),
         }
-        for (parent, _) in parents {
-            send(self.tree, TVM_EXPAND, TVE_EXPAND, parent);
+    }
+
+    /// 拖放到這一列就放進哪個自訂標籤：標籤的標題，或空標籤裡的提示。回傳標籤名稱與標題節點
+    pub(super) fn group_drop_target(&self, item: HTREEITEM) -> Option<(String, HTREEITEM)> {
+        let header = match self.nodes.get(&item)?.kind {
+            NodeKind::Header => item,
+            NodeKind::Info => send(self.tree, TVM_GETNEXTITEM, TVGN_PARENT, item) as HTREEITEM,
+            _ => return None,
+        };
+        match self.section_of(header)? {
+            Section::Group(i) => self.settings.bookmark_groups.get(i).map(|(name, _)| (name.clone(), header)),
+            _ => None,
         }
-        let drives = self.insert_node(TVI_ROOT, tr!("磁碟", "Drives"), folder, true, true, Node {
-            path: DRIVES_KEY.into(),
-            kind: NodeKind::Header,
-            loaded: true,
-            token: 0,
-        });
-        self.fill_drives(drives);
-        send(self.tree, TVM_EXPAND, TVE_EXPAND, fav);
-        send(self.tree, TVM_EXPAND, TVE_EXPAND, drives);
+    }
+
+    /// 由上到下的大標籤標題
+    fn section_headers(&self) -> Vec<HTREEITEM> {
+        let mut out = Vec::new();
+        let mut h = send(self.tree, TVM_GETNEXTITEM, TVGN_ROOT, 0) as HTREEITEM;
+        while h != 0 {
+            out.push(h);
+            h = send(self.tree, TVM_GETNEXTITEM, TVGN_NEXT, h) as HTREEITEM;
+        }
+        out
+    }
+
+    /// 項目的整列範圍（樹狀圖用戶區座標）
+    fn tree_row_rect(&self, item: HTREEITEM) -> Option<RECT> {
+        let mut r = RECT::default();
+        unsafe {
+            (&mut r as *mut RECT as *mut HTREEITEM).write_unaligned(item);
+        }
+        (send(self.tree, TVM_GETITEMRECT, 0, &mut r as *mut RECT as LPARAM) != 0).then_some(r)
+    }
+
+    /// 大標籤之間的縫的高度（第 k 個是第 k 個標題的上緣，最後一個是最後一列的下緣）
+    fn section_slots(&self) -> Vec<i32> {
+        let mut v: Vec<i32> = self.section_headers().into_iter().filter_map(|h| self.tree_row_rect(h).map(|r| r.top)).collect();
+        let last = send(self.tree, TVM_GETNEXTITEM, TVGN_LASTVISIBLE, 0) as HTREEITEM;
+        if let Some(r) = (last != 0).then(|| self.tree_row_rect(last)).flatten() {
+            v.push(r.bottom);
+        }
+        v
     }
 
     fn fill_drives(&mut self, root: HTREEITEM) {
@@ -231,6 +335,10 @@ impl App {
                     let item = nm.itemNew.hItem;
                     if nm.action as usize & TVE_COLLAPSE != 0 && self.nodes.get(&item).is_some_and(|n| n.kind != NodeKind::Header && n.loaded) {
                         PostMessageW(self.hwnd, WM_APP_TREE_RESET, 0, item);
+                    }
+                    // 用方向鍵收起、展開大標籤：記下來
+                    if self.nodes.get(&item).is_some_and(|n| n.kind == NodeKind::Header) {
+                        self.remember_section_state(item);
                     }
                     0
                 }
@@ -285,6 +393,12 @@ impl App {
                 CDRF_SKIPDEFAULT
             }
             CDDS_POSTPAINT => {
+                // 拖曳大標籤：放開後會移到的縫畫一條重點色的線
+                if let Some(y) = self.section_drop_y() {
+                    let c = client_rect(self.tree);
+                    let bar = RECT { left: c.left + self.s(10), top: y - self.s(1), right: c.right - self.s(10), bottom: y + self.s(2) };
+                    theme::round_rect(cd.nmcd.hdc, &bar, self.s(3), Some(self.theme.pal.accent), None);
+                }
                 let busy = self.tree_fx.animating(anim::now());
                 let rects: Vec<RECT> = busy
                     .into_iter()
@@ -415,9 +529,8 @@ impl App {
 
     fn tree_navigate(&mut self, item: HTREEITEM) {
         match self.nodes.get(&item).map(|n| n.kind) {
-            Some(NodeKind::Header) => {
-                send(self.tree, TVM_EXPAND, 3 /* TVE_TOGGLE */, item);
-            }
+            // 大標籤：收起或展開（按住可以拖曳調整順序）
+            Some(NodeKind::Header) => self.toggle_section(item),
             Some(NodeKind::Info) | None => {}
             Some(_) => {
                 send(self.tree, TVM_SELECTITEM, TVGN_CARET, item);
@@ -443,24 +556,32 @@ impl App {
         let label = self.tree_item_text(item);
 
         if kind == Some(NodeKind::Header) {
-            // 區段標題：小字標籤，後面一個小箭頭表示展開或收合（點標題可切換）
-            let group = self.nodes.get(&item).is_some_and(|n| n.path.starts_with("::bookmark-group/"));
-            let x = row.left + self.s(if group { 32 } else { 16 });
-            let tr = RECT { left: x, top: row.top + self.s(6), ..row };
+            // 大標籤的標題：小字標籤。點一下收起或展開，按住可以拖曳調整順序。平常不顯示展開箭頭：
+            // 收起來時後面有「›」，展開時滑鼠移上來才淡淡顯示可以收起的箭頭
+            let group = self.nodes.get(&item).is_some_and(|n| n.path.starts_with(GROUP_PREFIX));
+            let tr = RECT { left: row.left + self.s(16), top: row.top + self.s(6), ..row };
+            let pill = RECT { left: row.left + self.s(4), top: row.top + self.s(4), right: row.right - self.s(4), bottom: row.bottom };
             let pin_here = self.drop_pin && self.nodes.get(&item).is_some_and(|n| n.path == FAVORITES_KEY);
             if pin_here || (group && drop_target) {
-                // 拖曳資料夾到這裡：標題變成重點色並提示放開即可釘選
-                let pill = RECT { left: row.left + self.s(4), top: row.top + self.s(4), right: row.right - self.s(4), bottom: row.bottom };
+                // 拖曳資料夾到這裡：標題變成重點色並提示放開即可放進來
                 theme::round_rect(hdc, &pill, self.s(12), Some(theme::blend(p.accent, p.sidebar, 0.14)), Some(p.accent));
-                theme::draw_text(hdc, tr!("放開即可釘選到常用位置", "Release to pin to Favorites"), &tr, f.body_small_bold, p.accent, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                let hint = if pin_here { tr!("放開即可釘選到常用位置", "Release to pin to Favorites").to_string() } else { trf!("放開即可放進「{label}」", "Release to add to “{label}”") };
+                theme::draw_text(hdc, &hint, &tr, f.body_small_bold, p.accent, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                 return;
             }
-            theme::draw_text(hdc, &label, &tr, f.body_small_bold, p.sidebar_muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            let w = theme::text_width(hdc, &label, f.body_small_bold);
-            let cr = RECT { left: x + w + self.s(4), right: x + w + self.s(20), ..tr };
-            let g = if expanded { glyph::SORT_DOWN } else { glyph::CHEVRON_RIGHT };
-            let c = if hot { p.sidebar_ink } else { theme::blend(p.sidebar_muted, p.sidebar, 0.75) };
-            theme::draw_text(hdc, &g.to_string(), &cr, f.icon_small, c, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            let dragging = self.section_drag.as_ref().is_some_and(|d| d.active && d.item == item);
+            if dragging {
+                theme::round_rect(hdc, &pill, self.s(12), Some(theme::blend(p.accent, p.sidebar, 0.10)), Some(p.accent));
+            }
+            let color = if dragging { p.accent } else if hot { p.sidebar_ink } else { p.sidebar_muted };
+            theme::draw_text(hdc, &label, &tr, f.body_small_bold, color, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            if !dragging && (!expanded || hot) {
+                let w = theme::text_width(hdc, &label, f.body_small_bold).min(tr.width());
+                let cr = RECT { left: tr.left + w + self.s(4), right: tr.left + w + self.s(20), ..tr };
+                let g = if expanded { glyph::SORT_DOWN } else { glyph::CHEVRON_RIGHT };
+                let c = if expanded { theme::blend(p.sidebar_muted, p.sidebar, 0.75) } else { color };
+                theme::draw_text(hdc, &g.to_string(), &cr, f.icon_small, c, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            }
             return;
         }
 
@@ -575,38 +696,203 @@ impl App {
         }
     }
 
-    fn save_bookmark_groups(&mut self, settings: feather_core::settings::Settings) {
+    /// 存下側欄標籤的變更並重建側欄；`message` 顯示在狀態列
+    fn save_sections(&mut self, settings: feather_core::settings::Settings, message: String) {
         match app::write_settings(&settings) {
-            Ok(()) => { self.settings = settings; self.build_tree(); }
+            Ok(()) => {
+                self.settings = settings;
+                self.build_tree();
+                self.set_footer(message);
+            }
             Err(error) => self.show_error(&error),
         }
     }
 
-    fn bookmark_group_menu(&mut self, index: Option<usize>, pt: POINT) {
-        let mut commands = vec![(1, tr!("新增書籤分類…", "New bookmark group…"), true)];
-        if index.is_some() {
-            commands.push((2, tr!("重新命名分類…", "Rename group…"), true));
-            commands.push((3, tr!("移除分類（保留書籤）", "Remove group (keep bookmarks)"), true));
+    /// 大標籤的選單（在標題上按右鍵，或在側欄的空白處）：新增標籤（放在這個標籤下面）；
+    /// 自訂標籤可以改名、刪除；往上移、往下移（同拖曳標題）。
+    pub(super) fn section_menu(&mut self, section: Option<Section>, pt: POINT) {
+        const ADD: u16 = 1;
+        const RENAME: u16 = 2;
+        const REMOVE: u16 = 3;
+        const UP: u16 = 4;
+        const DOWN: u16 = 5;
+        self.hide_preview();
+        let sections = self.settings.sidebar_sections();
+        let pos = section.and_then(|s| sections.iter().position(|x| *x == s));
+        let mut items = vec![(ADD, tr!("新增標籤…", "New section…"), true)];
+        if let Some(Section::Group(_)) = section {
+            items.push((RENAME, tr!("重新命名標籤…", "Rename section…"), true));
+            items.push((REMOVE, tr!("刪除標籤（資料夾移回常用位置）", "Delete section (folders go back to Favorites)"), true));
         }
-        let Some(action) = app::popup_menu(self.hwnd, &commands, pt) else { return };
+        if let Some(p) = pos {
+            items.push((0, "", true));
+            items.push((UP, tr!("往上移", "Move up"), p > 0));
+            items.push((DOWN, tr!("往下移", "Move down"), p + 1 < sections.len()));
+        }
+        let Some(cmd) = app::popup_menu(self.hwnd, &items, pt) else { return };
+        match (cmd, section, pos) {
+            (ADD, _, _) => self.new_section(section),
+            (RENAME, Some(Section::Group(i)), _) => self.rename_section(i),
+            (REMOVE, Some(Section::Group(i)), _) => self.remove_section(i),
+            (UP, _, Some(p)) if p > 0 => self.move_section(p, p - 1),
+            (DOWN, _, Some(p)) => self.move_section(p, p + 2),
+            _ => {}
+        }
+    }
+
+    /// 問標籤名稱；名稱不能用時說明原因再問一次（保留打好的字）。取消時回傳 None。
+    fn ask_section_name(&mut self, title: &str, current: &str, check: impl Fn(&feather_core::settings::Settings, &str) -> Option<String>) -> Option<String> {
+        let mut text = current.to_string();
+        loop {
+            let name = super::dialog::text_input(self.hwnd, title, tr!("標籤名稱", "Section name"), &text, tr!("例如：工作、專案、照片", "For example: Work, Projects, Photos"))?;
+            match check(&self.settings, &name) {
+                None => return Some(name.trim().to_string()),
+                Some(e) => {
+                    self.show_error(&e);
+                    text = name;
+                }
+            }
+        }
+    }
+
+    fn group_names(&self) -> Vec<&str> {
+        self.settings.bookmark_groups.iter().map(|(n, _)| n.as_str()).collect()
+    }
+
+    /// 新增標籤：放在 `after` 那個標籤下面（從空白處新增時放在磁碟前面）
+    fn new_section(&mut self, after: Option<Section>) {
+        if self.settings.bookmark_groups.len() >= sidebar::MAX_GROUPS {
+            self.show_error(&trf!("側欄最多 {} 個自訂標籤。", "Up to {} custom sections are allowed.", sidebar::MAX_GROUPS));
+            return;
+        }
+        let Some(name) = self.ask_section_name(tr!("新增標籤", "New section"), "", |s, n| sidebar::name_error(n, &s.bookmark_groups.iter().map(|g| g.0.as_str()).collect::<Vec<_>>(), None)) else { return };
         let mut settings = self.settings.clone();
-        if action == 3 {
-            if let Some(i) = index { settings.bookmark_groups.remove(i); }
-        } else {
-            let current = index.filter(|_| action == 2).map_or("", |i| settings.bookmark_groups[i].0.as_str());
-            let Some(name) = super::dialog::text_input(self.hwnd, commands[(action - 1) as usize].1,
-                tr!("分類名稱", "Group name"), current, "") else { return };
-            if name.is_empty() || settings.bookmark_groups.iter().enumerate().any(|(i, (n, _))| n.eq_ignore_ascii_case(&name) && !(action == 2 && index == Some(i))) {
-                self.show_error(tr!("請輸入尚未使用的分類名稱。", "Enter an unused group name."));
-                return;
-            }
-            if let Some(i) = index.filter(|_| action == 2) {
-                settings.bookmark_groups[i].0 = name;
-            } else {
-                settings.bookmark_groups.push((name, Vec::new()));
+        match settings.add_group(&name, after) {
+            Ok(_) => self.save_sections(settings, trf!("已新增標籤「{name}」：把資料夾拖到標籤上就能放進去", "Added the section “{name}”. Drag folders onto it to add them")),
+            Err(e) => self.show_error(&e),
+        }
+    }
+
+    fn rename_section(&mut self, index: usize) {
+        let Some(current) = self.group_names().get(index).map(|s| s.to_string()) else { return };
+        let Some(name) = self.ask_section_name(tr!("重新命名標籤", "Rename section"), &current, move |s, n| {
+            sidebar::name_error(n, &s.bookmark_groups.iter().map(|g| g.0.as_str()).collect::<Vec<_>>(), Some(index))
+        }) else { return };
+        if name == current {
+            return;
+        }
+        let mut settings = self.settings.clone();
+        match settings.rename_group(index, &name) {
+            Ok(()) => self.save_sections(settings, trf!("已把標籤「{current}」改名為「{name}」", "Renamed the section “{current}” to “{name}”")),
+            Err(e) => self.show_error(&e),
+        }
+    }
+
+    fn remove_section(&mut self, index: usize) {
+        let Some(name) = self.group_names().get(index).map(|s| s.to_string()) else { return };
+        let mut settings = self.settings.clone();
+        settings.remove_group(index);
+        self.save_sections(settings, trf!("已刪除標籤「{name}」，裡面的資料夾移回常用位置（資料夾本身沒有刪除）", "Deleted the section “{name}”; its folders went back to Favorites (the folders themselves weren't deleted)"));
+    }
+
+    /// 第 `from` 個大標籤移到第 `slot` 個縫（0 是最上面）
+    fn move_section(&mut self, from: usize, slot: usize) {
+        let sections = self.settings.sidebar_sections();
+        let Some(moved) = sidebar::move_to_slot(&sections, from, slot) else { return };
+        let header = self.section_headers().get(from).map(|h| self.tree_item_text(*h)).unwrap_or_default();
+        let mut settings = self.settings.clone();
+        settings.set_sidebar_sections(&moved);
+        self.save_sections(settings, trf!("已移動「{header}」", "Moved “{header}”"));
+    }
+
+    // ---------------------------------------------------------------- 拖曳大標籤
+
+    /// 這個位置（樹狀圖用戶區座標）在大標籤的標題上
+    fn section_at(&self, lparam: LPARAM) -> bool {
+        let mut ht = TVHITTESTINFO { pt: POINT { x: get_x_lparam(lparam), y: get_y_lparam(lparam) }, flags: 0, hItem: 0 };
+        let item = send(self.tree, TVM_HITTEST, 0, &mut ht as *mut TVHITTESTINFO as LPARAM);
+        item != 0 && self.section_of(item).is_some()
+    }
+
+    /// 在大標籤的標題上按下左鍵：準備拖曳排序，沒有拖曳就是收起或展開（由這裡處理時回傳 true，樹狀圖不再處理這次按下）
+    fn section_press(&mut self, lparam: LPARAM) -> bool {
+        let pt = POINT { x: get_x_lparam(lparam), y: get_y_lparam(lparam) };
+        let mut ht = TVHITTESTINFO { pt, flags: 0, hItem: 0 };
+        let item = send(self.tree, TVM_HITTEST, 0, &mut ht as *mut TVHITTESTINFO as LPARAM);
+        if item == 0 || self.section_of(item).is_none() {
+            return false;
+        }
+        let Some(from) = self.section_headers().iter().position(|h| *h == item) else { return false };
+        unsafe {
+            SetFocus(self.tree);
+            SetCapture(self.tree);
+        }
+        self.section_drag = Some(SectionDrag { item, from, start: pt, active: false, slot: None });
+        true
+    }
+
+    fn section_move(&mut self, lparam: LPARAM) -> bool {
+        let pt = POINT { x: get_x_lparam(lparam), y: get_y_lparam(lparam) };
+        let Some(d) = self.section_drag.as_ref() else { return false };
+        if !d.active {
+            let (dx, dy) = unsafe { (GetSystemMetrics(SM_CXDRAG), GetSystemMetrics(SM_CYDRAG)) };
+            if (pt.x - d.start.x).abs() <= dx && (pt.y - d.start.y).abs() <= dy {
+                return true;
             }
         }
-        self.save_bookmark_groups(settings);
+        // 拖到側欄上下緣：捲動
+        let c = client_rect(self.tree);
+        if pt.y < c.top + self.s(16) {
+            send(self.tree, WM_VSCROLL, SB_LINEUP, 0);
+        } else if pt.y > c.bottom - self.s(16) {
+            send(self.tree, WM_VSCROLL, SB_LINEDOWN, 0);
+        }
+        let slots = self.section_slots();
+        let slot = slots.iter().enumerate().min_by_key(|(_, y)| (**y - pt.y).abs()).map(|(i, _)| i);
+        let Some(d) = self.section_drag.as_mut() else { return true };
+        if !d.active || d.slot != slot {
+            d.active = true;
+            d.slot = slot;
+            invalidate(self.tree);
+        }
+        true
+    }
+
+    fn section_release(&mut self) -> bool {
+        let Some(d) = self.section_drag.take() else { return false };
+        unsafe {
+            if GetCapture() == self.tree {
+                ReleaseCapture();
+            }
+        }
+        invalidate(self.tree);
+        match (d.active, d.slot) {
+            (true, Some(slot)) => self.move_section(d.from, slot),
+            // 沒有拖曳，只是點一下：收起或展開
+            (false, _) => self.toggle_section(d.item),
+            _ => {}
+        }
+        true
+    }
+
+    /// 滑鼠被搶走、按了 Esc：取消拖曳，標籤留在原位。有在拖曳時回傳 true
+    pub(super) fn cancel_section_drag(&mut self) -> bool {
+        let Some(d) = self.section_drag.take() else { return false };
+        unsafe {
+            if GetCapture() == self.tree {
+                ReleaseCapture();
+            }
+        }
+        invalidate(self.tree);
+        d.active
+    }
+
+    /// 拖曳大標籤時，放開後會移到的縫的高度（放回原處時沒有）
+    fn section_drop_y(&self) -> Option<i32> {
+        let d = self.section_drag.as_ref().filter(|d| d.active)?;
+        let slot = d.slot.filter(|s| *s != d.from && *s != d.from + 1)?;
+        let c = client_rect(self.tree);
+        self.section_slots().get(slot).map(|y| (*y).clamp(c.top + self.s(2), c.bottom - self.s(2)))
     }
 
     pub(super) fn tree_context_menu(&mut self, pt: POINT, keyboard: bool) {
@@ -631,10 +917,17 @@ impl App {
         } else {
             pt
         };
-        let Some(node) = self.nodes.get(&item) else { return };
-        if node.path == FAVORITES_KEY || node.path.starts_with("::bookmark-group/") {
-            let group = node.path.strip_prefix("::bookmark-group/").and_then(|s| s.parse::<usize>().ok());
-            self.bookmark_group_menu(group, pt);
+        // 側欄的空白處、大標籤的標題、空標籤裡的提示：標籤的選單（新增、改名、刪除、移動）
+        let Some(node) = self.nodes.get(&item) else {
+            self.section_menu(None, pt);
+            return;
+        };
+        if node.kind == NodeKind::Info || node.kind == NodeKind::Header {
+            let header = if node.kind == NodeKind::Header { item } else { send(self.tree, TVM_GETNEXTITEM, TVGN_PARENT, item) };
+            let section = self.section_of(header);
+            if node.kind == NodeKind::Header || section.is_some_and(|s| matches!(s, Section::Group(_))) {
+                self.section_menu(section, pt);
+            }
             return;
         }
         let Some(path) = self.node_path(item) else { return };
@@ -657,7 +950,7 @@ impl App {
         let mut organize = Vec::new();
         if pinned {
             if !self.settings.bookmark_groups.is_empty() {
-                organize.push(Cmd::new(BOOKMARK_MOVE, tr!("移至書籤分類…", "Move to bookmark group…"), glyph::FOLDER));
+                organize.push(Cmd::new(BOOKMARK_MOVE, tr!("移到其他標籤…", "Move to another section…"), glyph::FOLDER));
             }
             organize.push(Cmd::new(id::REMOVE_FAVORITE, tr!("從常用位置取消釘選", "Unpin from Favorites"), glyph::UNPIN));
         } else if !builtin {
@@ -684,19 +977,21 @@ impl App {
         };
         match cmd {
             BOOKMARK_MOVE => {
-                let mut choices = vec![(1, tr!("未分類", "Ungrouped"), true)];
-                for (i, (name, _)) in self.settings.bookmark_groups.iter().enumerate() {
-                    choices.push(((i + 2) as u16, name.as_str(), true));
+                let current = self.settings.group_of(&path);
+                let names: Vec<String> = self.group_names().iter().map(|s| s.to_string()).collect();
+                let mut choices = vec![super::menu::Item::radio(1, tr!("常用位置", "Favorites"), current.is_none())];
+                for (i, name) in names.iter().enumerate() {
+                    choices.push(super::menu::Item::radio((i + 2) as u16, name, current == Some(i)));
                 }
-                if let Some(choice) = app::popup_menu(self.hwnd, &choices, pt) {
-                    let mut settings = self.settings.clone();
-                    for (_, members) in &mut settings.bookmark_groups {
-                        members.retain(|p| !paths::eq_ignore_case(p, &path));
+                if let Some(choice) = super::menu::popup_at(self.hwnd, pt, &choices) {
+                    let group = (choice >= 2).then(|| choice as usize - 2);
+                    if group != current {
+                        let mut settings = self.settings.clone();
+                        settings.move_bookmark(&path, group);
+                        let target = group.and_then(|g| names.get(g).cloned()).unwrap_or_else(|| tr!("常用位置", "Favorites").into());
+                        let title = paths::tab_title(&path);
+                        self.save_sections(settings, trf!("已把「{title}」移到「{target}」", "Moved “{title}” to “{target}”"));
                     }
-                    if choice >= 2 {
-                        settings.bookmark_groups[choice as usize - 2].1.push(path);
-                    }
-                    self.save_bookmark_groups(settings);
                 }
             }
             id::OPEN => {
@@ -733,6 +1028,29 @@ unsafe extern "system" fn tree_subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lp
         match msg {
             WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL => a.hide_preview(),
             _ => {}
+        }
+        // 大標籤的標題：按住拖曳調整順序（點一下不收合）
+        match msg {
+            WM_LBUTTONDOWN if a.section_press(lparam) => return 0,
+            // 連點兩下的第二下：已經收起又展開過一次，不再交給樹狀圖切換
+            WM_LBUTTONDBLCLK if a.section_at(lparam) => return 0,
+            WM_MOUSEMOVE if a.section_move(lparam) => return 0,
+            WM_LBUTTONUP if a.section_release() => return 0,
+            WM_CAPTURECHANGED => {
+                a.cancel_section_drag();
+            }
+            _ => {}
+        }
+        // 中鍵點資料夾：在新分頁開啟
+        if msg == WM_MBUTTONUP {
+            let mut ht = TVHITTESTINFO { pt: POINT { x: get_x_lparam(lparam), y: get_y_lparam(lparam) }, flags: 0, hItem: 0 };
+            let item = send(hwnd, TVM_HITTEST, 0, &mut ht as *mut TVHITTESTINFO as LPARAM);
+            if item != 0 && ht.flags & (TVHT_ONITEMICON | TVHT_ONITEMLABEL | TVHT_ONITEMRIGHT) != 0 {
+                if let Some(path) = a.node_path(item) {
+                    a.open_in_background_tab(a.active_side(), &path);
+                }
+            }
+            return 0;
         }
     }
     (comctl().def_subclass_proc)(hwnd, msg, wparam, lparam)

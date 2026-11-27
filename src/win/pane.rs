@@ -7,7 +7,7 @@ use super::shellmenu::{self, Cmd, Part, Pick};
 pub(super) const ITEM_HIDDEN_VERBS: &[&str] = &["open", "explore", "opennewwindow", "opennewprocess", "opennewtab", "cut", "copy", "paste", "delete", "rename", "properties", "copyaspath", "powershell"];
 /// 資料夾空白處的 Windows 右鍵選單中，Stillfeather 已經有的項目。
 pub(super) const BACKGROUND_HIDDEN_VERBS: &[&str] = &["paste", "properties", "refresh", "powershell"];
-use super::app::{self, id, App, NavKind, WM_APP_RENAME};
+use super::app::{self, id, App, NavKind, TIMER_SELECTION, WM_APP_RENAME, WM_APP_SELECTION};
 use super::preview;
 use super::sys::*;
 use super::theme::{self, glyph};
@@ -533,7 +533,7 @@ impl App {
         }
     }
 
-    fn list_selected_indices(&self, list: HWND) -> Vec<usize> {
+    pub(super) fn list_selected_indices(&self, list: HWND) -> Vec<usize> {
         let mut out = Vec::new();
         let mut i = -1isize;
         loop {
@@ -636,7 +636,7 @@ impl App {
         let name = typed.trim().to_string();
         let old_name = paths::file_name(old).to_string();
         let is_file = super::fs::is_file(old);
-        let mut new_name = name.clone();
+        let mut new_name = name;
         if is_file && !self.settings.show_extensions {
             if let Some(i) = old_name.rfind('.').filter(|i| *i > 0) {
                 new_name.push_str(&old_name[i..]);
@@ -783,6 +783,10 @@ impl App {
                     focused.max(0) as LRESULT
                 }
                 NM_CUSTOMDRAW => self.list_custom_draw(side, lparam),
+                LVN_MARQUEEBEGIN => {
+                    self.builtin_marquee[side.index()] = true;
+                    0
+                }
                 LVN_ITEMCHANGED | LVN_ODSTATECHANGED => {
                     self.selection_changed(side);
                     0
@@ -870,7 +874,9 @@ impl App {
                 let selected = send(list, LVM_GETITEMSTATE, index, LVIS_SELECTED as LPARAM) as u32 & LVIS_SELECTED != 0;
                 // 詳細資料檢視：滑鼠在這一列旁邊的空白處時不算懸停（見 marquee.rs）
                 let hot = cd.nmcd.uItemState & CDIS_HOT != 0 && !self.pointer_outside_items(side);
-                let (sv, hv) = self.list_fx[si].observe(index, selected, hot, anim::now(), anim::dur(anim::ROW_MS), anim::dur(anim::HOVER_MS));
+                // 拖曳選取（框選）時選取直接換上、不播淡入：一次換很多列時每一列都要一直重畫，會跟不上滑鼠
+                let row_ms = if self.drag_selecting(side) { 0.0 } else { anim::dur(anim::ROW_MS) };
+                let (sv, hv) = self.list_fx[si].observe(index, selected, hot, anim::now(), row_ms, anim::dur(anim::HOVER_MS));
                 if self.drop_row == Some((side, index)) {
                     // 拖放到這個資料夾：重點色外框
                     if let Some(r) = self.item_capsule(side, index) {
@@ -932,16 +938,60 @@ impl App {
         }
     }
 
+    /// 選取改了：狀態列、快速預覽、選擇器的檔名跟著更新。
+    ///
+    /// 清單一次改很多列時（框選、全選、Shift 點選）每一列都會通知一次，所以不在這裡馬上更新，
+    /// 而是貼一個訊息給自己，同一輪訊息裡的通知合併成一次（`on_selection_message`）。
+    /// 拖曳選取（框選）時最多每 `SELECTION_EVERY_MS` 更新一次。
     pub(super) fn selection_changed(&mut self, side: Side) {
         if self.updating_list {
             return;
         }
+        let si = side.index();
+        if std::mem::replace(&mut self.selection_dirty[si], true) {
+            return;
+        }
+        if unsafe { PostMessageW(self.hwnd, WM_APP_SELECTION, si, 0) } == 0 {
+            self.flush_selection(side);
+        }
+    }
+
+    /// 貼給自己的 [`WM_APP_SELECTION`]：拖曳選取（框選）中而且剛更新過就晚一點（計時器），否則馬上更新
+    pub(super) fn on_selection_message(&mut self, si: usize) {
+        if si > 1 || !self.selection_dirty[si] {
+            return;
+        }
+        let wait = SELECTION_EVERY_MS - (anim::now() - self.selection_flushed);
+        if wait >= 1.0 && self.drag_selecting(Side::from_index(si)) {
+            unsafe {
+                SetTimer(self.hwnd, TIMER_SELECTION, wait.ceil() as u32, std::ptr::null());
+            }
+            return;
+        }
+        self.flush_selection(Side::from_index(si));
+    }
+
+    pub(super) fn on_selection_timer(&mut self) {
+        unsafe {
+            KillTimer(self.hwnd, TIMER_SELECTION);
+        }
+        for side in [Side::Left, Side::Right] {
+            self.flush_selection(side);
+        }
+    }
+
+    /// 讓狀態列、快速預覽、選擇器的檔名跟上這一欄的選取（還沒跟上時）
+    pub(super) fn flush_selection(&mut self, side: Side) {
+        let si = side.index();
+        if !std::mem::replace(&mut self.selection_dirty[si], false) {
+            return;
+        }
+        self.selection_flushed = anim::now();
         if self.picker_mode() {
             self.picker_selection_changed(side);
         }
         if self.active_side() == side {
-            self.clear_footer_message();
-            self.update_chrome();
+            self.update_selection_footer();
             // 快速預覽開著時跟著換項目
             if preview::is_open(&self.preview) {
                 let target = self.quicklook_target(side);
@@ -1212,6 +1262,23 @@ impl App {
         self.hover.item = None;
     }
 
+    /// 中鍵點資料夾：在新分頁開啟（見 `open_in_background_tab`）。點在檔案、空白處時不處理（回傳 false）。
+    pub(super) fn list_middle_click(&mut self, side: Side, lparam: LPARAM) -> bool {
+        let pt = POINT { x: get_x_lparam(lparam), y: get_y_lparam(lparam) };
+        if self.outside_items(side, pt) {
+            return false;
+        }
+        let mut ht = LVHITTESTINFO { pt, flags: 0, iItem: -1, iSubItem: 0, iGroup: 0 };
+        let index = send(self.lists[side.index()], LVM_HITTEST, 0, &mut ht as *mut LVHITTESTINFO as LPARAM);
+        if index < 0 || ht.flags & LVHT_ONITEM == 0 {
+            return false;
+        }
+        let Some(tab) = self.bound[side.index()].and_then(|id| self.tabs.get(&id)) else { return false };
+        let Some(path) = tab.row(index as usize).filter(|e| e.is_dir).map(Entry::full_path) else { return false };
+        self.open_in_background_tab(side, &path);
+        true
+    }
+
     pub(super) fn on_list_mouse_move(&mut self, side: Side, lparam: LPARAM) {
         let pt = POINT { x: get_x_lparam(lparam), y: get_y_lparam(lparam) };
         // 清單捲動或視窗變動時系統會補發位置沒變的移動訊息，略過，免得用鍵盤時跳出預覽
@@ -1223,10 +1290,7 @@ impl App {
         self.update_location_tip(side, pt);
         let list = self.lists[side.index()];
         if !self.hover.tracking[side.index()] {
-            let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: list, dwHoverTime: 0 };
-            unsafe {
-                TrackMouseEvent(&mut tme);
-            }
+            track_mouse_leave(list);
             self.hover.tracking[side.index()] = true;
         }
         let row = self.hover_row(side, pt);
@@ -1604,6 +1668,8 @@ impl App {
 }
 
 /// 滑鼠停在項目上多久才預覽；預覽開著時移到別的項目，等這麼久就換過去
+/// 按著滑鼠拖曳選取時，狀態列等最多多久（毫秒）跟上一次選取
+const SELECTION_EVERY_MS: f64 = 100.0;
 pub const HOVER_TIMER: usize = 8;
 const HOVER_DELAY_MS: u32 = 450;
 const HOVER_SWITCH_MS: u32 = 150;
@@ -1663,6 +1729,11 @@ unsafe extern "system" fn list_subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lp
             }
             WM_RBUTTONUP => {
                 if a.blank_rrelease(side, lparam) {
+                    return 0;
+                }
+            }
+            WM_MBUTTONUP => {
+                if a.list_middle_click(side, lparam) {
                     return 0;
                 }
             }

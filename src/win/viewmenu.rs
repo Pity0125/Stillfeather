@@ -121,7 +121,7 @@ impl App {
     pub(super) fn view_menu(&mut self) {
         self.hide_preview();
         let current = self.view[self.active_side().index()];
-        let labels: Vec<String> = view::ALL.iter().map(|m| self.keymap.with_hint(m.label(), feather_core::keymap::Cmd::View(m.digit() as u8), "\t")).collect();
+        let labels: Vec<String> = view::ALL.iter().map(|m| self.keymap.with_hint(m.label(), feather_core::keymap::Cmd::View(m.digit()), "\t")).collect();
         let mut items: Vec<Item> = view::ALL
             .iter()
             .zip(labels.iter())

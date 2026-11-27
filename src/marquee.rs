@@ -67,6 +67,50 @@ pub fn changed_rows(old: Option<(usize, usize)>, new: Option<(usize, usize)>) ->
     (lo..=hi).filter(|&i| inside(old, i) != inside(new, i)).collect()
 }
 
+/// 畫面上的長方形（左、上、右、下；右、下不含）
+pub type Rect = (i32, i32, i32, i32);
+
+fn empty(r: Rect) -> bool {
+    r.0 >= r.2 || r.1 >= r.3
+}
+
+/// `a` 扣掉 `b` 剩下的部分，拆成不重疊的長方形（最多 4 個：上、下兩條，中間左、右兩塊）
+pub fn subtract(a: Rect, b: Rect) -> Vec<Rect> {
+    if empty(a) {
+        return Vec::new();
+    }
+    let (l, t, r, btm) = (a.0.max(b.0), a.1.max(b.1), a.2.min(b.2), a.3.min(b.3));
+    if l >= r || t >= btm {
+        return vec![a];
+    }
+    [(a.0, a.1, a.2, t), (a.0, btm, a.2, a.3), (a.0, t, l, btm), (r, t, a.2, btm)].into_iter().filter(|p| !empty(*p)).collect()
+}
+
+/// 方框從 `old` 換成 `new` 時，填色有變化的地方（在其中一個、不在另一個的部分，拆成不重疊的長方形）
+pub fn changed_area(old: Option<Rect>, new: Option<Rect>) -> Vec<Rect> {
+    match (old, new) {
+        (None, None) => Vec::new(),
+        (Some(a), None) | (None, Some(a)) => if empty(a) { Vec::new() } else { vec![a] },
+        (Some(a), Some(b)) => {
+            let mut v = subtract(a, b);
+            v.extend(subtract(b, a));
+            v
+        }
+    }
+}
+
+/// 方框的外框：上、下、左、右四條寬 `w` 的邊（方框太小時就是整個方框）
+pub fn edges(r: Rect, w: i32) -> Vec<Rect> {
+    if empty(r) {
+        return Vec::new();
+    }
+    let w = w.max(1);
+    if r.2 - r.0 <= 2 * w || r.3 - r.1 <= 2 * w {
+        return vec![r];
+    }
+    vec![(r.0, r.1, r.2, r.1 + w), (r.0, r.3 - w, r.2, r.3), (r.0, r.1 + w, r.0 + w, r.3 - w), (r.2 - w, r.1 + w, r.2, r.3 - w)]
+}
+
 /// 拖到清單外面時每次自動捲動多少像素：離邊緣越遠捲得越快（以列為單位，最多一次 8 列）
 pub fn scroll_step(outside: i32, row_h: i32) -> i32 {
     if outside <= 0 || row_h <= 0 {
@@ -134,6 +178,61 @@ mod tests {
         assert_eq!(changed_rows(Some((2, 6)), Some((4, 6))), vec![2, 3]);
         assert_eq!(changed_rows(Some((0, 1)), Some((5, 6))), vec![0, 1, 5, 6]);
         assert_eq!(changed_rows(Some((3, 3)), Some((3, 3))), Vec::<usize>::new());
+    }
+
+    fn area(v: &[Rect]) -> i64 {
+        v.iter().map(|r| (r.2 - r.0) as i64 * (r.3 - r.1) as i64).sum()
+    }
+
+    fn inside(v: &[Rect], x: i32, y: i32) -> usize {
+        v.iter().filter(|r| r.0 <= x && x < r.2 && r.1 <= y && y < r.3).count()
+    }
+
+    #[test]
+    fn subtract_splits_into_pieces() {
+        // 沒有重疊：整個留著；完全蓋住：沒有剩下
+        assert_eq!(subtract((0, 0, 10, 10), (20, 20, 30, 30)), vec![(0, 0, 10, 10)]);
+        assert_eq!(subtract((0, 0, 10, 10), (0, 0, 10, 10)), Vec::<Rect>::new());
+        assert_eq!(subtract((2, 2, 8, 8), (0, 0, 10, 10)), Vec::<Rect>::new());
+        // 往下長：只剩下面那條
+        assert_eq!(subtract((0, 0, 100, 60), (0, 0, 100, 50)), vec![(0, 50, 100, 60)]);
+        // 中間挖洞：上下兩條、左右兩塊，面積對得上
+        let v = subtract((0, 0, 100, 100), (40, 40, 60, 60));
+        assert_eq!(v.len(), 4);
+        assert_eq!(area(&v), 100 * 100 - 20 * 20);
+        assert_eq!(subtract((5, 5, 5, 9), (0, 0, 1, 1)), Vec::<Rect>::new());
+    }
+
+    #[test]
+    fn changed_area_is_the_difference_only() {
+        assert_eq!(changed_area(None, None), Vec::<Rect>::new());
+        assert_eq!(changed_area(None, Some((1, 2, 3, 4))), vec![(1, 2, 3, 4)]);
+        assert_eq!(changed_area(Some((1, 2, 3, 4)), None), vec![(1, 2, 3, 4)]);
+        assert_eq!(changed_area(Some((0, 0, 50, 50)), Some((0, 0, 50, 50))), Vec::<Rect>::new());
+        // 往右下拉：只有新長出來的 L 形，原本的部分不重畫
+        let v = changed_area(Some((10, 10, 200, 300)), Some((10, 10, 210, 305)));
+        assert_eq!(area(&v), 200 * 295 - 190 * 290);
+        assert_eq!(inside(&v, 100, 100), 0);
+        assert_eq!(inside(&v, 205, 100), 1);
+        assert_eq!(inside(&v, 100, 302), 1);
+        assert_eq!(inside(&v, 207, 303), 1);
+        // 起點另一邊（方框翻過去）：舊的、新的都要更新
+        let v = changed_area(Some((50, 50, 80, 80)), Some((20, 20, 50, 50)));
+        assert_eq!(area(&v), 2 * 30 * 30);
+    }
+
+    #[test]
+    fn edges_cover_only_the_border() {
+        let v = edges((0, 0, 100, 50), 1);
+        assert_eq!(v.len(), 4);
+        assert_eq!(area(&v), 100 * 50 - 98 * 48);
+        for (x, y) in [(0, 0), (99, 0), (0, 49), (99, 49), (50, 0), (0, 25), (99, 25), (50, 49)] {
+            assert_eq!(inside(&v, x, y), 1, "{x},{y}");
+        }
+        assert_eq!(inside(&v, 50, 25), 0);
+        // 太小時整個都是邊
+        assert_eq!(edges((0, 0, 2, 40), 1), vec![(0, 0, 2, 40)]);
+        assert_eq!(edges((0, 0, 0, 40), 1), Vec::<Rect>::new());
     }
 
     #[test]

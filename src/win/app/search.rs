@@ -3,7 +3,145 @@
 
 use super::*;
 
+/// 最近搜尋選單的命令（選單直接回傳，不經過 WM_COMMAND）
+const RECENT_FIRST: u16 = 0x7100;
+const RECENT_CLEAR: u16 = 0x70FF;
+const RECENT_NONE: u16 = 0x70FE;
+/// 開最近搜尋選單時貼給自己的 ↓（讓選單先選好第一項）；選單沒開成時在 handle_key 收掉，不會再開一次
+pub(super) const RECENT_KEY_MARK: LPARAM = 0x5346_5253;
+/// 選單上的搜尋文字最多顯示幾個字
+const RECENT_TITLE_MAX: usize = 60;
+
 impl App {
+    /// 搜尋框空著時的淡色提示跟著範圍變：搜尋整台電腦、在「下載」及子資料夾中、只在「下載」中
+    pub(in crate::win) fn sync_search_cue(&mut self) {
+        let cue = if self.search_global {
+            tr!("搜尋整台電腦…", "Search the whole PC…").to_string()
+        } else {
+            match self.active_tab() {
+                Some(t) if !t.path.is_empty() && paths::unc_server(&t.path).is_none() => {
+                    let name = paths::tab_title(&t.path);
+                    if t.recursive {
+                        trf!("在「{name}」及子資料夾中搜尋…", "Search “{name}” and its subfolders…")
+                    } else {
+                        trf!("只在「{name}」中搜尋…", "Search only in “{name}”…")
+                    }
+                }
+                _ => tr!("搜尋檔名…", "Search file names…").to_string(),
+            }
+        };
+        if cue != self.search_cue {
+            let w = wide(&cue);
+            send_ptr(self.query, EM_SETCUEBANNER, 1, w.as_ptr());
+            self.search_cue = cue;
+        }
+    }
+
+    /// 記下這次搜尋（最近搜尋：連篩選條件與範圍一起記，存在設定檔）。`refine`：同一次搜尋改了篩選條件，
+    /// 取代最前面那一筆。存不進去（例如另一個視窗剛改了設定）就算了，不打擾使用者。
+    pub(super) fn remember_search(&mut self, id: TabId, refine: bool) {
+        let Some(t) = self.tabs.get(&id) else { return };
+        let item = RecentSearch {
+            text: t.query.trim().to_string(),
+            global: t.search_global,
+            recursive: t.recursive,
+            category: t.filter,
+            date: t.date.map(|d| d.0),
+            size: t.size,
+        };
+        if item.text.is_empty() && item.category == Category::All && item.date.is_none() && item.size.is_none() {
+            return;
+        }
+        let mut settings = self.settings.clone();
+        if recent::remember(&mut settings.recent_searches, item, refine) && write_settings(&settings).is_ok() {
+            self.settings = settings;
+        }
+    }
+
+    /// 搜尋框按 ↓：列出最近 10 次搜尋，選一個就連篩選條件一起再搜一次；最下面可以清除紀錄
+    pub(super) fn recent_search_menu(&mut self) {
+        self.hide_preview();
+        let list = self.settings.recent_searches.clone();
+        let texts: Vec<String> = list
+            .iter()
+            .map(|r| {
+                let mut title = r.title();
+                if title.chars().count() > RECENT_TITLE_MAX {
+                    title = title.chars().take(RECENT_TITLE_MAX).collect::<String>() + "…";
+                }
+                // Tab 後面的字排在右邊那一欄（見 menu.rs）
+                match r.conditions() {
+                    c if c.is_empty() => title,
+                    c => format!("{title}\t{c}"),
+                }
+            })
+            .collect();
+        let mut items = Vec::new();
+        if list.is_empty() {
+            items.push(menu::Item::Command { id: RECENT_NONE, text: tr!("還沒有最近搜尋", "No recent searches yet"), glyph: None, mark: menu::Mark::None, on: false, enabled: false });
+        } else {
+            for (i, t) in texts.iter().enumerate() {
+                items.push(menu::Item::Command { id: RECENT_FIRST + i as u16, text: t, glyph: Some(glyph::SEARCH), mark: menu::Mark::None, on: false, enabled: true });
+            }
+            items.push(menu::Item::Separator);
+            items.push(menu::Item::Command { id: RECENT_CLEAR, text: tr!("清除最近搜尋", "Clear recent searches"), glyph: Some(glyph::DELETE), mark: menu::Mark::None, on: false, enabled: true });
+        }
+        let mut anchor = self.layout.search;
+        unsafe {
+            let mut tl = POINT { x: anchor.left, y: anchor.top };
+            let mut br = POINT { x: anchor.right, y: anchor.bottom };
+            ClientToScreen(self.hwnd, &mut tl);
+            ClientToScreen(self.hwnd, &mut br);
+            anchor = RECT { left: tl.x, top: tl.y, right: br.x, bottom: br.y };
+            // 用鍵盤開的：選單一開就先選好第一項
+            PostMessageW(self.hwnd, WM_KEYDOWN, VK_DOWN as WPARAM, RECENT_KEY_MARK);
+        }
+        let cmd = menu::drop_down_at(self.hwnd, anchor, &items);
+        unsafe {
+            SetFocus(self.query);
+        }
+        match cmd {
+            Some(RECENT_CLEAR) => {
+                let mut settings = self.settings.clone();
+                settings.recent_searches.clear();
+                match write_settings(&settings) {
+                    Ok(()) => {
+                        self.settings = settings;
+                        self.set_footer(tr!("已清除最近搜尋", "Cleared recent searches").into());
+                    }
+                    Err(e) => self.show_error(&e),
+                }
+            }
+            Some(c) if c >= RECENT_FIRST => {
+                if let Some(r) = list.get((c - RECENT_FIRST) as usize) {
+                    self.apply_recent_search(r.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 用最近搜尋的那一筆再搜一次：搜尋框的文字、篩選條件（類型、日期、大小）、範圍（整台電腦、含不含子資料夾）都換回去
+    fn apply_recent_search(&mut self, r: RecentSearch) {
+        let id = self.active_tab_id();
+        if let Some(t) = self.tabs.get_mut(&id) {
+            t.filter = r.category;
+            t.date = r.date.map(|d| (d, date_range(&d)));
+            t.size = r.size;
+            t.recursive = r.recursive;
+            t.query = r.text.clone();
+        }
+        self.search_global = r.global;
+        controls::set_checked(self.global_btn, r.global);
+        self.suppress_query_change = true;
+        set_window_text(self.query, &r.text);
+        self.suppress_query_change = false;
+        let end = r.text.encode_utf16().count();
+        send(self.query, EM_SETSEL, end, end as LPARAM);
+        self.start_search();
+        self.update_chrome();
+    }
+
     /// 搜尋該展開的時候：輸入框有焦點（視窗暫時不在前景時看離開前的焦點），或這個分頁正在搜尋、顯示搜尋結果。
     fn search_wanted(&self) -> bool {
         let focus = unsafe { GetFocus() };
@@ -145,6 +283,7 @@ impl App {
                 self.refresh_list(side, true);
             }
         }
+        self.remember_search(id, rerun);
         self.update_chrome();
     }
 
@@ -231,6 +370,10 @@ impl App {
     /// 篩選籤的條件（類型、日期、大小）改了。搜尋結果被截斷、或這次搜尋在搜尋執行緒裡套用的條件比新的窄時，
     /// 帶著新的條件重新搜尋；否則直接篩選現有的結果（交叉淡化，保留選取），不重新搜尋。
     pub(in crate::win) fn filters_changed(&mut self, id: TabId) {
+        // 搜尋結果改了篩選條件：最近搜尋的那一筆跟著改
+        if self.tabs.get(&id).is_some_and(|t| t.search_mode) {
+            self.remember_search(id, true);
+        }
         let Some(tab) = self.tabs.get(&id) else { return };
         if tab.search_mode && !tab.loading && (tab.truncated || !tab.baked.covers(tab.filter, tab.size, tab.date.map(|d| d.1))) {
             let only_filters = Query::parse(&tab.query).is_ok_and(|q| q.is_empty());

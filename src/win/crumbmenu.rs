@@ -102,24 +102,7 @@ pub enum Key {
 }
 
 pub fn register(hinst: HINSTANCE) {
-    let class = wide(MENU_CLASS);
-    let wc = WNDCLASSEXW {
-        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-        style: CS_DROPSHADOW,
-        lpfnWndProc: menu_proc,
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: hinst,
-        hIcon: 0,
-        hCursor: load_cursor(IDC_ARROW),
-        hbrBackground: 0,
-        lpszMenuName: std::ptr::null(),
-        lpszClassName: class.as_ptr(),
-        hIconSm: 0,
-    };
-    unsafe {
-        RegisterClassExW(&wc);
-    }
+    register_class(hinst, MENU_CLASS, CS_DROPSHADOW, menu_proc, IDC_ARROW);
 }
 
 pub fn create_popup(owner: HWND) -> HWND {

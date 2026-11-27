@@ -4,8 +4,6 @@
 //! Stillfeather 本體（設定對話方塊）與安裝程式共用這個檔案：兩邊都以模組引入，只依賴同層的 `sys`。
 //! 要寫的機碼與值、哪些值要備份還原，都由 `feather_core::install` 決定（有單元測試）。
 
-#![allow(dead_code)]
-
 use super::sys::*;
 use feather_core::install::{self, RegValue};
 use feather_core::paths;
@@ -79,6 +77,8 @@ pub fn set_string(key: &str, name: &str, data: &str) -> Result<(), String> {
     }
 }
 
+/// 只有安裝程式用到（解除安裝資訊的數值，見 setup/ops.rs）
+#[allow(dead_code)]
 pub fn set_dword(key: &str, name: &str, data: u32) -> Result<(), String> {
     let h = create(key)?;
     let n = w(name);
@@ -159,19 +159,6 @@ pub fn delete_key_if_empty(key: &str) {
         RegCloseKey(h);
         if rc == 0 && subkeys == 0 && values == 0 {
             RegDeleteKeyW(HKEY_CURRENT_USER, k.as_ptr());
-        }
-    }
-}
-
-pub fn key_exists(key: &str) -> bool {
-    let k = w(key);
-    let mut h: HKEY = 0;
-    unsafe {
-        if RegOpenKeyExW(HKEY_CURRENT_USER, k.as_ptr(), 0, KEY_READ, &mut h) == 0 {
-            RegCloseKey(h);
-            true
-        } else {
-            false
         }
     }
 }
@@ -293,7 +280,8 @@ pub fn restore_default_file_manager() -> Result<(), String> {
 
 // ---------------------------------------------------------------- 背景攔截 Win+E
 
-/// 目前的使用者名稱，去掉不能放進物件名稱的字元（與主程式 instance.rs 相同）
+/// 目前的使用者名稱，去掉不能放進物件名稱的字元（例如反斜線）。主視窗類別、單一執行個體的互斥鎖、
+/// 背景攔截 Win+E 的視窗與安裝程式找主視窗都用這個，名稱才會一致。
 pub fn user_tag() -> String {
     let mut buf = [0u16; 257];
     let mut len = buf.len() as u32;

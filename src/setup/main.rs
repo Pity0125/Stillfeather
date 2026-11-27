@@ -14,8 +14,11 @@
 #[macro_use]
 extern crate feather_core;
 
+// 和主程式共用的宣告與登錄檔函式：安裝程式只用到其中一部分
+#[allow(dead_code)]
 #[path = "../win/sys.rs"]
 mod sys;
+#[allow(dead_code)]
 #[path = "../win/shellreg.rs"]
 mod shellreg;
 mod ffi;

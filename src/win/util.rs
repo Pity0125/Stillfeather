@@ -388,6 +388,37 @@ pub fn load_cursor(id: usize) -> HCURSOR {
     unsafe { LoadCursorW(0, id as *const u16) }
 }
 
+/// 滑鼠離開視窗時收到一次 WM_MOUSELEAVE（每次離開後要重新要求）
+pub fn track_mouse_leave(hwnd: HWND) {
+    let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+    unsafe {
+        TrackMouseEvent(&mut tme);
+    }
+}
+
+/// 登記自己畫的控制項／視窗的類別：沒有額外資料、圖示與背景筆刷（WM_ERASEBKGND／WM_PAINT 自己處理）。
+/// 已經登記過時 Windows 會回報失敗，不影響已有的類別，所以重複呼叫也沒關係。
+pub fn register_class(hinst: HINSTANCE, name: &str, style: u32, proc: WNDPROC, cursor: usize) {
+    let class = wide(name);
+    let wc = WNDCLASSEXW {
+        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style,
+        lpfnWndProc: proc,
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+        hInstance: hinst,
+        hIcon: 0,
+        hCursor: load_cursor(cursor),
+        hbrBackground: 0,
+        lpszMenuName: std::ptr::null(),
+        lpszClassName: class.as_ptr(),
+        hIconSm: 0,
+    };
+    unsafe {
+        RegisterClassExW(&wc);
+    }
+}
+
 /// Windows 的組建編號（RtlGetVersion，不受相容性資訊清單影響）；取不到時當成 Windows 11（0 以外的最小值不會誤判成舊版）
 pub fn windows_build() -> u32 {
     static BUILD: std::sync::OnceLock<u32> = std::sync::OnceLock::new();

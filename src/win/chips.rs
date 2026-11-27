@@ -92,24 +92,7 @@ struct Layout {
 }
 
 pub fn register(hinst: HINSTANCE) {
-    let class = wide(CHIPS_CLASS);
-    let wc = WNDCLASSEXW {
-        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-        style: CS_HREDRAW | CS_VREDRAW,
-        lpfnWndProc: chips_proc,
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: hinst,
-        hIcon: 0,
-        hCursor: load_cursor(IDC_HAND),
-        hbrBackground: 0,
-        lpszMenuName: std::ptr::null(),
-        lpszClassName: class.as_ptr(),
-        hIconSm: 0,
-    };
-    unsafe {
-        RegisterClassExW(&wc);
-    }
+    register_class(hinst, CHIPS_CLASS, CS_HREDRAW | CS_VREDRAW, chips_proc, IDC_HAND);
 }
 
 pub fn create(parent: HWND) -> HWND {
@@ -326,13 +309,7 @@ unsafe extern "system" fn chips_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
         }
         WM_MOUSEMOVE => {
             if !d.tracking {
-                let mut tme = TRACKMOUSEEVENT {
-                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                    dwFlags: TME_LEAVE,
-                    hwndTrack: hwnd,
-                    dwHoverTime: 0,
-                };
-                TrackMouseEvent(&mut tme);
+                track_mouse_leave(hwnd);
                 d.tracking = true;
             }
             let hit = current_hit(hwnd, x, y);

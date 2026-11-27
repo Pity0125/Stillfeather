@@ -120,6 +120,15 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPA
                 a.tree_context_menu(pt, lparam == -1);
                 return 0;
             }
+            // 側欄卡片上樹狀圖以外的空白處：新增標籤
+            if src == hwnd && lparam != -1 && !a.picker_mode() {
+                let mut p = pt;
+                ScreenToClient(hwnd, &mut p);
+                if a.layout.sidebar.contains(p.x, p.y) {
+                    a.section_menu(None, pt);
+                    return 0;
+                }
+            }
         }
         WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => {
             let hdc = wparam as HDC;
@@ -135,6 +144,8 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPA
             } else if wparam == TIMER_DRIVES {
                 KillTimer(hwnd, TIMER_DRIVES);
                 a.refresh_drives();
+            } else if wparam == TIMER_SELECTION {
+                a.on_selection_timer();
             } else if wparam == TIMER_FOOTER_HOT {
                 KillTimer(hwnd, TIMER_FOOTER_HOT);
                 a.invalidate_footer();
@@ -229,6 +240,10 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPA
             a.reset_tree_node(lparam as HTREEITEM);
             return 0;
         }
+        WM_APP_SELECTION => {
+            a.on_selection_message(wparam);
+            return 0;
+        }
         WM_APP_SEARCH => {
             a.sync_search();
             show(a.clear_btn, a.clear_shown());
@@ -253,7 +268,7 @@ pub(super) unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wparam: WPA
             return 0;
         }
         crumbs::WM_APP_CRUMB => {
-            a.crumb_action(wparam);
+            a.crumb_action(wparam, lparam != 0);
             return 0;
         }
         crumbs::WM_APP_CRUMB_MENU => {

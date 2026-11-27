@@ -106,24 +106,7 @@ struct Layout {
 }
 
 pub fn register(hinst: HINSTANCE) {
-    let class = wide(TABS_CLASS);
-    let wc = WNDCLASSEXW {
-        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-        style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
-        lpfnWndProc: tabs_proc,
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: hinst,
-        hIcon: 0,
-        hCursor: load_cursor(IDC_ARROW),
-        hbrBackground: 0,
-        lpszMenuName: std::ptr::null(),
-        lpszClassName: class.as_ptr(),
-        hIconSm: 0,
-    };
-    unsafe {
-        RegisterClassExW(&wc);
-    }
+    register_class(hinst, TABS_CLASS, CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS, tabs_proc, IDC_ARROW);
 }
 
 pub fn create(parent: HWND, side: Side) -> HWND {
@@ -210,7 +193,7 @@ fn layout(hwnd: HWND, d: &mut Data, model: &Model, hdc: HDC) -> Layout {
     }
     let shrink_w = (avail / n as i32).max(min_w);
     let (widths, first, count, scrolling) = if total <= avail {
-        (natural.clone(), 0, n, false)
+        (natural, 0, n, false)
     } else if shrink_w * n as i32 <= avail {
         (natural.iter().map(|w| (*w).min(shrink_w)).collect(), 0, n, false)
     } else {
@@ -523,13 +506,7 @@ unsafe extern "system" fn tabs_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
         }
         WM_MOUSEMOVE => {
             if !d.tracking {
-                let mut tme = TRACKMOUSEEVENT {
-                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                    dwFlags: TME_LEAVE,
-                    hwndTrack: hwnd,
-                    dwHoverTime: 0,
-                };
-                TrackMouseEvent(&mut tme);
+                track_mouse_leave(hwnd);
                 d.tracking = true;
             }
             if let Some(mut g) = d.drag {

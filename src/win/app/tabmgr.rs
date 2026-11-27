@@ -26,6 +26,25 @@ impl App {
         id
     }
 
+    /// 中鍵點資料夾：在新分頁開啟。和瀏覽器一樣插在目前分頁的後面、不切過去（按著 Shift 時切過去），
+    /// 可以一口氣開好幾個；分頁切過去時才讀取。選擇器沒有分頁：在原地開啟。
+    pub(in crate::win) fn open_in_background_tab(&mut self, side: Side, path: &str) {
+        if self.picker_mode() || key_down(VK_SHIFT) {
+            self.new_tab(side, path);
+            return;
+        }
+        let side = if self.ws.dual { side } else { Side::Left };
+        let at = self.ws.group(side).selected + 1;
+        let id = self.ws.insert_tab_background(side, at);
+        let mut tab = Tab::new();
+        tab.requested = path.to_string();
+        tab.status = tr!("切換到這個分頁時讀取", "Loads when you switch to this tab").into();
+        tab.restored = true;
+        self.tabs.insert(id, tab);
+        self.update_chrome();
+        self.set_footer(trf!("已在新分頁開啟「{}」", "Opened “{}” in a new tab", paths::tab_title(path)));
+    }
+
     pub(super) fn new_tab_active(&mut self) {
         let path = self.active_tab().map(|t| t.display_path()).filter(|p| !p.is_empty()).unwrap_or_else(|| self.default_path.clone());
         self.new_tab(self.active_side(), &path);

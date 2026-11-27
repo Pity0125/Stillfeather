@@ -3,7 +3,7 @@
 //! 不依賴 windows-sys 等 crate：以 `raw-dylib` 直接匯入 DLL，建置時不需要 Windows SDK 的
 //! 匯入程式庫。comctl32 改在執行期載入（見 `comctl`），以確保啟用 v6 視覺樣式。
 //! 所有 handle 一律以 `isize` 表示，方便在執行緒間傳遞；在 x64 呼叫慣例上與指標等價。
-#![allow(non_snake_case, non_camel_case_types, clippy::upper_case_acronyms, dead_code)]
+#![allow(non_snake_case, non_camel_case_types, clippy::upper_case_acronyms)]
 
 use std::ffi::c_void;
 
@@ -14,7 +14,6 @@ pub type HMENU = isize;
 pub type HDC = isize;
 pub type HFONT = isize;
 pub type HBRUSH = isize;
-pub type HPEN = isize;
 pub type HICON = isize;
 pub type HBITMAP = isize;
 pub type HGDIOBJ = isize;
@@ -476,17 +475,6 @@ pub struct LVHITTESTINFO {
 }
 
 #[repr(C)]
-pub struct NMLVGETINFOTIPW {
-    pub hdr: NMHDR,
-    pub dwFlags: u32,
-    pub pszText: *mut u16,
-    pub cchTextMax: i32,
-    pub iItem: i32,
-    pub iSubItem: i32,
-    pub lParam: LPARAM,
-}
-
-#[repr(C)]
 pub struct HDITEMW {
     pub mask: u32,
     pub cxy: i32,
@@ -651,15 +639,6 @@ pub struct SHFILEINFOW {
 }
 
 #[repr(C)]
-pub struct SHSTOCKICONINFO {
-    pub cbSize: u32,
-    pub hIcon: HICON,
-    pub iSysImageIndex: i32,
-    pub iIcon: i32,
-    pub szPath: [u16; 260],
-}
-
-#[repr(C)]
 pub struct SHELLEXECUTEINFOW {
     pub cbSize: u32,
     pub fMask: u32,
@@ -813,7 +792,6 @@ impl GUID {
 
 // ---------------------------------------------------------------- 常數
 
-pub const WM_CREATE: u32 = 0x0001;
 pub const WM_DESTROY: u32 = 0x0002;
 pub const WM_SIZE: u32 = 0x0005;
 pub const WM_ACTIVATE: u32 = 0x0006;
@@ -824,9 +802,7 @@ pub const WM_SETTEXT: u32 = 0x000C;
 pub const WM_PAINT: u32 = 0x000F;
 pub const WM_CLOSE: u32 = 0x0010;
 pub const WM_ERASEBKGND: u32 = 0x0014;
-pub const WM_SHOWWINDOW: u32 = 0x0018;
 pub const WM_SETTINGCHANGE: u32 = 0x001A;
-pub const WM_ACTIVATEAPP: u32 = 0x001C;
 pub const WM_SETCURSOR: u32 = 0x0020;
 pub const WM_MOUSEACTIVATE: u32 = 0x0021;
 pub const WM_GETMINMAXINFO: u32 = 0x0024;
@@ -835,7 +811,6 @@ pub const WM_GETFONT: u32 = 0x0031;
 pub const WM_COPYDATA: u32 = 0x004A;
 pub const WM_NOTIFY: u32 = 0x004E;
 pub const WM_CONTEXTMENU: u32 = 0x007B;
-pub const WM_NCCREATE: u32 = 0x0081;
 pub const WM_NCDESTROY: u32 = 0x0082;
 pub const WM_NCHITTEST: u32 = 0x0084;
 pub const WM_GETDLGCODE: u32 = 0x0087;
@@ -848,7 +823,6 @@ pub const WM_SYSCHAR: u32 = 0x0106;
 pub const WM_COMMAND: u32 = 0x0111;
 pub const WM_TIMER: u32 = 0x0113;
 pub const WM_CTLCOLOREDIT: u32 = 0x0133;
-pub const WM_CTLCOLORLISTBOX: u32 = 0x0134;
 pub const WM_CTLCOLORSTATIC: u32 = 0x0138;
 pub const WM_MOUSEMOVE: u32 = 0x0200;
 pub const WM_LBUTTONDOWN: u32 = 0x0201;
@@ -862,7 +836,6 @@ pub const WM_MOUSEWHEEL: u32 = 0x020A;
 pub const WM_MOUSEHWHEEL: u32 = 0x020E;
 pub const WM_CAPTURECHANGED: u32 = 0x0215;
 pub const WM_DEVICECHANGE: u32 = 0x0219;
-pub const WM_DROPFILES: u32 = 0x0233;
 pub const WM_MOUSELEAVE: u32 = 0x02A3;
 pub const WM_DPICHANGED: u32 = 0x02E0;
 pub const WM_THEMECHANGED: u32 = 0x031A;
@@ -873,24 +846,18 @@ pub const WS_OVERLAPPEDWINDOW: u32 = 0x00CF_0000;
 pub const WS_POPUP: u32 = 0x8000_0000;
 pub const WS_CHILD: u32 = 0x4000_0000;
 pub const WS_VISIBLE: u32 = 0x1000_0000;
-pub const WS_DISABLED: u32 = 0x0800_0000;
 pub const WS_CLIPSIBLINGS: u32 = 0x0400_0000;
 pub const WS_CLIPCHILDREN: u32 = 0x0200_0000;
 pub const WS_CAPTION: u32 = 0x00C0_0000;
-pub const WS_BORDER: u32 = 0x0080_0000;
 pub const WS_VSCROLL: u32 = 0x0020_0000;
-pub const WS_HSCROLL: u32 = 0x0010_0000;
 pub const WS_SYSMENU: u32 = 0x0008_0000;
 pub const WS_MINIMIZEBOX: u32 = 0x0002_0000;
-pub const WS_GROUP: u32 = 0x0002_0000;
 pub const WS_TABSTOP: u32 = 0x0001_0000;
 
 pub const WS_EX_DLGMODALFRAME: u32 = 0x0001;
 pub const WS_EX_TOPMOST: u32 = 0x0008;
-pub const WS_EX_ACCEPTFILES: u32 = 0x0010;
 pub const WS_EX_TRANSPARENT: u32 = 0x0020;
 pub const WS_EX_TOOLWINDOW: u32 = 0x0080;
-pub const WS_EX_CLIENTEDGE: u32 = 0x0200;
 pub const WS_EX_CONTROLPARENT: u32 = 0x0001_0000;
 pub const WS_EX_LAYERED: u32 = 0x0008_0000;
 pub const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
@@ -900,7 +867,6 @@ pub const CS_HREDRAW: u32 = 0x0002;
 pub const CS_DBLCLKS: u32 = 0x0008;
 pub const CS_DROPSHADOW: u32 = 0x0002_0000;
 
-pub const CW_USEDEFAULT: i32 = 0x8000_0000u32 as i32;
 
 pub const SW_HIDE: i32 = 0;
 pub const SW_SHOWNORMAL: i32 = 1;
@@ -916,23 +882,17 @@ pub const SWP_NOACTIVATE: u32 = 0x0010;
 pub const SWP_FRAMECHANGED: u32 = 0x0020;
 pub const SWP_SHOWWINDOW: u32 = 0x0040;
 pub const SWP_HIDEWINDOW: u32 = 0x0080;
-pub const HWND_TOPMOST: HWND = -1;
+pub const SWP_NOOWNERZORDER: u32 = 0x0200;
 
 pub const GWLP_USERDATA: i32 = -21;
 pub const GWL_STYLE: i32 = -16;
 pub const GA_ROOT: u32 = 2;
 
 pub const MB_OK: u32 = 0x0;
-pub const MB_OKCANCEL: u32 = 0x1;
-pub const MB_YESNO: u32 = 0x4;
 pub const MB_ICONERROR: u32 = 0x10;
-pub const MB_ICONQUESTION: u32 = 0x20;
 pub const MB_ICONWARNING: u32 = 0x30;
-pub const MB_ICONINFORMATION: u32 = 0x40;
-pub const MB_DEFBUTTON2: u32 = 0x100;
 pub const IDOK: i32 = 1;
 pub const IDCANCEL: i32 = 2;
-pub const IDYES: i32 = 6;
 
 pub const DT_LEFT: u32 = 0x0;
 pub const DT_CENTER: u32 = 0x1;
@@ -944,10 +904,8 @@ pub const DT_CALCRECT: u32 = 0x400;
 pub const DT_EXPANDTABS: u32 = 0x40;
 pub const DT_EDITCONTROL: u32 = 0x2000;
 pub const DT_NOPREFIX: u32 = 0x800;
-pub const DT_PATH_ELLIPSIS: u32 = 0x4000;
 pub const DT_END_ELLIPSIS: u32 = 0x8000;
 
-pub const VK_BACK: u32 = 0x08;
 pub const VK_TAB: u32 = 0x09;
 pub const VK_RETURN: u32 = 0x0D;
 pub const VK_LBUTTON: i32 = 0x01;
@@ -978,16 +936,8 @@ pub const VK_LEFT: u32 = 0x25;
 pub const VK_UP: u32 = 0x26;
 pub const VK_RIGHT: u32 = 0x27;
 pub const VK_DOWN: u32 = 0x28;
-pub const VK_DELETE: u32 = 0x2E;
-pub const VK_APPS: u32 = 0x5D;
-pub const VK_F2: u32 = 0x71;
-pub const VK_F5: u32 = 0x74;
 /// 鍵盤上的瀏覽器「上一頁」「下一頁」鍵
 pub const VK_BROWSER_BACK: u32 = 0xA6;
-pub const VK_BROWSER_FORWARD: u32 = 0xA7;
-pub const VK_F10: u32 = 0x79;
-pub const VK_F12: u32 = 0x7B;
-pub const VK_OEM_COMMA: u32 = 0xBC;
 
 pub const TPM_RIGHTBUTTON: u32 = 0x0002;
 pub const TPM_VERTICAL: u32 = 0x0040;
@@ -1003,18 +953,13 @@ pub const MFT_SEPARATOR: u32 = 0x0800;
 pub const MFT_OWNERDRAW: u32 = 0x0100;
 pub const MIIM_DATA: u32 = 0x0020;
 pub const MIM_BACKGROUND: u32 = 0x0002;
-pub const MIM_APPLYTOSUBMENUS: u32 = 0x8000_0000;
 pub const ODT_MENU: u32 = 1;
 pub const ODS_SELECTED: u32 = 0x0001;
 pub const ODS_GRAYED: u32 = 0x0002;
 pub const ODS_DISABLED: u32 = 0x0004;
-pub const SM_CXMENUCHECK: i32 = 71;
 pub const MFS_GRAYED: u32 = 0x0003;
 pub const MFS_CHECKED: u32 = 0x0008;
 pub const TPM_RETURNCMD: u32 = 0x0100;
-pub const MF_STRING: u32 = 0x0000;
-pub const MF_GRAYED: u32 = 0x0001;
-pub const MF_CHECKED: u32 = 0x0008;
 pub const MF_SEPARATOR: u32 = 0x0800;
 pub const MF_POPUP: u32 = 0x0010;
 pub const MF_BYPOSITION: u32 = 0x0400;
@@ -1052,7 +997,6 @@ pub const LR_DEFAULTCOLOR: u32 = 0;
 pub const WM_SETICON: u32 = 0x0080;
 pub const ICON_SMALL: usize = 0;
 pub const ICON_BIG: usize = 1;
-pub const SM_CYSMICON: i32 = 50;
 pub const SM_CXVSCROLL: i32 = 2;
 
 pub const MONITOR_DEFAULTTONEAREST: u32 = 2;
@@ -1068,7 +1012,6 @@ pub const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
 pub const DWMWA_BORDER_COLOR: u32 = 34;
 pub const DWMWA_CAPTION_COLOR: u32 = 35;
 pub const DWMWA_TEXT_COLOR: u32 = 36;
-pub const DWMWCP_ROUND: u32 = 2;
 pub const WM_SYSCOMMAND: u32 = 0x0112;
 pub const SC_KEYMENU: usize = 0xF100;
 pub const GWL_EXSTYLE: i32 = -20;
@@ -1111,7 +1054,6 @@ pub const TYMED_HGLOBAL: u32 = 1;
 pub const CLSCTX_INPROC_SERVER: u32 = 1;
 pub const MK_SHIFT: u32 = 0x4;
 pub const MK_CONTROL: u32 = 0x8;
-pub const MK_ALT: u32 = 0x20;
 pub const WM_HSCROLL: u32 = 0x0114;
 pub const WM_VSCROLL: u32 = 0x0115;
 pub const SB_LINEUP: usize = 0;
@@ -1130,8 +1072,6 @@ pub const SIF_POS: u32 = 0x4;
 pub const SIF_TRACKPOS: u32 = 0x10;
 /// 不需要捲動時捲軸停用（不隱藏）：內容區的寬度不會跟著變
 pub const SIF_DISABLENOSCROLL: u32 = 0x8;
-pub const VK_F1: u32 = 0x70;
-pub const LVIS_DROPHILITED: u32 = 0x8;
 pub const TVGN_DROPHILITE: usize = 0x8;
 pub const TVIS_DROPHILITED: u32 = 0x8;
 /// DROPDESCRIPTION.type：交給系統顯示預設說明
@@ -1168,16 +1108,10 @@ pub const DRAGDROP_S_DROP: HRESULT = 0x0004_0100;
 pub const DRAGDROP_S_CANCEL: HRESULT = 0x0004_0101;
 pub const DRAGDROP_S_USEDEFAULTCURSORS: HRESULT = 0x0004_0102;
 pub const DSH_ALLOWDROPDESCRIPTIONTEXT: u32 = 0x1;
-pub const SHGSI_SMALLICON: u32 = 0x0001;
-pub const SHGSI_ICON: u32 = 0x0100;
-pub const SIID_FOLDER: i32 = 3;
-pub const SIID_DRIVEREMOVE: i32 = 7;
-pub const SIID_DRIVEFIXED: i32 = 8;
-pub const SIID_DRIVENET: i32 = 9;
-pub const SIID_DRIVECD: i32 = 11;
 
 pub const SEE_MASK_INVOKEIDLIST: u32 = 0x0000_000C;
 pub const SEE_MASK_FLAG_NO_UI: u32 = 0x0000_0400;
+pub const SEE_MASK_IDLIST: u32 = 0x0000_0004;
 
 pub const DRIVE_REMOVABLE: u32 = 2;
 pub const I_IMAGENONE: i32 = -2;
@@ -1188,7 +1122,6 @@ pub const DRIVE_RAMDISK: u32 = 6;
 
 pub const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
 pub const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
-pub const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
 pub const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 pub const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
 pub const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
@@ -1241,7 +1174,6 @@ pub const BI_RGB: u32 = 0;
 pub const SRCCOPY: u32 = 0x00CC_0020;
 pub const AC_SRC_OVER: u8 = 0;
 pub const AC_SRC_ALPHA: u8 = 1;
-pub const WM_QUERYENDSESSION: u32 = 0x0011;
 pub const WM_ENDSESSION: u32 = 0x0016;
 pub const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x4000;
 
@@ -1259,7 +1191,6 @@ pub const NULL_BRUSH: i32 = 5;
 pub const NULL_PEN: i32 = 8;
 pub const DC_BRUSH: i32 = 18;
 pub const DC_PEN: i32 = 19;
-pub const PS_SOLID: i32 = 0;
 pub const FW_NORMAL: i32 = 400;
 pub const FW_SEMIBOLD: i32 = 600;
 pub const DEFAULT_CHARSET: u32 = 1;
@@ -1283,7 +1214,6 @@ pub const DTS_SHORTDATEFORMAT: u32 = 0x0;
 pub const DTS_SHOWNONE: u32 = 0x2;
 pub const DTM_GETSYSTEMTIME: u32 = 0x1001;
 pub const DTM_SETSYSTEMTIME: u32 = 0x1002;
-pub const DTM_SETMCCOLOR: u32 = 0x1006;
 pub const GDT_VALID: usize = 0;
 pub const GDT_NONE: usize = 1;
 
@@ -1300,7 +1230,6 @@ pub const EN_KILLFOCUS: u32 = 0x0200;
 pub const EN_CHANGE: u32 = 0x0300;
 
 // Static
-pub const SS_LEFTNOWORDWRAP: u32 = 0x000C;
 pub const SS_NOPREFIX: u32 = 0x0080;
 pub const SS_ENDELLIPSIS: u32 = 0x4000;
 
@@ -1317,7 +1246,6 @@ pub const LVS_SHAREIMAGELISTS: u32 = 0x0040;
 pub const LVS_EDITLABELS: u32 = 0x0200;
 pub const LVS_OWNERDATA: u32 = 0x1000;
 pub const LVS_EX_FULLROWSELECT: u32 = 0x0020;
-pub const LVS_EX_INFOTIP: u32 = 0x0400;
 pub const LVS_EX_LABELTIP: u32 = 0x4000;
 pub const LVS_EX_DOUBLEBUFFER: u32 = 0x0001_0000;
 pub const LVM_SETBKCOLOR: u32 = 0x1001;
@@ -1329,7 +1257,6 @@ pub const LVM_HITTEST: u32 = 0x1012;
 pub const LVM_SUBITEMHITTEST: u32 = 0x1039;
 pub const LVM_ENSUREVISIBLE: u32 = 0x1013;
 pub const LVM_SCROLL: u32 = 0x1014;
-pub const LVM_REDRAWITEMS: u32 = 0x1015;
 pub const LVM_GETEDITCONTROL: u32 = 0x1018;
 pub const LVM_GETCOLUMNWIDTH: u32 = 0x101D;
 pub const LVM_GETSUBITEMRECT: u32 = 0x1038;
@@ -1346,7 +1273,6 @@ pub const LVM_GETSELECTEDCOUNT: u32 = 0x1032;
 pub const LVM_SETEXTENDEDLISTVIEWSTYLE: u32 = 0x1036;
 /// 清單自己的提示視窗（截斷的名稱滑鼠停上去時顯示完整名稱）
 pub const LVM_GETTOOLTIPS: u32 = 0x104E;
-pub const LVM_GETSELECTIONMARK: u32 = 0x1042;
 pub const LVM_SETHOTITEM: u32 = 0x103C;
 pub const LVM_SETSELECTIONMARK: u32 = 0x1043;
 pub const LVM_INSERTCOLUMNW: u32 = 0x1061;
@@ -1369,16 +1295,13 @@ pub const LVIF_COLFMT: u32 = 0x10000;
 pub const LVTVIM_TILESIZE: u32 = 0x1;
 pub const LVTVIM_COLUMNS: u32 = 0x2;
 pub const LVTVIM_LABELMARGIN: u32 = 0x4;
-pub const LVTVIF_AUTOSIZE: u32 = 0x0;
 pub const LVTVIF_FIXEDWIDTH: u32 = 0x1;
 pub const LVIF_TEXT: u32 = 0x1;
 pub const LVIF_IMAGE: u32 = 0x2;
-pub const LVIF_STATE: u32 = 0x8;
 /// 項目往右縮排（單位是小圖示的寬度；詳細資料檢視才有作用）
 pub const LVIF_INDENT: u32 = 0x10;
 pub const LVIS_FOCUSED: u32 = 0x1;
 pub const LVIS_SELECTED: u32 = 0x2;
-pub const LVNI_ALL: u32 = 0x0;
 pub const LVNI_FOCUSED: u32 = 0x1;
 pub const LVNI_SELECTED: u32 = 0x2;
 pub const LVCF_FMT: u32 = 0x1;
@@ -1390,10 +1313,8 @@ pub const LVCFMT_RIGHT: i32 = 1;
 pub const LVHT_ONITEM: u32 = 0x000E;
 pub const LVFI_STRING: u32 = 0x2;
 pub const LVFI_PARTIAL: u32 = 0x8;
-pub const LVFI_WRAP: u32 = 0x20;
 pub const LVIR_BOUNDS: i32 = 0;
 pub const LVIR_ICON: i32 = 1;
-pub const LVIR_LABEL: i32 = 2;
 
 pub const HDM_GETITEMW: u32 = 0x120B;
 pub const HDM_SETITEMW: u32 = 0x120C;
@@ -1406,25 +1327,21 @@ const fn n(v: i32) -> u32 {
     v as u32
 }
 pub const NM_CLICK: u32 = n(-2);
-pub const NM_DBLCLK: u32 = n(-3);
-pub const NM_RETURN: u32 = n(-4);
-pub const NM_RCLICK: u32 = n(-5);
 pub const NM_SETFOCUS: u32 = n(-7);
 pub const NM_CUSTOMDRAW: u32 = n(-12);
 pub const LVN_ITEMCHANGED: u32 = n(-101);
+/// 清單內建的框選開始了（LVN_FIRST - 56）
+pub const LVN_MARQUEEBEGIN: u32 = n(-156);
 pub const LVN_COLUMNCLICK: u32 = n(-108);
 pub const LVN_BEGINDRAG: u32 = n(-109);
 pub const LVN_BEGINRDRAG: u32 = n(-111);
 pub const LVN_ITEMACTIVATE: u32 = n(-114);
 pub const LVN_ODSTATECHANGED: u32 = n(-115);
-pub const LVN_KEYDOWN: u32 = n(-155);
-pub const LVN_GETINFOTIPW: u32 = n(-158);
 pub const LVN_BEGINLABELEDITW: u32 = n(-175);
 pub const LVN_ENDLABELEDITW: u32 = n(-176);
 pub const LVN_GETDISPINFOW: u32 = n(-177);
 pub const LVN_ODFINDITEMW: u32 = n(-179);
 pub const TVN_KEYDOWN: u32 = n(-412);
-pub const TVN_SELCHANGEDW: u32 = n(-451);
 pub const TVN_ITEMEXPANDINGW: u32 = n(-454);
 pub const TVN_ITEMEXPANDEDW: u32 = n(-455);
 pub const TVN_DELETEITEMW: u32 = n(-458);
@@ -1435,7 +1352,6 @@ pub const CDDS_ITEM: u32 = 0x1_0000;
 pub const CDDS_ITEMPREPAINT: u32 = CDDS_ITEM | CDDS_PREPAINT;
 pub const CDDS_ITEMPOSTPAINT: u32 = CDDS_ITEM | CDDS_POSTPAINT;
 pub const CDRF_DODEFAULT: LRESULT = 0x0;
-pub const CDRF_NEWFONT: LRESULT = 0x2;
 pub const CDRF_SKIPDEFAULT: LRESULT = 0x4;
 pub const CDRF_NOTIFYPOSTPAINT: LRESULT = 0x10;
 pub const CDRF_NOTIFYITEMDRAW: LRESULT = 0x20;
@@ -1449,14 +1365,11 @@ pub const HDM_GETITEMRECT: u32 = 0x1207;
 
 // Tree-view
 pub const TVS_HASBUTTONS: u32 = 0x0001;
-pub const TVS_LINESATROOT: u32 = 0x0004;
 pub const TVS_SHOWSELALWAYS: u32 = 0x0020;
 pub const TVS_TRACKSELECT: u32 = 0x0200;
-pub const TVS_INFOTIP: u32 = 0x0800;
 pub const TVS_FULLROWSELECT: u32 = 0x1000;
 pub const TVS_NOHSCROLL: u32 = 0x8000;
 pub const TVS_EX_DOUBLEBUFFER: usize = 0x0004;
-pub const TVS_EX_FADEINOUTEXPANDOS: usize = 0x0040;
 pub const TVM_DELETEITEM: u32 = 0x1101;
 pub const TVM_EXPAND: u32 = 0x1102;
 pub const TVM_SETIMAGELIST: u32 = 0x1109;
@@ -1478,12 +1391,12 @@ pub const TVGN_NEXT: usize = 0x1;
 pub const TVGN_PARENT: usize = 0x3;
 pub const TVGN_CHILD: usize = 0x4;
 pub const TVGN_CARET: usize = 0x9;
+pub const TVGN_LASTVISIBLE: usize = 0xA;
 pub const TVE_COLLAPSE: usize = 0x1;
 pub const TVE_EXPAND: usize = 0x2;
 pub const TVE_COLLAPSERESET: usize = 0x8000;
 pub const TVIF_TEXT: u32 = 0x1;
 pub const TVIF_IMAGE: u32 = 0x2;
-pub const TVIF_PARAM: u32 = 0x4;
 pub const TVIF_STATE: u32 = 0x8;
 pub const TVIF_HANDLE: u32 = 0x10;
 pub const TVIF_SELECTEDIMAGE: u32 = 0x20;
@@ -1496,7 +1409,6 @@ pub const TVI_FIRST: HTREEITEM = -0xFFFF;
 pub const TVI_LAST: HTREEITEM = -0xFFFE;
 pub const TVHT_ONITEMICON: u32 = 0x2;
 pub const TVHT_ONITEMLABEL: u32 = 0x4;
-pub const TVHT_ONITEMBUTTON: u32 = 0x10;
 pub const TVHT_ONITEMRIGHT: u32 = 0x20;
 pub const TVSIL_NORMAL: usize = 0;
 
@@ -1548,10 +1460,8 @@ extern "system" {
     pub fn LoadLibraryW(name: *const u16) -> HMODULE;
     pub fn GetProcAddress(module: HMODULE, name: *const u8) -> *const c_void;
     pub fn GetLastError() -> u32;
-    pub fn SetLastError(code: u32);
     pub fn FormatMessageW(flags: u32, source: *const c_void, id: u32, lang: u32, buf: *mut u16, size: u32, args: *const c_void) -> u32;
     pub fn CreateMutexW(attrs: *const c_void, initial: BOOL, name: *const u16) -> HANDLE;
-    pub fn ReleaseMutex(h: HANDLE) -> BOOL;
     pub fn CloseHandle(h: HANDLE) -> BOOL;
     pub fn FindFirstFileExW(name: *const u16, level: i32, data: *mut WIN32_FIND_DATAW, op: i32, filter: *const c_void, flags: u32) -> HANDLE;
     pub fn FindNextFileW(h: HANDLE, data: *mut WIN32_FIND_DATAW) -> BOOL;
@@ -1578,7 +1488,6 @@ extern "system" {
     pub fn FileTimeToSystemTime(ft: *const FILETIME, st: *mut SYSTEMTIME) -> BOOL;
     pub fn SystemTimeToTzSpecificLocalTime(tz: *const c_void, utc: *const SYSTEMTIME, local: *mut SYSTEMTIME) -> BOOL;
     pub fn GetCurrentProcessId() -> u32;
-    pub fn ProcessIdToSessionId(pid: u32, session: *mut u32) -> BOOL;
     pub fn GetTickCount64() -> u64;
     pub fn SetPriorityClass(process: HANDLE, class: u32) -> BOOL;
     pub fn SetUnhandledExceptionFilter(filter: Option<unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32>) -> *const c_void;
@@ -1687,7 +1596,6 @@ extern "system" {
     pub fn GetDpiForWindow(hwnd: HWND) -> u32;
     pub fn GetDpiForSystem() -> u32;
     pub fn GetSystemMetrics(index: i32) -> i32;
-    pub fn GetSystemMetricsForDpi(index: i32, dpi: u32) -> i32;
     pub fn SetProcessDpiAwarenessContext(ctx: isize) -> BOOL;
     pub fn SetWindowLongPtrW(hwnd: HWND, index: i32, value: isize) -> isize;
     pub fn GetWindowLongPtrW(hwnd: HWND, index: i32) -> isize;
@@ -1704,7 +1612,6 @@ extern "system" {
     pub fn GetActiveWindow() -> HWND;
     pub fn EnumThreadWindows(thread: u32, func: unsafe extern "system" fn(HWND, LPARAM) -> BOOL, lparam: LPARAM) -> BOOL;
     pub fn WindowFromPoint(pt: POINT) -> HWND;
-    pub fn FlashWindow(hwnd: HWND, invert: BOOL) -> BOOL;
     pub fn SetTimer(hwnd: HWND, id: usize, ms: u32, func: *const c_void) -> usize;
     pub fn GetShellWindow() -> HWND;
     pub fn KillTimer(hwnd: HWND, id: usize) -> BOOL;
@@ -1714,7 +1621,6 @@ extern "system" {
     pub fn ClientToScreen(hwnd: HWND, pt: *mut POINT) -> BOOL;
     pub fn CreatePopupMenu() -> HMENU;
     pub fn AppendMenuW(menu: HMENU, flags: u32, id: usize, text: *const u16) -> BOOL;
-    pub fn TrackPopupMenu(menu: HMENU, flags: u32, x: i32, y: i32, reserved: i32, hwnd: HWND, rect: *const RECT) -> BOOL;
     pub fn TrackPopupMenuEx(menu: HMENU, flags: u32, x: i32, y: i32, hwnd: HWND, params: *const c_void) -> BOOL;
     pub fn InsertMenuItemW(menu: HMENU, item: u32, by_position: BOOL, info: *const MENUITEMINFOW) -> BOOL;
     pub fn GetMenuItemCount(menu: HMENU) -> i32;
@@ -1742,7 +1648,6 @@ extern "system" {
     pub fn MonitorFromWindow(hwnd: HWND, flags: u32) -> HMONITOR;
     pub fn GetMonitorInfoW(monitor: HMONITOR, info: *mut MONITORINFO) -> BOOL;
     pub fn SetLayeredWindowAttributes(hwnd: HWND, key: COLORREF, alpha: u8, flags: u32) -> BOOL;
-    pub fn DrawFocusRect(hdc: HDC, rect: *const RECT) -> BOOL;
     pub fn SystemParametersInfoW(action: u32, param: u32, pv: *mut c_void, winini: u32) -> BOOL;
     pub fn PrintWindow(hwnd: HWND, hdc: HDC, flags: u32) -> BOOL;
     pub fn GetLastActivePopup(hwnd: HWND) -> HWND;
@@ -1769,7 +1674,6 @@ extern "system" {
         face: *const u16,
     ) -> HFONT;
     pub fn CreateSolidBrush(color: COLORREF) -> HBRUSH;
-    pub fn CreatePen(style: i32, width: i32, color: COLORREF) -> HPEN;
     pub fn DeleteObject(obj: HGDIOBJ) -> BOOL;
     pub fn SelectObject(hdc: HDC, obj: HGDIOBJ) -> HGDIOBJ;
     pub fn GetStockObject(index: i32) -> HGDIOBJ;
@@ -1787,6 +1691,7 @@ extern "system" {
     pub fn CreateCompatibleBitmap(hdc: HDC, w: i32, h: i32) -> HBITMAP;
     pub fn CreateBitmap(w: i32, h: i32, planes: u32, bits: u32, data: *const c_void) -> HBITMAP;
     pub fn BitBlt(hdc: HDC, x: i32, y: i32, w: i32, h: i32, src: HDC, sx: i32, sy: i32, rop: u32) -> BOOL;
+    pub fn SetViewportOrgEx(hdc: HDC, x: i32, y: i32, old: *mut POINT) -> BOOL;
     /// msimg32 的 AlphaBlend 就是轉呼叫這個
     pub fn GdiAlphaBlend(dst: HDC, x: i32, y: i32, w: i32, h: i32, src: HDC, sx: i32, sy: i32, sw: i32, sh: i32, blend: BLENDFUNCTION) -> BOOL;
     pub fn StretchBlt(hdc: HDC, x: i32, y: i32, w: i32, h: i32, src: HDC, sx: i32, sy: i32, sw: i32, sh: i32, rop: u32) -> BOOL;
@@ -1821,7 +1726,6 @@ extern "system" {
     /// 讀寫殼層設定（SHELLSTATE）。這裡只讀「刪除時顯示確認」（SSF_NOCONFIRMRECYCLE）
     pub fn SHGetSetSettings(state: *mut c_void, mask: u32, set: BOOL);
     pub fn SHGetFileInfoW(path: *const u16, attrs: u32, info: *mut SHFILEINFOW, size: u32, flags: u32) -> usize;
-    pub fn SHGetStockIconInfo(id: i32, flags: u32, info: *mut SHSTOCKICONINFO) -> HRESULT;
     pub fn SHGetKnownFolderPath(id: *const GUID, flags: u32, token: HANDLE, path: *mut *mut u16) -> HRESULT;
     pub fn SHCreateItemFromParsingName(path: *const u16, bc: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT;
     pub fn SHParseDisplayName(name: *const u16, bc: *mut c_void, pidl: *mut *mut c_void, sfgao_in: u32, sfgao_out: *mut u32) -> HRESULT;
@@ -1833,9 +1737,7 @@ extern "system" {
     pub fn SHGetPropertyStoreFromParsingName(path: *const u16, bind: *mut c_void, flags: u32, iid: *const GUID, out: *mut *mut c_void) -> HRESULT;
     pub fn SHGetImageList(kind: i32, riid: *const GUID, out: *mut *mut c_void) -> HRESULT;
     pub fn SHCreateDataObject(folder: *const c_void, count: u32, items: *const *const c_void, inner: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT;
-    pub fn DragAcceptFiles(hwnd: HWND, accept: BOOL);
     pub fn DragQueryFileW(drop: HANDLE, index: u32, buf: *mut u16, len: u32) -> u32;
-    pub fn DragFinish(drop: HANDLE);
 }
 
 #[cfg_attr(windows, link(name = "oleaut32", kind = "raw-dylib"))]
@@ -1845,7 +1747,6 @@ extern "system" {
     pub fn SafeArrayAccessData(psa: *mut c_void, data: *mut *mut c_void) -> HRESULT;
     pub fn SafeArrayUnaccessData(psa: *mut c_void) -> HRESULT;
     pub fn SafeArrayDestroy(psa: *mut c_void) -> HRESULT;
-    pub fn SysFreeString(s: *mut u16);
 }
 
 #[cfg_attr(windows, link(name = "ole32", kind = "raw-dylib"))]
@@ -2083,7 +1984,6 @@ mod layout_tests {
         assert_eq!(size_of::<SCROLLINFO>(), 28);
         assert_eq!(size_of::<MENUITEMINFOW>(), 80);
         assert_eq!(size_of::<SHFILEINFOW>(), 696);
-        assert_eq!(size_of::<SHSTOCKICONINFO>(), 544);
         assert_eq!(size_of::<SHELLEXECUTEINFOW>(), 112);
         assert_eq!(size_of::<DROPFILES>(), 20);
         assert_eq!(size_of::<BITMAPINFOHEADER>(), 40);
@@ -2096,7 +1996,6 @@ mod layout_tests {
         assert_eq!(size_of::<NMLVCUSTOMDRAW>(), 136);
         assert_eq!(size_of::<NMTVCUSTOMDRAW>(), 96);
         assert_eq!(size_of::<TRACKMOUSEEVENT>(), 24);
-        assert_eq!(size_of::<NMLVGETINFOTIPW>(), 64);
         assert_eq!(size_of::<LVHITTESTINFO>(), 24);
         assert_eq!(size_of::<TVHITTESTINFO>(), 24);
         assert_eq!(size_of::<FLASHWINFO>(), 32);

@@ -4,7 +4,11 @@
 use super::sys::*;
 use std::ffi::c_void;
 
+pub type HPEN = isize;
+
 pub const WS_OVERLAPPED: u32 = 0;
+pub const CW_USEDEFAULT: i32 = 0x8000_0000u32 as i32;
+pub const PS_SOLID: i32 = 0;
 pub const SEE_MASK_NOCLOSEPROCESS: u32 = 0x0000_0040;
 pub const SEE_MASK_NOASYNC: u32 = 0x0000_0100;
 pub const INFINITE: u32 = 0xFFFF_FFFF;
@@ -92,6 +96,11 @@ extern "system" {
 #[cfg_attr(windows, link(name = "user32", kind = "raw-dylib"))]
 extern "system" {
     pub fn AdjustWindowRectExForDpi(rect: *mut RECT, style: u32, menu: BOOL, ex_style: u32, dpi: u32) -> BOOL;
+}
+
+#[cfg_attr(windows, link(name = "gdi32", kind = "raw-dylib"))]
+extern "system" {
+    pub fn CreatePen(style: i32, width: i32, color: COLORREF) -> HPEN;
 }
 
 // ---------------------------------------------------------------- COM 介面（只宣告用到的方法，其他位置留空）

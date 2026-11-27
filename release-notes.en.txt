@@ -1,8 +1,7 @@
-Detachable tabs, bookmark groups, custom shortcuts, advanced search and eight themes:
-• Drag a tab out of the window to open it on its own, or drag tabs to reorder them or move them to the other pane; Ctrl+Shift+T reopens the last closed tab
-• Right-click Favorites to create bookmark groups, then drag folders in to pin them
-• Change or disable shortcuts in Settings › Shortcuts; dual panes are now Ctrl+\ and editing the path is Ctrl+E
-• Filter searches by date and size, or type conditions like ext:pdf and -draft; results are ranked by relevance
-• Eight themes, each with light and dark variants, under Settings › Theme & colors
-• Type \\nas to browse a NAS's shared folders; F1 opens a separate Help window
-• New folders always go straight into rename mode; Shift+Delete always asks before deleting permanently
+Your own sidebar sections, middle-click for new tabs, and a path bar that runs programs:
+• Right-click empty space in the sidebar to add sections alongside Favorites and Drives, drag folders in to pin them, and drag sections to reorder them
+• Middle-click a folder to open it in a new tab, as many as you like in a row
+• The path bar runs programs and commands like Win+R; type cmd to open a command prompt in the current folder
+• Press ↓ in the search box for your last 10 searches, filters included
+• Set a shortcut by clicking a command and pressing the keys you want
+• Box selection no longer lags, even with a very large box

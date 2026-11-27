@@ -601,6 +601,8 @@ pub struct Buffered {
     bitmap: HBITMAP,
     old: HGDIOBJ,
     rect: RECT,
+    /// 記憶體 DC 上對應 `rect` 左上角的座標
+    src: POINT,
 }
 
 impl Buffered {
@@ -609,15 +611,26 @@ impl Buffered {
             let hdc = CreateCompatibleDC(target);
             let bitmap = CreateCompatibleBitmap(target, rect.width().max(1), rect.height().max(1));
             let old = SelectObject(hdc, bitmap);
-            Buffered { hdc, target, bitmap, old, rect }
+            Buffered { hdc, target, bitmap, old, rect, src: POINT::default() }
         }
+    }
+
+    /// 只重畫一部分（`rect`，用戶區座標）：記憶體 DC 只開那麼大，畫的時候座標照舊用整個用戶區的，
+    /// 畫到外面的自然被裁掉（例如只有狀態列在淡入時，不必每一格都配一張整個視窗大的點陣圖、整片貼上）。
+    pub fn part(target: HDC, rect: RECT) -> Buffered {
+        let mut b = Buffered::new(target, rect);
+        unsafe {
+            SetViewportOrgEx(b.hdc, -rect.left, -rect.top, std::ptr::null_mut());
+        }
+        b.src = POINT { x: rect.left, y: rect.top };
+        b
     }
 }
 
 impl Drop for Buffered {
     fn drop(&mut self) {
         unsafe {
-            BitBlt(self.target, self.rect.left, self.rect.top, self.rect.width(), self.rect.height(), self.hdc, 0, 0, SRCCOPY);
+            BitBlt(self.target, self.rect.left, self.rect.top, self.rect.width(), self.rect.height(), self.hdc, self.src.x, self.src.y, SRCCOPY);
             SelectObject(self.hdc, self.old);
             DeleteObject(self.bitmap);
             DeleteDC(self.hdc);

@@ -10,9 +10,10 @@
 //! 所以空白處由這裡接手。其他檢視（圖示、並排、清單…）項目之間本來就有空白，用清單內建的框選。
 //! 計算的部分見 `feather_core::marquee`。
 //!
-//! 拖曳時要跟得上滑鼠：方框是兩個疊在清單上、不接收滑鼠的半透明小視窗（填色一個、外框一個），移動時只搬視窗，
-//! 清單不必重畫；碰到的列直接換成選取（不播淡入動畫）；狀態列的「已選取 N 個項目」最多每 0.1 秒更新一次
-//! （更新狀態列會重畫整個主視窗）。
+//! 拖曳時要跟得上滑鼠：方框畫在兩個疊在清單上、不接收滑鼠的透明視窗上（填色一個、外框一個）。
+//! 這兩個視窗開始拖曳時就蓋滿整個清單、之後不再改大小，滑鼠每動一下只重畫方框有變化的那幾條
+//! （以前方框本身就是視窗，每動一下就要改兩個視窗的大小、整片重畫，方框越大越卡）；清單不必重畫。
+//! 碰到的列直接換成選取（不播淡入動畫）、馬上重畫；狀態列的「已選取 N 個項目」最多每 0.1 秒更新一次。
 
 use super::app::App;
 use super::sys::*;
@@ -46,6 +47,8 @@ thread_local! {
     static BLANK_RCLICK: Cell<Option<usize>> = const { Cell::new(None) };
     /// 滑鼠上次在哪一欄、哪一列，在項目上還是旁邊的空白（換了才重畫懸停的底色）
     static POINTER: Cell<Option<(usize, usize, bool)>> = const { Cell::new(None) };
+    /// 方框視窗上要畫的方框（方框視窗的用戶區座標）；兩個方框視窗共用
+    static BOX: Cell<Option<RECT>> = const { Cell::new(None) };
 }
 
 pub(super) struct Marquee {
@@ -63,8 +66,12 @@ pub(super) struct Marquee {
     before: Vec<usize>,
     /// 方框目前碰到的列
     range: Option<(usize, usize)>,
-    /// 畫面上的方框（用戶區座標，只在欄位標題下面）
+    /// 方框視窗蓋住的範圍：放列的地方（清單用戶區座標，欄位標題下面）
+    area: RECT,
+    /// 畫面上的方框（方框視窗的座標，已經裁到 `area` 裡）
     drawn: Option<RECT>,
+    /// 方框外框的寬度
+    border: i32,
     /// 方框的填色與外框視窗（開始拖曳時建立）
     fill: HWND,
     frame: HWND,
@@ -126,6 +133,14 @@ fn intersect(a: RECT, b: RECT) -> Option<RECT> {
     (r.left < r.right && r.top < r.bottom).then_some(r)
 }
 
+fn to_tuple(r: RECT) -> marquee::Rect {
+    (r.left, r.top, r.right, r.bottom)
+}
+
+fn to_rect(r: marquee::Rect) -> RECT {
+    RECT { left: r.0, top: r.1, right: r.2, bottom: r.3 }
+}
+
 fn set_state(list: HWND, index: isize, state: u32, mask: u32) {
     let mut item: LVITEMW = unsafe { std::mem::zeroed() };
     item.stateMask = mask;
@@ -169,8 +184,9 @@ fn cursor_in(hwnd: HWND) -> POINT {
     pt
 }
 
-/// 方框視窗：填色（外框寬度 0，整個視窗半透明）或外框（中間是透明色）。視窗的 GWLP_USERDATA 是顏色，
-/// 外框寬度放在高 32 位元。不接收滑鼠、不會被啟用。
+/// 方框視窗：蓋滿清單放列的地方，方框以外畫成透明色。填色視窗（外框寬度 0）整個再半透明，外框視窗不透明。
+/// 視窗的 GWLP_USERDATA 是顏色，外框寬度放在高 32 位元；方框在 `BOX`。不接收滑鼠、不會被啟用。
+/// 只畫需要重畫的地方（`ps.rcPaint`，畫到外面的會被裁掉）：拖曳時每次只有方框邊緣那幾條。
 unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_ERASEBKGND => return 1,
@@ -180,18 +196,14 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
             let data = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as u64;
             let color = (data & 0xFFFF_FFFF) as COLORREF;
             let w = (data >> 32) as i32;
-            let r = client_rect(hwnd);
-            if w == 0 {
-                theme::fill(hdc, &r, color);
-            } else {
-                theme::fill(hdc, &r, FRAME_KEY);
-                for edge in [
-                    RECT { bottom: r.top + w, ..r },
-                    RECT { top: r.bottom - w, ..r },
-                    RECT { right: r.left + w, ..r },
-                    RECT { left: r.right - w, ..r },
-                ] {
-                    theme::fill(hdc, &edge, color);
+            let dirty = ps.rcPaint;
+            theme::fill(hdc, &dirty, FRAME_KEY);
+            if let Some(b) = BOX.with(|c| c.get()) {
+                let parts = if w == 0 { vec![to_tuple(b)] } else { marquee::edges(to_tuple(b), w) };
+                for part in parts {
+                    if let Some(r) = intersect(to_rect(part), dirty) {
+                        theme::fill(hdc, &r, color);
+                    }
                 }
             }
             EndPaint(hwnd, &ps);
@@ -209,21 +221,7 @@ fn create_overlay(owner: HWND, color: COLORREF, border: i32) -> HWND {
         let hinst = GetModuleHandleW(std::ptr::null());
         let class = wide(OVERLAY_CLASS);
         if !REGISTERED.with(|r| r.replace(true)) {
-            let wc = WNDCLASSEXW {
-                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-                style: CS_HREDRAW | CS_VREDRAW,
-                lpfnWndProc: overlay_proc,
-                cbClsExtra: 0,
-                cbWndExtra: 0,
-                hInstance: hinst,
-                hIcon: 0,
-                hCursor: load_cursor(IDC_ARROW),
-                hbrBackground: 0,
-                lpszMenuName: std::ptr::null(),
-                lpszClassName: class.as_ptr(),
-                hIconSm: 0,
-            };
-            RegisterClassExW(&wc);
+            register_class(hinst, OVERLAY_CLASS, 0, overlay_proc, IDC_ARROW);
         }
         let hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
@@ -242,38 +240,57 @@ fn create_overlay(owner: HWND, color: COLORREF, border: i32) -> HWND {
         if hwnd == 0 {
             return 0;
         }
+        // 方框的顏色剛好是透明色時稍微偏一點，不然方框會變成透明的
+        let color = if color & 0x00FF_FFFF == FRAME_KEY { FRAME_KEY ^ 0x0000_0100 } else { color };
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (color as u64 | (border.max(0) as u64) << 32) as isize);
         let off: BOOL = 1;
         DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &off as *const BOOL as *const std::ffi::c_void, 4);
-        if border == 0 {
-            SetLayeredWindowAttributes(hwnd, 0, FILL_ALPHA, LWA_ALPHA);
-        } else {
-            SetLayeredWindowAttributes(hwnd, FRAME_KEY, 0, LWA_COLORKEY);
-        }
+        // 先完全透明：顯示出來、畫好之前不會蓋上一片黑（見 show_overlays）
+        SetLayeredWindowAttributes(hwnd, FRAME_KEY, 0, LWA_ALPHA | LWA_COLORKEY);
         hwnd
     }
 }
 
-/// 把方框視窗搬到清單上的 `r`（用戶區座標）；沒有時藏起來
-fn place_overlays(list: HWND, wins: [HWND; 2], r: Option<RECT>) {
+/// 開始拖曳：方框視窗（`[填色, 外框]`）蓋到清單上的 `area`（用戶區座標）。這時還沒有方框，整個是透明的。
+/// 視窗建立時完全透明，畫好透明色之後才換成真正的透明度，第一次顯示時不會閃一下。
+fn show_overlays(list: HWND, wins: [HWND; 2], area: RECT) {
+    let mut pt = POINT { x: area.left, y: area.top };
     unsafe {
-        match r {
-            None => {
-                for h in wins {
-                    if h != 0 {
-                        ShowWindow(h, SW_HIDE);
-                    }
-                }
+        ClientToScreen(list, &mut pt);
+        for h in wins {
+            if h != 0 {
+                SetWindowPos(h, 0, pt.x, pt.y, area.width(), area.height(), SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+                UpdateWindow(h);
             }
-            Some(r) => {
-                let mut pt = POINT { x: r.left, y: r.top };
-                ClientToScreen(list, &mut pt);
-                for h in wins {
-                    if h != 0 {
-                        SetWindowPos(h, 0, pt.x, pt.y, r.width(), r.height(), SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
-                        UpdateWindow(h);
-                    }
-                }
+        }
+        let [fill, frame] = wins;
+        if fill != 0 {
+            SetLayeredWindowAttributes(fill, FRAME_KEY, FILL_ALPHA, LWA_ALPHA | LWA_COLORKEY);
+        }
+        if frame != 0 {
+            SetLayeredWindowAttributes(frame, FRAME_KEY, 0, LWA_COLORKEY);
+        }
+    }
+}
+
+/// 方框從 `old` 換成 `new`（方框視窗的座標）：只重畫有變化的地方，馬上畫好
+fn move_box(wins: [HWND; 2], old: Option<RECT>, new: Option<RECT>, border: i32) {
+    BOX.with(|c| c.set(new));
+    let [fill, frame] = wins;
+    unsafe {
+        if fill != 0 {
+            for r in marquee::changed_area(old.map(to_tuple), new.map(to_tuple)) {
+                InvalidateRect(fill, &to_rect(r), 0);
+            }
+        }
+        if frame != 0 {
+            for r in old.into_iter().chain(new).flat_map(|r| marquee::edges(to_tuple(r), border)) {
+                InvalidateRect(frame, &to_rect(r), 0);
+            }
+        }
+        for h in wins {
+            if h != 0 {
+                UpdateWindow(h);
             }
         }
     }
@@ -282,6 +299,22 @@ fn place_overlays(list: HWND, wins: [HWND; 2], r: Option<RECT>) {
 impl App {
     fn details(&self, side: Side) -> bool {
         self.view[side.index()] == ViewMode::Details
+    }
+
+    /// 這一欄正在拖曳選取：詳細資料檢視自己的框選，或其他檢視清單內建的框選（開始時清單會通知，
+    /// 放開滑鼠時清單不再抓著滑鼠）。這段期間選取直接換上、狀態列節流更新。
+    pub(super) fn drag_selecting(&mut self, side: Side) -> bool {
+        let si = side.index();
+        if self.marquee.as_ref().is_some_and(|m| m.side == side && m.active) {
+            return true;
+        }
+        if self.builtin_marquee[si] {
+            if unsafe { GetCapture() } == self.lists[si] {
+                return true;
+            }
+            self.builtin_marquee[si] = false;
+        }
+        false
     }
 
     /// 選取、懸停底色的範圍（用戶區座標）。詳細資料檢視只到項目本身（圖示左邊一點到最後一欄的右緣），
@@ -369,7 +402,9 @@ impl App {
             combine: Combine::Replace,
             before: Vec::new(),
             range: None,
+            area: RECT::default(),
             drawn: None,
+            border: 1,
             fill: 0,
             frame: 0,
             dirty: false,
@@ -397,11 +432,16 @@ impl App {
     fn marquee_begin(&mut self, side: Side) {
         let list = self.lists[side.index()];
         let (owner, accent, border) = (self.hwnd, self.theme.pal.accent, self.s(1).max(1));
+        let area = rows_area(list);
         let Some(m) = self.marquee.as_mut() else { return };
         m.active = true;
+        m.area = area;
+        m.border = border;
+        BOX.with(|c| c.set(None));
         // 先建立填色再建立外框：外框在上面
         m.fill = create_overlay(owner, accent, 0);
         m.frame = create_overlay(owner, accent, border);
+        show_overlays(list, [m.fill, m.frame], area);
         // 清單自己的懸停列（從圖示左邊的留白按下時，清單把留白也算那一列）在框選中不會更新，
         // 留著會讓滑鼠下的那一列重畫時只剩底色：框選時先清掉
         send(list, LVM_SETHOTITEM, usize::MAX, 0);
@@ -441,6 +481,10 @@ impl App {
                 set_state(list, i as isize, if on { LVIS_SELECTED } else { 0 }, LVIS_SELECTED);
             }
             self.updating_list = was;
+            // 換了選取的列馬上重畫：滑鼠一直動時清單的重畫會一直排在滑鼠移動後面，選取的底色就跟不上方框
+            unsafe {
+                UpdateWindow(list);
+            }
             if let Some(m) = self.marquee.as_mut() {
                 m.range = range;
                 m.dirty = true;
@@ -448,12 +492,13 @@ impl App {
             self.marquee_sync(side, false);
         }
         let o = rows.origin;
-        let client = RECT { left: rect.0 + o.left, top: rect.1 + o.top, right: rect.2 + o.left + 1, bottom: rect.3 + o.top + 1 };
-        let shown = intersect(client, rows_area(list));
         let Some(m) = self.marquee.as_mut() else { return };
+        let a = m.area;
+        let client = RECT { left: rect.0 + o.left, top: rect.1 + o.top, right: rect.2 + o.left + 1, bottom: rect.3 + o.top + 1 };
+        let shown = intersect(client, a).map(|r| RECT { left: r.left - a.left, top: r.top - a.top, right: r.right - a.left, bottom: r.bottom - a.top });
         if m.drawn != shown {
+            move_box([m.fill, m.frame], m.drawn, shown, m.border);
             m.drawn = shown;
-            place_overlays(list, [m.fill, m.frame], shown);
         }
     }
 
@@ -465,7 +510,9 @@ impl App {
         }
         m.dirty = false;
         m.synced = Instant::now();
+        // 這裡已經節流過了：馬上更新，不再等合併（見 `selection_changed`）
         self.selection_changed(side);
+        self.flush_selection(side);
     }
 
     /// 框選中拖到清單外：每隔一下往那個方向捲動（離邊緣越遠越快）
@@ -542,6 +589,7 @@ impl App {
 
     fn marquee_finish(&mut self, side: Side, m: &Marquee) {
         let list = self.lists[side.index()];
+        BOX.with(|c| c.set(None));
         unsafe {
             KillTimer(list, SCROLL_TIMER);
             for h in [m.frame, m.fill] {

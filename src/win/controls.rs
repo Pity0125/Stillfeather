@@ -68,24 +68,7 @@ struct Data {
 }
 
 pub fn register(hinst: HINSTANCE) {
-    let class = wide(BUTTON_CLASS);
-    let wc = WNDCLASSEXW {
-        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-        style: CS_HREDRAW | CS_VREDRAW,
-        lpfnWndProc: button_proc,
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: hinst,
-        hIcon: 0,
-        hCursor: load_cursor(IDC_ARROW),
-        hbrBackground: 0,
-        lpszMenuName: std::ptr::null(),
-        lpszClassName: class.as_ptr(),
-        hIconSm: 0,
-    };
-    unsafe {
-        RegisterClassExW(&wc);
-    }
+    register_class(hinst, BUTTON_CLASS, CS_HREDRAW | CS_VREDRAW, button_proc, IDC_ARROW);
 }
 
 /// 建立按鈕。`text` 同時是可及性名稱；圖示按鈕的提示文字也用它。
@@ -243,13 +226,7 @@ unsafe extern "system" fn button_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         }
         WM_MOUSEMOVE => {
             if !d.tracking {
-                let mut tme = TRACKMOUSEEVENT {
-                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                    dwFlags: TME_LEAVE,
-                    hwndTrack: hwnd,
-                    dwHoverTime: 0,
-                };
-                TrackMouseEvent(&mut tme);
+                track_mouse_leave(hwnd);
                 d.tracking = true;
             }
             let r = client_rect(hwnd);

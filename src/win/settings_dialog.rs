@@ -73,7 +73,9 @@ const P_WINDOWS: usize = 4;
 const P_ABOUT: usize = 5;
 const P_SHORTCUTS: usize = 6;
 const PAGES: usize = 7;
-const EDIT_SHORTCUT: u16 = 91;
+/// 快速鍵的功能分類按鈕（依 keylist::SECTIONS 的順序）與命令清單
+const KEY_TAB_FIRST: u16 = 100;
+const KEY_LIST: u16 = 110;
 /// 主題選項一列幾個
 const THEME_COLUMNS: usize = 4;
 
@@ -96,6 +98,7 @@ fn page_glyph(page: usize) -> char {
         P_BROWSE => glyph::FOLDER,
         P_PREVIEW => glyph::PREVIEW,
         P_WINDOWS => glyph::LINK,
+        P_SHORTCUTS => glyph::KEYBOARD,
         _ => glyph::PROPERTIES,
     }
 }
@@ -205,6 +208,10 @@ struct State {
     picker: HWND,
     reminders: HWND,
     reset: HWND,
+    /// 快速鍵：功能分類按鈕、目前的分類、命令清單（見 keylist.rs）
+    key_tabs: [HWND; 5],
+    key_section: usize,
+    keys: HWND,
     /// 文字框的外框（畫在對話方塊上）與所在的分類
     frames: Vec<(RECT, HWND, usize)>,
     /// 文字大小 100% 時的 `k(v)`：版面的縮放比例（百分比）
@@ -290,24 +297,7 @@ fn save(hwnd: HWND, st: &mut State) -> bool {
 }
 
 pub fn register(hinst: HINSTANCE) {
-    let class = wide(CLASS);
-    let wc = WNDCLASSEXW {
-        cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-        style: 0,
-        lpfnWndProc: dialog_proc,
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-        hInstance: hinst,
-        hIcon: 0,
-        hCursor: load_cursor(IDC_ARROW),
-        hbrBackground: 0,
-        lpszMenuName: std::ptr::null(),
-        lpszClassName: class.as_ptr(),
-        hIconSm: 0,
-    };
-    unsafe {
-        RegisterClassExW(&wc);
-    }
+    register_class(hinst, CLASS, 0, dialog_proc, IDC_ARROW);
 }
 
 unsafe fn state<'a>(hwnd: HWND) -> Option<&'a mut State> {
@@ -430,7 +420,10 @@ fn fill_page(st: &State, page: usize, s: &Settings, integration: Integration) {
             win_e_changed(st);
             controls::set_checked(st.picker, integration.picker);
         }
-        P_SHORTCUTS => {},
+        P_SHORTCUTS => {
+            super::keylist::set_overrides(st.keys, s.shortcuts.clone());
+            sync_key_tabs(st);
+        }
         _ => controls::set_checked(st.reminders, s.update_reminders),
     }
 }
@@ -509,42 +502,31 @@ fn preview_changed(st: &State) {
 }
 
 /// 打開「預覽方式」下拉選單，選了就更新
-fn edit_shortcut(dlg: HWND, st: &mut State, anchor: HWND) {
-    use feather_core::keymap::{Cmd, Keymap, parse_combo};
-    let map = Keymap::with_overrides(&st.base.shortcuts).0;
-    let labels: Vec<_> = Cmd::CUSTOMIZABLE.iter().map(|cmd| {
-        let keys = map.combos(*cmd).iter().map(|c| c.label()).collect::<Vec<_>>().join(" / ");
-        format!("{}\t{keys}", cmd.display_name())
-    }).collect();
-    use feather_core::keymap::Section;
-    let items: Vec<_> = [Section::Tabs, Section::View, Section::Navigate, Section::Files, Section::Other].iter().map(|section| {
-        let items = labels.iter().enumerate().filter(|(i, _)| Cmd::CUSTOMIZABLE[*i].section() == *section)
-            .map(|(i, text)| menu::Item::radio((i + 1) as u16, text, false)).collect();
-        menu::Item::Submenu { text: section.title(), glyph: None, items }
-    }).collect();
-    let Some(index) = menu::drop_down(dlg, anchor, &items) else { return };
-    let cmd = Cmd::CUSTOMIZABLE[index as usize - 1];
-    let current = map.combos(cmd).iter().map(|c| c.label()).collect::<Vec<_>>().join("; ");
-    let Some(value) = super::dialog::text_input(dlg, &cmd.display_name(),
-        tr!("組合鍵（多組用 ; 分隔，留白停用）", "Keys (separate with ; or leave blank to disable)"), &current, "Ctrl+Shift+T") else { return };
-    if value == current { return }
-    let mut combos = Vec::new();
-    for key in value.split(';').map(str::trim).filter(|v| !v.is_empty()) {
-        let Some(combo) = parse_combo(key).filter(|c| !c.reserved()) else {
-            super::dialog::error(dlg, tr!("無法使用此快速鍵", "Invalid shortcut"), key);
-            return;
-        };
-        let label = combo.label();
-        if !combos.contains(&label) { combos.push(label); }
+/// 快速鍵的功能分類按鈕：選了哪一個，有改過的分類後面標「•」
+fn sync_key_tabs(st: &State) {
+    check_one(&st.key_tabs, Some(st.key_section));
+    for (i, h) in st.key_tabs.iter().enumerate() {
+        let section = super::keylist::SECTIONS[i];
+        let text = key_tab_label(i);
+        let text = if super::keylist::changed_in(st.keys, section) > 0 { format!("{text} •") } else { text.to_string() };
+        if window_text(*h) != text {
+            set_window_text(*h, &text);
+            unsafe {
+                InvalidateRect(*h, std::ptr::null(), 0);
+            }
+        }
     }
-    let mut overrides = st.base.shortcuts.clone();
-    overrides.retain(|(id, _)| *id != cmd.id());
-    let defaults = Keymap::default().combos(cmd).iter().map(|c| c.label()).collect::<Vec<_>>();
-    if combos != defaults { overrides.push((cmd.id(), combos)); }
-    let (_, notes) = Keymap::with_overrides(&overrides);
-    if !notes.is_empty() && !super::dialog::confirm(dlg, super::dialog::Icon::Question,
-        tr!("套用快速鍵變更？", "Apply shortcut changes?"), &notes.join("\n"), tr!("套用", "Apply")) { return; }
-    st.base.shortcuts = overrides;
+}
+
+/// 功能分類按鈕上的字（英文用短一點的名稱，五個按鈕才放得下）
+fn key_tab_label(i: usize) -> &'static str {
+    match i {
+        0 => tr!("分頁與雙欄", "Tabs"),
+        1 => tr!("檢視", "View"),
+        2 => tr!("移動與搜尋", "Navigation"),
+        3 => tr!("檔案與資料夾", "Files"),
+        _ => tr!("其他", "Other"),
+    }
 }
 
 fn pick_preview_mode(dlg: HWND, st: &State) {
@@ -621,6 +603,7 @@ fn show_page(dlg: HWND, st: &mut State, page: usize) {
 /// 讀出所有分類的值。錯誤時回傳是哪個分類與原因。
 fn collect(st: &State) -> Result<Settings, (usize, String)> {
     let mut s = st.base.clone();
+    s.shortcuts = super::keylist::overrides(st.keys);
     s.text_size = st.text_size();
     s.theme_mode = st.segments.iter().position(|h| controls::is_checked(*h)).map_or(ThemeMode::System, |i| THEMES[i]);
     // 沒有選任何主題（設定檔裡是更新的版本才有的主題）時保留原本的名稱
@@ -785,6 +768,9 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
         picker: 0,
         reminders: 0,
         reset: 0,
+        key_tabs: [0; 5],
+        key_section: 0,
+        keys: 0,
         frames: Vec::new(),
         percent,
         fonts,
@@ -1032,9 +1018,30 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
     // 關於與更新
     let check;
     let update_note;
+    // 快速鍵：上面一排功能分類，下面是那個分類的命令；點命令後直接按鍵盤設定
     {
-        let h = button(dlg, EDIT_SHORTCUT, Kind::Menu(glyph::SETTINGS), tr!("選擇要修改的命令…", "Choose a command…"), RECT::new(x0, top, k(280), row_h), &st.fonts);
-        st.pages[P_SHORTCUTS].push(h);
+        let p = P_SHORTCUTS;
+        let n = st.key_tabs.len() as i32;
+        let gap = k(6);
+        let seg_w = (full_w - gap * (n - 1)) / n;
+        for i in 0..st.key_tabs.len() {
+            let h = button(dlg, KEY_TAB_FIRST + i as u16, Kind::Segment, key_tab_label(i), RECT::new(x0 + i as i32 * (seg_w + gap), top, seg_w, row_h), &st.fonts);
+            st.key_tabs[i] = h;
+            st.pages[p].push(h);
+        }
+        let note_y = top + row_h + k(10);
+        let h = label(
+            dlg,
+            tr!("點一下命令，再直接按想要的按鍵組合（例如 Ctrl+Shift+K）；Esc 取消。改過的命令前面有小圓點，按「還原」改回預設。", "Click a command, then press the key combination you want (for example Ctrl+Shift+K); Esc cancels. Changed commands have a dot; “Reset” restores the default."),
+            RECT::new(x0, note_y, full_w, note_h * 2),
+            f_small,
+        );
+        st.pages[p].push(h);
+        let list_top = note_y + note_h * 2 + k(8);
+        let list = RECT::new(x0, list_top, full_w, (bar_top - k(12) - list_top).max(k(120)));
+        let fonts = super::keylist::Fonts { normal: st.fonts.normal, small: st.fonts.small };
+        st.keys = super::keylist::create(dlg, KEY_LIST, list, fonts, st.percent, current.shortcuts.clone());
+        st.pages[p].push(st.keys);
     }
     {
         let p = P_ABOUT;
@@ -1131,6 +1138,10 @@ pub fn show(owner: HWND, current: &Settings, integration: Integration) -> Option
 
 /// 分類的鍵盤操作：Ctrl+Tab／Ctrl+Shift+Tab、Ctrl+PgDn／PgUp 換分類；焦點在左邊的導覽時 ↑／↓ 也換。
 unsafe fn nav_key(dlg: HWND, st: &mut State, target: HWND, vk: u32) -> bool {
+    // 快速鍵清單正在等新的按法：Ctrl+Tab 等也是要設定的按鍵，交給清單
+    if super::keylist::capturing(st.keys) {
+        return false;
+    }
     let ctrl = key_down(VK_CONTROL);
     let shift = key_down(VK_SHIFT);
     let on_nav = st.nav.contains(&target);
@@ -1252,7 +1263,13 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 c if (THEME_FIRST..THEME_FIRST + PRESETS.len() as u16).contains(&c) => check_one(&st.tiles, Some((c - THEME_FIRST) as usize)),
                 T_CUSTOM => custom_changed(st),
                 T_PREVIEW => preview_changed(st),
-                EDIT_SHORTCUT => edit_shortcut(hwnd, st, lparam as HWND),
+                // 快速鍵清單改了：分類按鈕上的「•」跟著更新
+                KEY_LIST => sync_key_tabs(st),
+                c if (KEY_TAB_FIRST..KEY_TAB_FIRST + 5).contains(&c) => {
+                    st.key_section = (c - KEY_TAB_FIRST) as usize;
+                    super::keylist::set_section(st.keys, super::keylist::SECTIONS[st.key_section]);
+                    sync_key_tabs(st);
+                }
                 PREVIEW_MODE => pick_preview_mode(hwnd, st),
                 LANG_SYSTEM | LANG_CHINESE | LANG_ENGLISH => check_one(&st.languages, Some((cid - LANG_SYSTEM) as usize)),
                 ACCENT_PICK => {
@@ -1285,9 +1302,7 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
                 }
                 RESET => {
                     // 只還原目前這個分類；常用位置等其他設定不動，按「儲存」才套用
-                    if st.page == P_SHORTCUTS { st.base.shortcuts.clear(); }
-                    let mut d = Settings::default();
-                    d.favorites = st.base.favorites.clone();
+                    let d = Settings { favorites: st.base.favorites.clone(), ..Default::default() };
                     fill_page(st, st.page, &d, Integration::DEFAULT);
                 }
                 // 攔截 Win+E 只在設為預設檔案總管時有作用

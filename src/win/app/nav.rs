@@ -10,6 +10,95 @@ impl App {
     /// 開啟還不知道是檔案還是資料夾的位置（網路上的位置）：先當成資料夾在背景讀取，畫面顯示「正在讀取資料夾…」；
     /// 其實是檔案時改開它所在的資料夾並選取它（見 on_not_folder）。不在介面執行緒上先檢查，
     /// 因為網路位置離線時連檢查都要等到 SMB 逾時（約 20 秒），這段時間整個視窗會凍住。
+    /// 路徑列按 Enter（見 feather_core::runline）：資料夾開啟；程式、批次檔、捷徑、不含路徑的指令（cmd、notepad）
+    /// 與網址交給 Windows 執行（同 Win+R，工作資料夾是目前的資料夾）；`shell:startup` 這類位置解析後開啟；
+    /// 其他檔案開啟所在的資料夾並選取它。相對路徑（..、子資料夾名稱、\Windows）以目前的資料夾為準。
+    pub(super) fn address_enter(&mut self, input: &str) {
+        let text = input.trim();
+        let id = self.active_tab_id();
+        let here = self.active_tab().map(|t| t.path.clone()).unwrap_or_default();
+        let here_dir = (!here.is_empty() && paths::is_fully_qualified(&here) && paths::unc_server(&here).is_none()).then(|| here.clone());
+        if runline::is_shell_location(text) {
+            self.open_shell_location(text);
+            return;
+        }
+        if runline::is_protocol(text) {
+            self.run_program(text, "", None);
+            return;
+        }
+        // 網路上的位置不在這裡檢查是不是資料夾（離線時要等 SMB 逾時、視窗凍住），交給背景讀取時再判斷（見 navigate_or_reveal）
+        match full_path_in(text, Some(&here)) {
+            Ok(full) if runline::is_runnable(&full) && (!fs::on_local_drive(&full) || fs::is_file(&full)) => {
+                let dir = paths::parent(&full);
+                self.run_program(&full, "", dir);
+            }
+            Ok(full) if !fs::on_local_drive(&full) => self.navigate_or_reveal(id, &full, NavKind::Normal),
+            Ok(full) if fs::is_dir(&full) => self.navigate(id, &full, NavKind::Normal, vec![]),
+            Ok(full) if fs::is_file(&full) => {
+                let parent = paths::parent(&full).unwrap_or_else(|| full.clone());
+                self.navigate(id, &parent, NavKind::Normal, vec![full]);
+            }
+            other => {
+                // 不是存在的資料夾或檔案：當成指令列（程式＋參數），例如 notepad、cmd /k dir、"C:\…\app.exe" --new
+                let (first, args) = runline::split_command(text);
+                let program = full_path_in(&first, Some(&here)).ok().filter(|p| fs::on_local_drive(p) && fs::is_file(p) && runline::is_runnable(p));
+                if let Some(p) = program {
+                    let dir = paths::parent(&p);
+                    self.run_program(&p, &args, dir);
+                } else if runline::is_bare_command(&first) {
+                    self.run_program(&first, &args, here_dir);
+                } else {
+                    match other {
+                        Ok(full) => self.navigate(id, &full, NavKind::Normal, vec![]),
+                        Err(_) => self.navigate(id, text, NavKind::Normal, vec![]),
+                    }
+                }
+            }
+        }
+    }
+
+    /// 執行程式、指令或網址（見 fileops::run）；找不到時說明路徑列可以輸入什麼
+    fn run_program(&mut self, file: &str, args: &str, dir: Option<String>) {
+        let shown = if args.is_empty() { file.to_string() } else { format!("{file} {args}") };
+        match fileops::run(self.hwnd, file, args, dir.as_deref(), std::ptr::null_mut()) {
+            Ok(()) => self.set_footer(trf!("已執行「{shown}」", "Ran “{shown}”")),
+            Err(e) => self.show_error(&e),
+        }
+    }
+
+    /// `shell:startup`、`shell:downloads`、`::{CLSID}`：解析成位置。檔案系統裡的資料夾在 Stillfeather 開啟，
+    /// 其他（控制台、應用程式等虛擬資料夾）交給 Windows 開。
+    fn open_shell_location(&mut self, text: &str) {
+        let name = text.trim().trim_matches('"');
+        let w = wide(name);
+        let mut pidl: *mut std::ffi::c_void = std::ptr::null_mut();
+        let hr = unsafe { SHParseDisplayName(w.as_ptr(), std::ptr::null_mut(), &mut pidl, 0, std::ptr::null_mut()) };
+        if hr < 0 || pidl.is_null() {
+            self.show_error(&trf!(
+                "找不到「{name}」這個位置。請確認名稱是否正確，例如 shell:startup、shell:downloads。",
+                "Couldn't find the location “{name}”. Make sure the name is right, for example shell:startup or shell:downloads."
+            ));
+            return;
+        }
+        let mut buf = vec![0u16; 32_768];
+        let path = (unsafe { SHGetPathFromIDListEx(pidl, buf.as_mut_ptr(), buf.len() as u32, 0) } != 0).then(|| from_wide(&buf)).filter(|p| fs::is_dir(p));
+        let result = match &path {
+            Some(_) => Ok(()),
+            None => fileops::run(self.hwnd, name, "", None, pidl),
+        };
+        unsafe {
+            CoTaskMemFree(pidl);
+        }
+        match (path, result) {
+            (Some(p), _) => {
+                let id = self.active_tab_id();
+                self.navigate(id, &p, NavKind::Normal, vec![]);
+            }
+            (None, Ok(())) => self.set_footer(trf!("已開啟「{name}」", "Opened “{name}”")),
+            (None, Err(e)) => self.show_error(&e),
+        }
+    }
+
     pub(in crate::win) fn navigate_or_reveal(&mut self, tab_id: TabId, input: &str, kind: NavKind) {
         self.navigate_with(tab_id, input, kind, vec![], true);
     }
@@ -41,7 +130,7 @@ impl App {
         tab.status = tr!("正在讀取資料夾…", "Reading folder…").into();
         let (sort_col, desc) = tab.folder_sort();
         let folders_on_top = self.settings.folders_on_top;
-        let p = path.clone();
+        let p = path;
         let owner = self.hwnd;
         std::thread::spawn(move || {
             let read = || -> Result<Option<Listing>, FsError> {

@@ -383,8 +383,8 @@ impl Registration {
         &**(self.windows as *const *const ShellWindowsVtbl)
     }
 
-    /// 重新取得殼層視窗清單（檔案總管重新啟動後，舊的已經不能用）
-    unsafe fn reconnect(&mut self) {
+    /// 放掉手上的殼層視窗清單與登記（檔案總管重新啟動後，舊的已經不能用，也不必取消登記）
+    unsafe fn disconnect(&mut self) {
         if !self.windows.is_null() {
             let unknown = &**(self.windows as *const *const UnknownVtbl);
             (unknown.release)(self.windows);
@@ -392,6 +392,11 @@ impl Registration {
         }
         self.cookie = None;
         self.set_location(None);
+    }
+
+    /// 重新取得殼層視窗清單
+    unsafe fn reconnect(&mut self) {
+        self.disconnect();
         let mut windows: *mut c_void = std::ptr::null_mut();
         let hr = CoCreateInstance(&CLSID_SHELL_WINDOWS, std::ptr::null_mut(), CLSCTX_ALL, &IID_ISHELL_WINDOWS, &mut windows);
         if hr >= 0 && !windows.is_null() {
@@ -683,8 +688,8 @@ fn thread_main(main: HWND, ready: std::sync::mpsc::Sender<u32>) {
                 regs.push(Registration::new(form, main, main));
             }
         }
+        // 殼層視窗清單等到真的要登記時才取得（sync 會自己連上）：不是預設檔案總管時就不必跨行程向檔案總管要
         for reg in regs.iter_mut() {
-            reg.reconnect();
             reg.sync_wanted();
         }
         while GetMessageW(&mut msg, 0, 0, 0) > 0 {
@@ -698,7 +703,7 @@ fn thread_main(main: HWND, ready: std::sync::mpsc::Sender<u32>) {
                 // 舊的清單已經跟著檔案總管不見了：不必取消登記，直接重新取得再登記
                 log("檔案總管重新啟動：重新登記");
                 for reg in regs.iter_mut() {
-                    reg.reconnect();
+                    reg.disconnect();
                     reg.sync_wanted();
                 }
                 continue;

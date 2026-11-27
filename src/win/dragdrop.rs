@@ -559,10 +559,11 @@ impl App {
                     None => Zone::Pin,
                     Some(n) => match n.kind {
                         NodeKind::Header if n.path == FAVORITES_KEY => Zone::Pin,
-                        NodeKind::Header if n.path.starts_with("::bookmark-group/") => n.path.strip_prefix("::bookmark-group/")
-                            .and_then(|s| s.parse::<usize>().ok()).and_then(|i| self.settings.bookmark_groups.get(i))
-                            .map_or(Zone::None, |(name, _)| Zone::BookmarkGroup { name: name.clone(), item }),
-                        NodeKind::Header | NodeKind::Info => Zone::None,
+                        // 自訂標籤的標題、空標籤裡的「把資料夾拖到這裡」：放進那個標籤
+                        NodeKind::Header | NodeKind::Info => match self.group_drop_target(item) {
+                            Some((name, header)) => Zone::BookmarkGroup { name, item: header },
+                            None => Zone::None,
+                        },
                         _ => Zone::Folder { path: n.path.clone(), mark: Mark::Tree(item) },
                     },
                 }

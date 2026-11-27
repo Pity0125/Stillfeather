@@ -11,7 +11,7 @@
 
 ![Project files on the left and image thumbnails on the right in Stillfeather’s dark theme](docs/main-window-en.png)
 
-**v0.1.6** adds detachable tabs, bookmark groups in Favorites, and customizable shortcuts. Search also supports date, size, and extension filters. This version also adds eight themes, NAS share navigation, and a standalone Help window. [Full 0.1.6 release notes](docs/release-v0.1.6.md#new-features)
+**v0.1.7** adds your own sidebar sections, middle-click to open a folder in a new tab, and a path bar that runs programs like Win+R. Press ↓ in the search box for recent searches. This version also redesigns shortcut settings and makes box selection keep up with the mouse. [Full 0.1.7 release notes](docs/release-v0.1.7.md#new-features)
 
 ## Copy between folders in one window
 
@@ -77,14 +77,15 @@ Silent uninstall: `"…\Stillfeather\Uninstall.exe" /S`. See [DEVELOPMENT.md](DE
 - **Desktop folders open in tabs.** Set Stillfeather as your default file manager, then double-click different folders on your desktop. Each folder opens in its own tab in the same window.
 - **Tabs and dual panes**: the left and right panes each have their own tabs and back/forward history. Ctrl+\\ toggles single/dual pane. Drag files between panes, or use "Copy to other pane". Drag tabs to reorder them, move them to the other pane, or drop them outside the window to open a separate window; Ctrl+Shift+T reopens the tab you just closed. When maximized, drag a tab down into the file list to detach it. Dragging the only tab in a single-pane window moves that window. The source tab closes after the destination loads its folder.
 - **Restore your tabs**: next time you open Stillfeather, the main window's tabs in both panes, the selected tabs, and dual-pane mode come back as you left them. The visible tabs load right away; the others load when you switch to them. When you open it with Win+E or by double-clicking a folder, that location opens in a new tab (or switches to it if it's already open). To turn this off, turn off Settings › Browsing › Restore last tabs.
-- **Breadcrumb path bar**: click any level to jump there; click the arrow next to a level to list its subfolders and switch to one (arrow keys, Enter and Esc work too). Press Ctrl+E to switch to a text box and type a full path, a relative path (`..`, a subfolder name), or a file path (opens its folder with the file selected).
+- **Breadcrumb path bar**: click any level to jump there; click the arrow next to a level to list its subfolders and switch to one (arrow keys, Enter and Esc work too). Press Ctrl+E to switch to a text box and type a full path, a relative path (`..`, a subfolder name), or a file path (opens its folder with the file selected). It also runs programs, shortcuts and commands like Win+R (`cmd` opens a command prompt in the current folder) and understands locations such as `shell:startup`.
 - **Network locations and NAS**: type `\\computer-name` in the path bar to list the folders it shares. If it needs a user name and password, Windows' own sign-in window appears and the folder opens once you sign in.
 - **Per-folder views**: eight views, from extra-large icons to details. Switch one folder to large icons and the others stay as they were.
 - **Thumbnails**: the icon views (extra-large, large and medium icons, tiles, and content) show thumbnails for pictures and videos, and for PDFs, PSDs and more when a thumbnail handler is installed, just like File Explorer. Folders that are at least half pictures and videos open in large icons unless you've picked a view for them; to turn that off, untick "相片資料夾用大圖示" (large icons for photo folders) under View › Show. Thumbnails are made in a separate process, so a faulty thumbnail handler can't crash Stillfeather.
 - **Filter chips**: show only folders, images, documents, media or archives in one click, with a count for each.
 - **Room for your files, and larger text**: the current folder is the last part of the path bar, the filter chips share one row with the common actions, and the bottom is a single status line (the item count, or “N items selected” with their size), so the list takes about 70% of the window. View › Text size (or Settings › Text & language) enlarges file names, columns, the sidebar, tabs, the path bar, filter chips and dialogs up to 150%, and it's remembered next time.
-- **Pinned locations**: right-click Favorites to create a bookmark group, then drop folders onto it. Right-click a pinned folder to move it between groups. Right-click a group to rename or remove it. Removing a group keeps its bookmarks in Favorites.
-- **Custom shortcuts**: open Settings › Shortcuts, choose a command, enter a key combination and save. Separate multiple combinations with a semicolon (`;`) or leave the field blank to disable the shortcut. A conflict prompt identifies the affected commands. Changes apply when you save.
+- **Sidebar sections**: right-click empty space in the sidebar to add a section alongside Favorites and Drives, then drop folders onto it to pin them; click a section's heading to collapse or expand it, or drag it to reorder sections. Right-click a pinned folder to move it to another section, or right-click a section to rename or delete it (its folders go back to Favorites).
+- **Middle-click for a new tab**: middle-click a folder in the list, the sidebar or the path bar to open it in a new tab next to the current one, without switching to it (hold Shift to switch).
+- **Custom shortcuts**: Settings › Shortcuts is split into five pages by function. Click a command and press the key combination you want (Esc cancels). You're asked before taking a combination from another command; Reset restores the default, No shortcut turns it off, and changes apply when you save.
 - **The full right-click menu**: alongside Stillfeather's own commands, you get the entries installed programs add (Open in Terminal, 7-Zip, Git, Send to…), with no "Show more options" step.
 - **Open PowerShell window here**: right-click empty space in a folder, a folder, or a folder in the sidebar, no Shift needed. Uses PowerShell 7 when it's installed, otherwise the PowerShell built into Windows.
 - **Box selection and empty space**: like File Explorer, the selection highlight stops at the last column. Press on the empty space beside the items or below the last one and drag to draw a box and select several items (hold Ctrl to toggle, or Shift to add to what's already selected); click the empty space to clear the selection. To drag files, drag them from the items as before.
@@ -109,7 +110,7 @@ Office previews only read text and tables; macros and embedded content are never
 
 ### Search
 
-Search file names in the current folder (optionally including subfolders) or across the whole PC. Several threads search at once, results appear as they're found, and you can cancel at any time. If the search couldn't finish (too many results, or folders it couldn't read), the results say so.
+Search file names in the current folder (optionally including subfolders) or across the whole PC; the search box's hint shows where it will look. Several threads search at once, results appear as they're found, and you can cancel at any time. Press ↓ in the search box to list your last 10 searches, with their filters. If the search couldn't finish (too many results, or folders it couldn't read), the results say so.
 
 After the type filters come two buttons, “Date ▾” and “Size ▾”: dates can be Today, Yesterday, This week, This month, This year or a custom range, and sizes can be under 1 MB, 1–100 MB, 100 MB–1 GB, over 1 GB or custom. A chosen condition shows on its button (for example “This week ×”); click × to clear it. Changing a condition filters the current results right away, without searching again. You can also search with filters only and an empty search box: in Downloads, pick “Documents” and “This week”, then press Enter to list this week's documents.
 
@@ -195,6 +196,8 @@ The table lists the defaults. Press `F1` or click `?` to see your current bindin
 | Ctrl+\\ | Toggle single/dual pane |
 | Ctrl+E, Alt+D | Edit path |
 | Ctrl+F | Search |
+| ↓ in the search box | Recent searches |
+| Middle-click a folder | Open in a new tab |
 | Alt+← / → / ↑, Backspace | Back / forward / up |
 | F5 | Refresh |
 | F2 | Rename |
