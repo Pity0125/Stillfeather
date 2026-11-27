@@ -1,6 +1,8 @@
-• Drag tabs to reorder them, move them between panes, or drop them outside the window to open a separate window. Ctrl+Shift+T reopens the last closed tab.
-• Right-click Favorites to create bookmark groups, then drag folders into a group to pin them. Removing a group keeps its bookmarks.
-• Change or disable key bindings in Settings › Shortcuts, with a prompt when bindings conflict. Ctrl+E edits the path and Ctrl+\ toggles dual panes by default.
-• Filter folders and search results by date or size. Combine phrases, exclusions, and extensions in a search, such as "annual report" ext:pdf -draft. Results are ranked by relevance.
-• Choose from eight themes with light and dark variants. Quick preview settings are simpler, and the path bar and drop-down menus now scale with text size.
-• Enter \\nas to browse network shares. New folders immediately enter rename mode, and open tabs update when their folders move or disappear. F1 opens a separate Help window.
+Detachable tabs, bookmark groups, custom shortcuts, advanced search and eight themes:
+• Drag a tab out of the window to open it on its own, or drag tabs to reorder them or move them to the other pane; Ctrl+Shift+T reopens the last closed tab
+• Right-click Favorites to create bookmark groups, then drag folders in to pin them
+• Change or disable shortcuts in Settings › Shortcuts; dual panes are now Ctrl+\ and editing the path is Ctrl+E
+• Filter searches by date and size, or type conditions like ext:pdf and -draft; results are ranked by relevance
+• Eight themes, each with light and dark variants, under Settings › Theme & colors
+• Type \\nas to browse a NAS's shared folders; F1 opens a separate Help window
+• New folders always go straight into rename mode; Shift+Delete always asks before deleting permanently
